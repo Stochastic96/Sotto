@@ -530,13 +530,31 @@ import AVFoundation
             break
         }
         let l = t.lowercased()
-        for marker in ["ask siri to ", "ask siri ", "ask apple intelligence to ", "ask apple intelligence ", "type to siri ", "siri "] {
-            if l.hasPrefix(marker) {
-                let prompt = String(t.dropFirst(marker.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-                return prompt.isEmpty ? nil : prompt
-            }
+        // Tolerate speech variations: ask/asks/tell + siri/apple intelligence, with/without "to".
+        let markers = [
+            "ask siri to ", "asks siri to ", "ask siri ", "asks siri ",
+            "tell siri to ", "tell siri ", "hey siri ",
+            "ask apple intelligence to ", "asks apple intelligence to ",
+            "ask apple intelligence ", "asks apple intelligence ",
+            "type to siri ", "siri ",
+        ]
+        for marker in markers where l.hasPrefix(marker) {
+            let prompt = String(t.dropFirst(marker.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            return prompt.isEmpty ? nil : prompt
         }
         return nil
+    }
+
+    /// Strip chat-template role tokens the on-device model sometimes leaks (e.g. a leading
+    /// "model\n" or "assistant ") so they never reach the screen or the voice.
+    private static func sanitizeReply(_ s: String) -> String {
+        var r = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        for junk in ["model\n", "model ", "assistant\n", "assistant ", "<|assistant|>"] {
+            if r.lowercased().hasPrefix(junk) {
+                r = String(r.dropFirst(junk.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return r == "model" || r == "assistant" ? "" : r
     }
 
     /// One spoken line for a result: the headline clause only. The glass HUD card carries
@@ -586,11 +604,11 @@ import AVFoundation
             hud.show("🌤  Weather…")
             let summary = await WeatherService.summary(city: city) ?? "Couldn't get the weather for \(city) right now."
             print("[JARVIS] Deterministic weather (\(city)): \(summary)")
-            hud.showResult(summary)
+            hud.showResult("\(summary)\n\(Quips.weatherTail())")   // data on screen, wit underneath
             speak(shortSpoken(summary))
             TaskJournal.record(command: raw, reply: summary)
             state = .idle
-            Task { try? await Task.sleep(nanoseconds: 2_000_000_000); hud.hide() }
+            Task { try? await Task.sleep(nanoseconds: 2_500_000_000); hud.hide() }
             return
         }
 
@@ -600,11 +618,12 @@ import AVFoundation
             hud.show("􀊫  Asking Siri…")
             await SiriBridge.send(siriAsk)
             print("[JARVIS] Forwarded to Siri: \(siriAsk)")
-            hud.showResult("Asked Siri: \(siriAsk)")
-            speak("Asked Siri.")
+            let quip = Quips.siri()
+            hud.showResult("\(quip)\n› \(siriAsk)")
+            speak(quip)
             TaskJournal.record(command: raw, reply: "Forwarded to Siri: \(siriAsk)")
             state = .idle
-            Task { try? await Task.sleep(nanoseconds: 2_000_000_000); hud.hide() }
+            Task { try? await Task.sleep(nanoseconds: 2_500_000_000); hud.hide() }
             return
         }
 
@@ -615,12 +634,12 @@ import AVFoundation
             state = .polishing
             hud.show("✨  Jarvis…")
             do {
-                let reply = try await JarvisAgent.run(raw)
+                let reply = Self.sanitizeReply(try await JarvisAgent.run(raw))
                 print("[JARVIS] Agent reply: '\(reply)'")
                 DatasetLogger.shared.log(mode: "jarvis-apple", app: lastActiveApp?.localizedName, rawTranscript: raw, response: reply, kind: "agent", samples: samples)
                 TaskJournal.record(command: raw, reply: reply)
                 if reply.isEmpty {
-                    hud.showResult("✓ Done")
+                    hud.showResult(Quips.done())
                 } else {
                     // Show the full reply in the glass card (fast, read it on screen) but
                     // speak only the one-line headline so Jarvis doesn't read the whole thing.

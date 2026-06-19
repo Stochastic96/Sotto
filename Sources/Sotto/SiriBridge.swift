@@ -21,7 +21,7 @@ enum SiriBridge {
     @MainActor
     static func send(_ prompt: String) async {
         activate()
-        try? await Task.sleep(nanoseconds: 700_000_000)   // let the box appear + take focus
+        try? await Task.sleep(nanoseconds: 550_000_000)   // let the box appear + take focus
         await injector.inject(prompt, fileURL: nil)        // pasteboard + ⌘V (reused)
         try? await Task.sleep(nanoseconds: 150_000_000)
         await injector.pressReturn()
