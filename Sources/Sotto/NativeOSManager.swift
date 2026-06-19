@@ -80,7 +80,10 @@ struct KeySimulator {
         "l": 37, "j": 38, "'": 39, "k": 40, ";": 41, "\\": 42, ",": 43, "/": 44, "n": 45,
         "m": 46, ".": 47, "`": 50,
         "return": 36, "tab": 48, "space": 49, "escape": 53, "delete": 51,
-        "left": 123, "right": 124, "down": 125, "up": 126
+        "left": 123, "right": 124, "down": 125, "up": 126,
+        // Common spoken aliases so the model's natural words map correctly.
+        "esc": 53, "enter": 36, "del": 51, "backspace": 51, "spacebar": 49,
+        "arrowleft": 123, "arrowright": 124, "arrowdown": 125, "arrowup": 126
     ]
     
     static func simulate(key: String, cmd: Bool, shift: Bool, opt: Bool, ctrl: Bool) async -> Bool {
