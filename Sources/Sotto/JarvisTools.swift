@@ -20,35 +20,41 @@ private func shellEscape(_ s: String) -> String {
      .replacingOccurrences(of: "\"", with: "\\\"")
 }
 
-/// play / pause / next / prev, or a song name to search-and-play.
+/// What to do with Spotify. A constrained `@Generable` enum means guided generation can
+/// ONLY return one of these cases — the model can't invent "resume"/"skip"/"back" and
+/// fall through to a wrong branch, which is how the old single-String action misfired.
+@available(macOS 26.0, *)
+@Generable
+enum SpotifyAction {
+    case play, pause, next, previous, playSong
+}
+
+/// Control Spotify specifically (never Apple Music): play, pause, skip, or play a song.
 @available(macOS 26.0, *)
 struct SpotifyTool: Tool {
     let name = "control_spotify"
-    let description = "Control Spotify playback. Use for playing, pausing, skipping, or playing a specific song."
+    let description = "Control Spotify ONLY (not Apple Music): play, pause, skip tracks, or search and play a specific song or artist."
 
     @Generable
     struct Arguments {
-        @Guide(description: "Exactly one of: play, pause, next, prev — OR a song/artist name to search and play.")
-        let action: String
+        @Guide(description: "What to do with Spotify.")
+        let action: SpotifyAction
+        @Guide(description: "The song or artist to search for. REQUIRED only when action is playSong; leave empty otherwise.")
+        let query: String?
     }
 
     func call(arguments: Arguments) async throws -> String {
-        let a = arguments.action.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        // Native media-transport keys (work for Spotify, Music, browsers — any player).
-        switch a {
-        case "play", "pause", "resume", "stop":
-            await MediaControl.send(MediaControl.playPause); return "Spotify: \(a) done."
-        case "next", "skip":
-            await MediaControl.send(MediaControl.next); return "Spotify: next track."
-        case "prev", "previous", "back":
-            await MediaControl.send(MediaControl.previous); return "Spotify: previous track."
-        default:
-            // Treat anything else as a song/artist search via the Spotify URL scheme.
-            if let encoded = a.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-               let url = URL(string: "spotify:search:\(encoded)") {
-                await MainActor.run { _ = NSWorkspace.shared.open(url) }
-            }
-            return "Searching Spotify for \(arguments.action)."
+        // Every command is addressed to Spotify by name (see SpotifyControl), so it can
+        // never accidentally drive Apple Music or another player.
+        switch arguments.action {
+        case .play:     await SpotifyControl.play();     return "Spotify playing."
+        case .pause:    await SpotifyControl.pause();    return "Spotify paused."
+        case .next:     await SpotifyControl.next();     return "Skipped to the next track."
+        case .previous: await SpotifyControl.previous(); return "Back to the previous track."
+        case .playSong:
+            let q = (arguments.query ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !q.isEmpty else { return "Tell me which song or artist to play." }
+            return await SpotifyControl.searchAndPlay(q)
         }
     }
 }
@@ -730,38 +736,107 @@ struct KeySimulatorTool: Tool {
     }
 }
 
-/// The full set of tools the Jarvis agent exposes to the on-device model.
+/// Current weather + today's high/low for a city. Free, no API key (Open-Meteo).
+@available(macOS 26.0, *)
+struct WeatherTool: Tool {
+    let name = "get_weather"
+    let description = "Get the current weather and today's high/low temperature for a city. Use for any weather question."
+
+    @Generable
+    struct Arguments {
+        @Guide(description: "The city name, e.g. 'Trier' or 'Berlin'. Leave empty to use the saved home city.")
+        let city: String?
+    }
+
+    func call(arguments: Arguments) async throws -> String {
+        var city = (arguments.city ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if city.isEmpty { city = UserDefaults.standard.string(forKey: "sotto_home_city") ?? "" }
+        guard !city.isEmpty else { return "Which city's weather do you want?" }
+        return await WeatherService.summary(city: city) ?? "Couldn't get the weather for \(city) right now."
+    }
+}
+
+/// The tools the Jarvis agent exposes to the on-device model.
+///
+/// Apple's guidance / tool-learning research: tool-selection accuracy plateaus around 8
+/// tools and DROPS beyond that (redundant choices confuse the model). With 27 tools,
+/// handing the small on-device model the whole catalog every call is the main reason
+/// Jarvis felt like a toy. So `routed(for:)` scores intent groups by keyword and returns
+/// only the most relevant ≤8 tools for each utterance; `all()` remains the safety net.
 @available(macOS 26.0, *)
 enum JarvisToolbox {
     static func all() -> [any Tool] {
         [
-            SpotifyTool(),
-            VolumeTool(),
-            BrightnessTool(),
-            OpenWebsiteTool(),
-            OpenAppTool(),
-            CreateNoteTool(),
-            WebSearchTool(),
-            ReadScreenTool(),
-            ClickElementTool(),
-            DraftSkillTool(),
-            RunSkillTool(),
-            RecallHistoryTool(),
-            SystemStatusTool(),
-            RAMMemoryStatusTool(),
-            LocationGeocoderTool(),
-            WikipediaLookupTool(),
-            MemoryGoalTool(),
-            AskClaudeTool(),
-            ReminderTool(),
-            CalendarTool(),
-            PowerStateTool(),
-            NetworkDiagnosticsTool(),
-            ClipboardTool(),
-            SpotlightSearchTool(),
-            AppWindowManagerTool(),
-            KeySimulatorTool(),
+            SpotifyTool(), WeatherTool(), VolumeTool(), BrightnessTool(),
+            OpenWebsiteTool(), OpenAppTool(), CreateNoteTool(), WebSearchTool(),
+            ReadScreenTool(), ClickElementTool(), DraftSkillTool(), RunSkillTool(),
+            RecallHistoryTool(), SystemStatusTool(), RAMMemoryStatusTool(),
+            LocationGeocoderTool(), WikipediaLookupTool(), MemoryGoalTool(),
+            AskClaudeTool(), ReminderTool(), CalendarTool(), PowerStateTool(),
+            NetworkDiagnosticsTool(), ClipboardTool(), SpotlightSearchTool(),
+            AppWindowManagerTool(), KeySimulatorTool(),
         ]
+    }
+
+    private struct Group {
+        let keywords: [String]
+        let make: () -> [any Tool]
+    }
+
+    private static let groups: [Group] = [
+        Group(keywords: ["spotify", "music", "song", "play", "pause", "track", "artist", "skip", "tune", "album"],
+              make: { [SpotifyTool()] }),
+        Group(keywords: ["weather", "temperature", "forecast", "rain", "cold", "hot", "sunny", "snow", "wind"],
+              make: { [WeatherTool()] }),
+        Group(keywords: ["volume", "mute", "louder", "quieter", "sound", "brightness", "dim", "brighter"],
+              make: { [VolumeTool(), BrightnessTool()] }),
+        Group(keywords: ["battery", "wifi", "wi-fi", "disk", "ram", "memory", "status", "health", "internet", "network", "reachable", "connection"],
+              make: { [SystemStatusTool(), RAMMemoryStatusTool(), NetworkDiagnosticsTool()] }),
+        Group(keywords: ["open", "launch", "app", "website", "url", "browser", "window", "switch", "activate", "foreground"],
+              make: { [OpenAppTool(), OpenWebsiteTool(), AppWindowManagerTool()] }),
+        Group(keywords: ["search", "google", "look up", "wikipedia", "who is", "what is", "define", "research", "claude", "explain"],
+              make: { [WebSearchTool(), WikipediaLookupTool(), AskClaudeTool()] }),
+        Group(keywords: ["note", "remind", "reminder", "calendar", "event", "appointment", "meeting", "schedule", "clipboard", "copy", "paste"],
+              make: { [CreateNoteTool(), ReminderTool(), CalendarTool(), ClipboardTool()] }),
+        Group(keywords: ["file", "spotlight", "pdf", "document", "find file", "folder"],
+              make: { [SpotlightSearchTool()] }),
+        Group(keywords: ["lock", "trash", "empty", "sleep", "power"],
+              make: { [PowerStateTool()] }),
+        Group(keywords: ["read screen", "click", "button", "link", "on screen", "see", "page", "ocr"],
+              make: { [ReadScreenTool(), ClickElementTool()] }),
+        Group(keywords: ["location", "map", "where is", "geocode", "directions", "place", "address"],
+              make: { [LocationGeocoderTool()] }),
+        Group(keywords: ["keystroke", "press", "shortcut", "hotkey", "type"],
+              make: { [KeySimulatorTool()] }),
+        Group(keywords: ["skill", "learn", "routine", "goal", "remember", "recall", "history", "did you do", "have you"],
+              make: { [DraftSkillTool(), RunSkillTool(), RecallHistoryTool(), MemoryGoalTool()] }),
+    ]
+
+    /// Common general-purpose tools used when an utterance matches no group's keywords.
+    private static func defaultSet() -> [any Tool] {
+        [OpenAppTool(), OpenWebsiteTool(), WebSearchTool(), WikipediaLookupTool(),
+         SpotifyTool(), WeatherTool(), CreateNoteTool(), AskClaudeTool()]
+    }
+
+    /// Returns only the ≤8 most relevant tools for `command`, keeping the small model's
+    /// choice sharp. Falls back to `defaultSet()` when nothing matches.
+    static func routed(for command: String) -> [any Tool] {
+        let lower = command.lowercased()
+        let scored = groups
+            .map { (score: $0.keywords.reduce(0) { $0 + (lower.contains($1) ? 1 : 0) }, group: $0) }
+            .filter { $0.score > 0 }
+            .sorted { $0.score > $1.score }
+
+        if scored.isEmpty { return defaultSet() }
+
+        var picked: [any Tool] = []
+        for entry in scored {
+            for tool in entry.group.make() where picked.count < 8 && !picked.contains(where: { $0.name == tool.name }) {
+                picked.append(tool)
+            }
+            if picked.count >= 8 { break }
+        }
+        return picked
     }
 }
 #endif

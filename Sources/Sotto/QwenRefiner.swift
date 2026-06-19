@@ -9,13 +9,14 @@ struct DictationExample: Codable {
 }
 
 /// On-device text refiner / generator. Sotto's brain is fully native:
-///   • Dictation polish + quick tasks → Apple Foundation Models (Apple Intelligence).
-///     Each call uses a FRESH `LanguageModelSession` (per Apple TN3193: independent
-///     one-shot tasks should not share a transcript or it grows and eats the ~4k
-///     token budget). Speed comes from a persistent prewarmed keep-alive session that
-///     keeps the model resident — not from reusing a session.
-///   • Heavier / long-form / oversized-context work → the in-process MLX Qwen engine
-///     (`MLXEngine`), which is also the fallback when Apple Intelligence declines.
+///   • Dictation polish → the small in-process MLX Qwen (0.5B-Instruct). On an 8 GB M1
+///     it's faster than Apple's ~3B model and, kept warm/resident, gives the SAME low
+///     latency every time (no macOS eviction stalls). Apple Intelligence is the
+///     automatic fallback when MLX isn't built in or the model can't load.
+///   • Heavier / long-form generation → the in-process MLX Qwen engine (`MLXEngine`),
+///     falling back to Apple Intelligence.
+///   • The Jarvis agent's tool-calling stays on Apple Foundation Models (`JarvisAgent`),
+///     unaffected by this file — small models can't tool-call reliably.
 /// No Python, no localhost servers, no network.
 actor QwenRefiner {
     enum Status: Equatable {
@@ -59,6 +60,9 @@ actor QwenRefiner {
             keepAliveBox = session
         }
         #endif
+        // Warm the small MLX polish model in the background so the very first dictation
+        // pays no cold-load cost and every polish has the same low latency.
+        Task { _ = await MLXEngine.shared.prepareIfNeeded() }
         onStatus(.ready)
     }
 
@@ -168,17 +172,15 @@ actor QwenRefiner {
         if let data = UserDefaults.standard.data(forKey: "sotto_style_examples"),
            let examples = try? JSONDecoder().decode([DictationExample].self, from: data),
            !examples.isEmpty {
+            // Apple's guidance: keep fewer than five few-shot examples. We send only the
+            // 2 most recent — enough to anchor the user's style without bloating every
+            // call. "Lengthy prompts with examples on every call" are the main latency
+            // source, so the history block was dropped from polish entirely.
             contextBlock += "\n\nExamples of the user's dictation style (raw speech vs polished):\n"
-            for example in examples {
+            for example in examples.suffix(2) {
                 contextBlock += "Speech: \"\(example.raw)\"\nPolished: \"\(example.polished)\"\n"
             }
             contextBlock += "\nMimic this style and tone. Do NOT merge these examples into your response."
-        }
-
-        if !history.isEmpty {
-            contextBlock += "\n\nRecent sentences you polished (for pronoun/naming consistency only):\n"
-            for prevText in history { contextBlock += "- \(prevText)\n" }
-            contextBlock += "\nPolish and return ONLY the new sentence below. Do NOT merge the history in."
         }
 
         let custom = SettingsController.customSystemPrompt
@@ -196,21 +198,19 @@ actor QwenRefiner {
 
         onStatus(.ready)
 
-        // Proactive: an oversized prompt would blow Apple's window → use MLX directly.
-        if !PromptBudget.fitsAppleWindow(instructions, promptInput) {
-            if let mlx = await mlxFallback(system: instructions, user: promptInput, temperature: 0.3, maxTokens: 512) {
-                return finalize(mlx, fallback: text)
-            }
+        // Dictation polish runs on the small in-process MLX Qwen (0.5B) FIRST: on an
+        // 8 GB M1 it's faster than Apple's ~3B model and, because it stays resident, its
+        // latency is the SAME every time — no macOS model-eviction stalls. Apple
+        // Intelligence stays as the automatic fallback when MLX isn't built into the
+        // binary or the model can't load, so a dictation is never lost.
+        if let mlx = await mlxFallback(system: instructions, user: promptInput, temperature: 0.3, maxTokens: 200) {
+            return finalize(mlx, fallback: text)
         }
 
         do {
-            let reply = try await appleRespond(instructions: instructions, prompt: promptInput, temperature: 0.3, maxTokens: 512)
+            let reply = try await appleRespond(instructions: instructions, prompt: promptInput, temperature: 0.3, maxTokens: 200)
             return finalize(reply, fallback: text)
         } catch {
-            // Reactive: Apple declined (context overflow / guardrail / unavailable) → MLX.
-            if let mlx = await mlxFallback(system: instructions, user: promptInput, temperature: 0.3, maxTokens: 512) {
-                return finalize(mlx, fallback: text)
-            }
             onStatus(.failed("Apple Intelligence error: \(error.localizedDescription)"))
             throw error
         }

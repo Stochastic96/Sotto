@@ -93,10 +93,11 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         UserDefaults.standard.object(forKey: speechPitchKey) as? Float ?? 1.0
     }
     
-    /// The in-process MLX Qwen model used for heavier / long-form generation.
-    /// Small 4-bit default chosen to fit alongside Apple Intelligence on an 8 GB Mac.
+    /// The in-process MLX Qwen model used for dictation polish and heavier generation.
+    /// A 0.5B 4-bit default: tiny enough to stay resident on an 8 GB Mac alongside
+    /// Apple Intelligence, so dictation polish is fast and identical every time.
     static var modelIdentifier: String {
-        UserDefaults.standard.string(forKey: modelIdentifierKey) ?? "mlx-community/Qwen2.5-1.5B-Instruct-4bit"
+        UserDefaults.standard.string(forKey: modelIdentifierKey) ?? "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
     }
 
     func showSettings() {
@@ -250,7 +251,7 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         modelLabel.textColor = NSColor.secondaryLabelColor
         llmStack.addArrangedSubview(modelLabel)
 
-        let modelField = createTextField(placeholder: "mlx-community/Qwen2.5-1.5B-Instruct-4bit", value: Self.modelIdentifier)
+        let modelField = createTextField(placeholder: "mlx-community/Qwen2.5-0.5B-Instruct-4bit", value: Self.modelIdentifier)
         modelField.delegate = self
         modelField.target = self
         modelField.action = #selector(modelChanged(_:))
@@ -258,7 +259,7 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         modelField.leadingAnchor.constraint(equalTo: llmStack.leadingAnchor).isActive = true
         modelField.trailingAnchor.constraint(equalTo: llmStack.trailingAnchor).isActive = true
 
-        let llmDesc = createDescriptionLabel("Sotto's brain is fully on-device and native. Apple Intelligence (Foundation Models) handles dictation polish and the Jarvis agent; the in-process MLX Qwen model above handles heavier/long-form generation, kept warm in memory. No Python, no servers, no network. On 8 GB Macs keep a small 4-bit model (e.g. Qwen2.5-1.5B-Instruct-4bit).")
+        let llmDesc = createDescriptionLabel("Sotto's brain is fully on-device and native. The in-process MLX Qwen model above handles dictation polish (kept warm for fast, consistent latency) and heavier/long-form generation; Apple Intelligence (Foundation Models) runs the Jarvis agent's tool-calling and is the polish fallback. No Python, no servers, no network. On 8 GB Macs keep a small 4-bit model (e.g. Qwen2.5-0.5B-Instruct-4bit).")
         llmStack.addArrangedSubview(llmDesc)
 
         let llmCard = createCard(title: "On-Device Brain", iconName: "cpu", subview: llmStack)

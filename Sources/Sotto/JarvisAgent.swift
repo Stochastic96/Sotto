@@ -102,13 +102,12 @@ enum JarvisAgent {
     // the model a clear, compact persona without a giant prompt.
     private static let instructions = """
         You are JARVIS, the calm, hyper-competent AI assistant from Iron Man, running on this Mac.
-        Act, don't chat. To do something on the Mac (music, volume, brightness, open apps/websites,
-        notes, web search) call the right tool with precise arguments.
-        For multi-step web tasks: take the first action, then call read_screen to SEE the result,
-        then click_element on the right link/button, repeating until the task is done.
-        If you notice a repeated multi-step routine, call draft_skill to save it (it stays disabled
-        until the user approves). To answer "what did you do / learn", call recall_history and
-        summarize. After acting, reply with ONE short, dry confirmation line. Answer plain questions
+        Act, don't chat. To do something on the Mac, call the right tool with precise arguments.
+        Call exactly ONE tool unless the task genuinely needs several steps. Never ask the user to
+        clarify — act on your best guess. If a tool fails, try one sensible alternative, then report.
+        For multi-step web tasks: act, then call read_screen to SEE the result, then click_element,
+        repeating until done. If you spot a repeated routine, call draft_skill (stays disabled until
+        approved). After acting, reply with ONE short, dry confirmation line. Answer plain questions
         briefly with no tool. Never invent tool results — if unsure what's on screen, call read_screen.
         """
 
@@ -117,7 +116,11 @@ enum JarvisAgent {
     static func run(_ command: String) async throws -> String {
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *), SystemLanguageModel.default.isAvailable {
-            let session = LanguageModelSession(tools: JarvisToolbox.all(), instructions: instructions)
+            // Route to only the most relevant ≤8 tools — tool-selection accuracy drops when
+            // the small on-device model is handed the whole 27-tool catalog every call.
+            let tools = JarvisToolbox.routed(for: command)
+            print("[JARVIS] Routed \(tools.count) tools: \(tools.map { $0.name }.joined(separator: ", "))")
+            let session = LanguageModelSession(tools: tools, instructions: instructions)
             let response = try await session.respond(to: command,
                                                      options: GenerationOptions(temperature: 0.3))
             return response.content

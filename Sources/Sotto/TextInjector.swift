@@ -89,9 +89,21 @@ final class TextInjector {
         guard result == .success, let element = focusedElement as! AXUIElement? else {
             return false
         }
-        
-        let nsText = text as CFString
-        let setAttrResult = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, nsText)
+
+        // Only attempt direct AX insertion where the focused element actually
+        // supports writing its selected text. Terminal, web views and most
+        // Electron apps return .success from AXUIElementSetAttributeValue but
+        // insert NOTHING — the classic "injection succeeded yet nothing appeared"
+        // bug. Gate on the settable check so those apps fall through to the
+        // reliable pasteboard + synthetic ⌘V path below.
+        var settable: DarwinBoolean = false
+        let settableResult = AXUIElementIsAttributeSettable(element, kAXSelectedTextAttribute as CFString, &settable)
+        guard settableResult == .success, settable.boolValue else {
+            print("[INJECT] Focused element does not support direct AX insertion; using pasteboard")
+            return false
+        }
+
+        let setAttrResult = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString)
         return setAttrResult == .success
     }
 
