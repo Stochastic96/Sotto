@@ -524,9 +524,15 @@ import AVFoundation
     /// "Siri-like" words including the on-device transcriber's frequent mishears of "Siri".
     private static let siriWords: Set<String> = [
         "siri", "siris", "siddhi", "sidi", "sidhi", "suri", "sirhi", "sierra",
-        "cyrus", "city", "syria", "seedy",
+        "cyrus", "city", "syria", "seedy", "cd", "sidney", "sitty", "sirius", "cidi",
     ]
     private static let siriVerbs: Set<String> = ["ask", "asks", "tell", "open", "launch", "start", "hey", "type"]
+    /// Verbs that, when they follow "open <word> and …", signal a Siri request — they're
+    /// things you ask an assistant, not things you do to an app you just opened.
+    private static let siriFollowVerbs: Set<String> = [
+        "ask", "asks", "check", "tell", "what", "whats", "who", "whos", "find",
+        "search", "get", "show", "remind", "when", "how", "why", "where", "play", "set",
+    ]
 
     /// Detects an explicit "ask/open Siri …" command anywhere in the utterance — robust to
     /// the garbled wake word ("Hejarvis") and Siri mishears. Returns the prompt to forward,
@@ -540,6 +546,7 @@ import AVFoundation
             .filter { !$0.isEmpty }
         guard !words.isEmpty else { return nil }
 
+        // Pass 1: an explicit verb followed by a (possibly misheard) Siri word.
         for i in words.indices where siriVerbs.contains(words[i]) || words[i].hasSuffix("jarvis") {
             var j = i + 1
             if j < words.count, words[j] == "to" || words[j] == "the" { j += 1 }
@@ -547,6 +554,17 @@ import AVFoundation
             // Skip connective words so the prompt starts cleanly ("open siri and ask X" → "X").
             var k = j + 1
             while k < words.count, ["to", "and", "ask", "asks", "please", "for"].contains(words[k]) { k += 1 }
+            return words[k...].joined(separator: " ")
+        }
+
+        // Pass 2: "open <ANY word> and <ask/check/what/who…> …" — catches every future ASR
+        // mishear of "Siri" without naming it, because you don't say "open Chrome and ask…".
+        for i in words.indices where ["open", "launch", "start"].contains(words[i]) {
+            let andIdx = i + 2
+            guard andIdx + 1 < words.count, words[andIdx] == "and",
+                  siriFollowVerbs.contains(words[andIdx + 1]) else { continue }
+            var k = andIdx + 1
+            while k < words.count, ["ask", "asks", "to", "please"].contains(words[k]) { k += 1 }
             return words[k...].joined(separator: " ")
         }
         return nil
