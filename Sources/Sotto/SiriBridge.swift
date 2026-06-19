@@ -17,6 +17,12 @@ import CoreGraphics
 enum SiriBridge {
     private static let injector = TextInjector()
 
+    /// Just open the Siri box (no prompt).
+    @MainActor
+    static func openOnly() async {
+        activate()
+    }
+
     /// Open Siri, type `prompt`, and submit.
     @MainActor
     static func send(_ prompt: String) async {

@@ -521,26 +521,33 @@ import AVFoundation
     }
 
     /// If the utterance explicitly asks to route to Siri/Apple Intelligence, returns the
-    /// prompt to forward. Deterministic so the small model can't drop it.
+    /// "Siri-like" words including the on-device transcriber's frequent mishears of "Siri".
+    private static let siriWords: Set<String> = [
+        "siri", "siris", "siddhi", "sidi", "sidhi", "suri", "sirhi", "sierra",
+        "cyrus", "city", "syria", "seedy",
+    ]
+    private static let siriVerbs: Set<String> = ["ask", "asks", "tell", "open", "launch", "start", "hey", "type"]
+
+    /// Detects an explicit "ask/open Siri …" command anywhere in the utterance — robust to
+    /// the garbled wake word ("Hejarvis") and Siri mishears. Returns the prompt to forward,
+    /// "" when it's an open-only command, or nil when it isn't a Siri command at all.
+    /// (Lowercased; Siri doesn't care about casing.)
     private static func siriPrompt(in raw: String) -> String? {
-        var t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lead = t.lowercased()
-        for p in ["hey jarvis", "jarvis"] where lead.hasPrefix(p) {
-            t = String(t.dropFirst(p.count)).trimmingCharacters(in: CharacterSet(charactersIn: " ,."))
-            break
-        }
-        let l = t.lowercased()
-        // Tolerate speech variations: ask/asks/tell + siri/apple intelligence, with/without "to".
-        let markers = [
-            "ask siri to ", "asks siri to ", "ask siri ", "asks siri ",
-            "tell siri to ", "tell siri ", "hey siri ",
-            "ask apple intelligence to ", "asks apple intelligence to ",
-            "ask apple intelligence ", "asks apple intelligence ",
-            "type to siri ", "siri ",
-        ]
-        for marker in markers where l.hasPrefix(marker) {
-            let prompt = String(t.dropFirst(marker.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-            return prompt.isEmpty ? nil : prompt
+        let words = raw.lowercased()
+            .replacingOccurrences(of: ",", with: " ")
+            .split(separator: " ")
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ".,!?")) }
+            .filter { !$0.isEmpty }
+        guard !words.isEmpty else { return nil }
+
+        for i in words.indices where siriVerbs.contains(words[i]) || words[i].hasSuffix("jarvis") {
+            var j = i + 1
+            if j < words.count, words[j] == "to" || words[j] == "the" { j += 1 }
+            guard j < words.count, siriWords.contains(words[j]) else { continue }
+            // Skip connective words so the prompt starts cleanly ("open siri and ask X" → "X").
+            var k = j + 1
+            while k < words.count, ["to", "and", "ask", "asks", "please", "for"].contains(words[k]) { k += 1 }
+            return words[k...].joined(separator: " ")
         }
         return nil
     }
@@ -569,6 +576,27 @@ import AVFoundation
     // MARK: - Jarvis pipeline (⌘⇧J) — full OS assistant: skills, native actions, agent, orchestrator.
 
     private func runJarvisPipeline(raw: String, samples: [Float], context: AppContext) async {
+        // 0. "ask/open Siri …" wins FIRST — no tool routing, no model, no other scripts.
+        // Just open the Siri box and (if there's a prompt) paste it. Fastest possible path.
+        if let siriAsk = Self.siriPrompt(in: raw) {
+            if siriAsk.isEmpty {
+                hud.show("􀊫  Opening Siri…")
+                await SiriBridge.openOnly()
+                hud.showResult("Siri's up. " + Quips.siri())
+            } else {
+                hud.show("􀊫  Asking Siri…")
+                await SiriBridge.send(siriAsk)
+                let quip = Quips.siri()
+                hud.showResult("\(quip)\n› \(siriAsk)")
+                speak(quip)
+            }
+            print("[JARVIS] Siri path (prompt: '\(siriAsk)')")
+            TaskJournal.record(command: raw, reply: "Siri: \(siriAsk.isEmpty ? "(opened)" : siriAsk)")
+            state = .idle
+            Task { try? await Task.sleep(nanoseconds: 2_500_000_000); hud.hide() }
+            return
+        }
+
         // 1. User-only skill approval gate (the only way a drafted skill becomes runnable).
         let lowerApproval = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         for prefix in ["enable skill ", "approve skill ", "activate skill "] {
@@ -607,21 +635,6 @@ import AVFoundation
             hud.showResult("\(summary)\n\(Quips.weatherTail())")   // data on screen, wit underneath
             speak(shortSpoken(summary))
             TaskJournal.record(command: raw, reply: summary)
-            state = .idle
-            Task { try? await Task.sleep(nanoseconds: 2_500_000_000); hud.hide() }
-            return
-        }
-
-        // 3c. Explicit "ask Siri …" → forward straight to the Siri / Apple Intelligence box
-        // (fire-and-forget: Siri answers in its own window). Deterministic, no model needed.
-        if let siriAsk = Self.siriPrompt(in: raw) {
-            hud.show("􀊫  Asking Siri…")
-            await SiriBridge.send(siriAsk)
-            print("[JARVIS] Forwarded to Siri: \(siriAsk)")
-            let quip = Quips.siri()
-            hud.showResult("\(quip)\n› \(siriAsk)")
-            speak(quip)
-            TaskJournal.record(command: raw, reply: "Forwarded to Siri: \(siriAsk)")
             state = .idle
             Task { try? await Task.sleep(nanoseconds: 2_500_000_000); hud.hide() }
             return
