@@ -381,6 +381,7 @@ import AVFoundation
         }
     }
 
+
     private func endRecording() {
         guard case .recording = state else { return }
         visualizerTimer?.invalidate()
@@ -390,362 +391,252 @@ import AVFoundation
         state = .transcribing
         hud.show("…  Transcribing")
 
-        // Capture the focused app *now*, before transcription finishes —
-        // focus may change while the model runs.
+        // Capture the focused app *now*, before transcription finishes.
         let context = ContextDetector.current()
+        let mode = currentMode
 
         Task { @MainActor in
-            let pipelineStart = CFAbsoluteTimeGetCurrent()
-            var showedSuccessHUD = false
-            
-            defer {
-                if !showedSuccessHUD {
-                    self.hud.hide()
-                }
-            }
-            
             // Ignore accidental taps shorter than ~0.3s of audio.
             guard samples.count > 4800 else {
                 self.state = .idle
+                self.hud.hide()
                 return
             }
             do {
-                let transcribeStart = CFAbsoluteTimeGetCurrent()
                 let raw = try await self.transcriber.transcribe(samples)
-                let transcribeDuration = CFAbsoluteTimeGetCurrent() - transcribeStart
-                print("[APP] Raw Whisper Transcript: '\(raw)'")
-                print("[AGENT-DEBUG] currentMode is '\(self.currentMode)', qwen is nil: \(self.qwen == nil)")
-
-                // User-only approval gate: speaking this is the ONLY way a Jarvis-drafted
-                // skill becomes runnable. The agent can draft skills but cannot enable its own.
-                let lowerRawForApproval = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-                for prefix in ["enable skill ", "approve skill ", "activate skill "] {
-                    if lowerRawForApproval.hasPrefix(prefix) {
-                        var skillName = String(raw.trimmingCharacters(in: .whitespacesAndNewlines).dropFirst(prefix.count))
-                        while let last = skillName.last, ".,!?".contains(last) { skillName.removeLast() }
-                        let result = SkillStore.enable(skillName.trimmingCharacters(in: .whitespacesAndNewlines))
-                        print("[SKILL] \(result)")
-                        self.speak(result)
-                        self.hud.show("✓ \(result)")
-                        showedSuccessHUD = true
-                        self.state = .idle
-                        Task { try? await Task.sleep(nanoseconds: 2_000_000_000); self.hud.hide() }
-                        return
-                    }
+                print("[APP] Raw transcript: '\(raw)' (mode: \(mode))")
+                switch mode {
+                case .dictation:
+                    await self.runDictationPipeline(raw: raw, samples: samples, context: context)
+                case .jarvis:
+                    await self.runJarvisPipeline(raw: raw, samples: samples, context: context)
                 }
-
-                var selectionText: String? = nil
-                let lowerRaw = raw.lowercased()
-                if lowerRaw.contains("selection") || lowerRaw.contains("selected text") {
-                    selectionText = await self.injector.grabActiveSelection(targetPID: self.lastActiveApp?.processIdentifier)
-                    print("[APP] Grabbed selection: '\(selectionText ?? "none")'")
-                }
-
-                // Zero-latency local shortcuts (e.g. window management, browser tab navigation, system controls)
-                if let shortcut = CommandEngine.checkZeroLatencyShortcut(for: raw) {
-                    print("[APP] Zero-latency shortcut matched: \(shortcut.hudMessage)")
-                    self.state = .polishing
-                    self.hud.show("✨ \(shortcut.hudMessage)…")
-                    
-                    let output: String
-                    if shortcut.command.hasPrefix("native:") {
-                        let action = String(shortcut.command.dropFirst(7))
-                        switch action {
-                        case "mute":
-                            SystemControlHelper.setMuted(true)
-                            output = "Muted"
-                        case "unmute":
-                            SystemControlHelper.setMuted(false)
-                            output = "Unmuted"
-                        case "volume_up":
-                            let current = SystemControlHelper.getVolume()
-                            SystemControlHelper.setVolume(current + 10.0)
-                            output = "Volume Set"
-                        case "volume_down":
-                            let current = SystemControlHelper.getVolume()
-                            SystemControlHelper.setVolume(current - 10.0)
-                            output = "Volume Set"
-                        case "brightness_up":
-                            let current = SystemControlHelper.getBrightness()
-                            SystemControlHelper.setBrightness(current + 0.1)
-                            output = "Brightness Set"
-                        case "brightness_down":
-                            let current = SystemControlHelper.getBrightness()
-                            SystemControlHelper.setBrightness(current - 0.1)
-                            output = "Brightness Set"
-                        case "system_info":
-                            let battery = SystemDiagnostics.getBatteryPercentage()
-                            let wifi = SystemDiagnostics.getWifiSSID()
-                            let disk = SystemDiagnostics.getFreeDiskSpace()
-                            output = "# System Status Report\n\n- **Battery**: \(battery)\n- **Wi-Fi SSID**: \(wifi)\n- **Free Disk Space**: \(disk)\n"
-                            let voice = "मिस्टर लॉर्ड, battery \(battery) पर है, Wi-Fi network '\(wifi)' से connected है, और disk पर \(disk) space खाली है। दिल्ली से हूँ भाई, सब चकाचक चल रहा है।"
-                            self.speak(voice)
-                        case "ram_info":
-                            let ram = SystemDiagnostics.getRAMUsage()
-                            let hogs = SystemDiagnostics.getTopMemoryProcesses()
-                            var report = "# 🧠 RAM Memory Status\n\n"
-                            report += "- **Total RAM**: \(String(format: "%.2f", ram.totalGB)) GB\n"
-                            report += "- **Used RAM**: \(String(format: "%.2f", ram.totalGB - ram.freeGB)) GB (\(String(format: "%.1f", ram.usedPercent))%)\n"
-                            report += "- **Free RAM**: \(String(format: "%.2f", ram.freeGB)) GB\n"
-                            report += "- **Wired (System)**: \(String(format: "%.2f", ram.wiredGB)) GB\n"
-                            report += "- **Active (App)**: \(String(format: "%.2f", ram.activeGB)) GB\n"
-                            report += "- **Compressed**: \(String(format: "%.2f", ram.compressedGB)) GB\n\n"
-                            report += "## 🏆 Top Memory Consumers\n\n"
-                            report += "| Process Name | Memory Usage |\n"
-                            report += "| :--- | :--- |\n"
-                            report += hogs
-                            output = report
-                        default:
-                            // Window management, media keys, browser nav, appearance,
-                            // sleep/lock/trash — all native Swift (see NativeActions).
-                            output = await NativeActions.perform(action)
-                        }
-                    } else {
-                        output = CommandEngine.runCommandNatively(shortcut.command)
-                    }
-                    print("[APP] Zero-latency command output: \(output)")
-                    
-                    // If listing tabs, copy the output to general clipboard
-                    if shortcut.hudMessage == "List of Tabs" && !output.isEmpty {
-                        let pasteboard = NSPasteboard.general
-                        pasteboard.clearContents()
-                        pasteboard.setString(output, forType: .string)
-                    }
-                    
-                    if !shortcut.voiceFeedback.isEmpty {
-                        self.speak(shortcut.voiceFeedback)
-                    }
-                    
-                    if shortcut.showOutputInWindow {
-                        self.explanationController.show(text: output, title: shortcut.windowTitle)
-                    }
-                    
-                    self.hud.show("✓ \(shortcut.hudMessage)")
-                    self.state = .idle
-                    Task {
-                        try? await Task.sleep(nanoseconds: 1_500_000_000)
-                        self.hud.hide()
-                    }
-                    return
-                }
-
-                var agentError: Error? = nil
-                
-                // Native Apple Intelligence agent (tool calling) — in Jarvis mode on the Apple
-                // provider, the on-device model OWNS routing: it picks and calls JarvisToolbox
-                // tools (including ask_claude → the Claude desktop quick-entry popover). Runs
-                // BEFORE the legacy web-orchestrator so "research X on Claude" goes to the
-                // popover, not the old Chrome/claude.ai sign-in flow. Falls through on failure.
-                if self.currentMode == .jarvis,
-                   SettingsController.apiProvider.lowercased() == "apple",
-                   #available(macOS 26.0, *),
-                   JarvisAgent.isAvailable() {
-                    print("[AGENT-DEBUG] Entered native Apple Jarvis agent path.")
-                    self.state = .polishing
-                    self.hud.show("✨  Jarvis…")
-                    do {
-                        let reply = try await JarvisAgent.run(raw)
-                        print("[AGENT-DEBUG] Apple Jarvis reply: '\(reply)'")
-                        DatasetLogger.shared.log(mode: "jarvis-apple", app: self.lastActiveApp?.localizedName, rawTranscript: raw, response: reply, kind: "agent", samples: samples)
-                        TaskJournal.record(command: raw, reply: reply)
-                        showedSuccessHUD = true
-                        if reply.isEmpty {
-                            self.hud.show("✓ Done")
-                        } else {
-                            self.hud.show("🗣 \(reply)")
-                            self.speak(reply)
-                        }
-                        self.state = .idle
-                        Task {
-                            try? await Task.sleep(nanoseconds: 2_000_000_000)
-                            self.hud.hide()
-                        }
-                        return
-                    } catch {
-                        agentError = error
-                        print("[AGENT] Apple Jarvis agent failed (\(error.localizedDescription)); falling back to legacy paths.")
-                    }
-                }
-
-                // Deterministic, zero-token browser-orchestration commands (e.g. "open Claude").
-                // Matched before any Qwen call, so they run instantly in both dictation and Jarvis modes.
-                if let action = CommandEngine.orchestratorAction(for: raw) {
-                    print("[APP] Orchestrator command recognized: \(action)")
-                    DatasetLogger.shared.log(mode: "orchestrator", app: self.lastActiveApp?.localizedName, rawTranscript: raw, response: "\(action)", kind: "orchestrator", samples: samples)
-                    showedSuccessHUD = true
-                    switch action {
-                    case .claudeNewChat:
-                        self.hud.show("🔑 Summoning Claude popover…")
-                        self.speak("Claude popover खोल रहा हूँ बॉस।")
-                        await ClaudeQuickEntry.send("")
-                    case .prepPrompt(let useCase):
-                        await self.handlePrepPrompt(useCase)
-                    case .sendLastPromptToClaude:
-                        await self.handleSendLastPrompt()
-                    }
-                    self.state = .idle
-                    Task {
-                        try? await Task.sleep(nanoseconds: 2_000_000_000)
-                        self.hud.hide()
-                    }
-                    return
-                }
-
-                // Jarvis mode is powered by the native Apple Intelligence agent above.
-                // If we reached here in Jarvis mode, Apple Intelligence wasn't available —
-                // report the exact error/availability problem to the user.
-                if self.currentMode == .jarvis {
-                    let errorMessage: String
-                    if let err = agentError {
-                        errorMessage = err.localizedDescription
-                    } else if let availErr = JarvisAgent.availabilityError() {
-                        errorMessage = availErr
-                    } else {
-                        errorMessage = "Apple Intelligence is unavailable on this machine."
-                    }
-                    print("[AGENT] Jarvis mode failed: \(errorMessage)")
-                    self.hud.show("⚠️ Jarvis Error")
-                    self.speak("Jarvis is unavailable. \(errorMessage)")
-                    showedSuccessHUD = true
-                    self.state = .idle
-                    Task { try? await Task.sleep(nanoseconds: 3_500_000_000); self.hud.hide() }
-                    return
-                }
-
-                let output = await CommandEngine.process(raw, context: context, selection: selectionText)
-                var text = output.text
-                
-                var polishDuration = 0.0
-
-                if self.polishEnabled, !text.isEmpty, let qwen = self.qwen {
-                    self.state = .polishing
-                    self.hud.show("✨  Polishing…")
-                    let polishStart = CFAbsoluteTimeGetCurrent()
-                    do {
-                        let polished = try await withThrowingTaskGroup(of: String.self) { group in
-                            group.addTask {
-                                try await qwen.refine(text, context: context, history: self.recentTranscripts)
-                            }
-                            group.addTask {
-                                try await Task.sleep(nanoseconds: 15_000_000_000) // 15 seconds timeout
-                                throw NSError(domain: "SottoQwen", code: -1, userInfo: [NSLocalizedDescriptionKey: "AI Polish timed out"])
-                            }
-                            guard let result = try await group.next() else {
-                                throw NSError(domain: "SottoQwen", code: -2, userInfo: [NSLocalizedDescriptionKey: "No result returned"])
-                            }
-                            group.cancelAll()
-                            return result
-                        }
-                        
-                        let originalWords = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
-                        let polishedWords = polished.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
-                        
-                        if polished.isEmpty {
-                            print("[APP] AI Polish returned empty string. Falling back to raw text.")
-                        } else if (polishedWords.count < originalWords.count / 3) || (originalWords.count >= 8 && polishedWords.count <= 2) {
-                            print("[APP] AI Polish truncated output drastically (original words: \(originalWords.count), polished words: \(polishedWords.count), polished: '\(polished)'). Falling back to raw text.")
-                        } else if (Double(polishedWords.count) > Double(originalWords.count) * 2.5) && originalWords.count >= 6 {
-                            print("[APP] AI Polish expanded output drastically (original words: \(originalWords.count), polished words: \(polishedWords.count), polished: '\(polished)'). Likely hallucination or loop. Falling back to raw text.")
-                        } else if hasRepetitiveLoops(polished) {
-                            print("[APP] AI Polish contains repetitive loops. Falling back to raw text.")
-                        } else {
-                            text = polished
-                        }
-                    } catch {
-                        print("[APP] AI Polish failed or timed out: \(error.localizedDescription). Using raw text.")
-                    }
-                    polishDuration = CFAbsoluteTimeGetCurrent() - polishStart
-                }
-
-                if output.showLocalExplanation {
-                    self.state = .polishing
-                    self.hud.show("✨  AI Thinking…")
-                    var explanationText = ""
-                    if let qwen = self.qwen {
-                        do {
-                            let result = try await qwen.refine(text, context: context, history: [])
-                            explanationText = result
-                        } catch {
-                            explanationText = "Local AI failed to generate explanation: \(error.localizedDescription)"
-                        }
-                    } else {
-                        explanationText = "Local AI model is not loaded."
-                    }
-                    
-                    self.state = .idle
-                    self.hud.show("✓ Done")
-                    
-                    // Display locally in Sotto window
-                    self.explanationController.show(text: explanationText, title: output.explanationTitle)
-                    
-                    Task {
-                        try? await Task.sleep(nanoseconds: 1_500_000_000)
-                        self.hud.hide()
-                    }
-                    return
-                }
-
-                if !text.isEmpty || output.fileURL != nil || output.searchShortcut != nil {
-                    print("[APP] Content ready for injection: '\(text)' (file: \(output.fileURL?.path ?? "none"), searchShortcut: \(output.searchShortcut?.rawValue ?? "none"), pressReturn: \(output.pressReturnAfter))")
-                    NSSound(named: "Tink")?.play()
-
-                    if let app = self.lastActiveApp {
-                        print("[APP] Reactivating target application: \(app.localizedName ?? "unknown")")
-                        if #available(macOS 14.0, *) {
-                            NSApplication.shared.yieldActivation(to: app)
-                        }
-                        app.activate(options: [])
-                        try? await Task.sleep(nanoseconds: 150_000_000) // 150ms delay for window focus shift
-                    }
-
-                    if output.delayBeforeInject > 0 {
-                        try? await Task.sleep(nanoseconds: UInt64(output.delayBeforeInject * 1_000_000_000))
-                    }
-
-                    if let shortcut = output.searchShortcut {
-                        await self.injector.pressSearchShortcut(shortcut, targetPID: self.lastActiveApp?.processIdentifier)
-                        // Wait for search field to open and focus
-                        try? await Task.sleep(nanoseconds: 300_000_000) // 300ms
-                    }
-
-                    if !text.isEmpty || output.fileURL != nil {
-                        await self.injector.inject(text, fileURL: output.fileURL, targetPID: self.lastActiveApp?.processIdentifier)
-                    }
-
-                    if output.pressReturnAfter {
-                        try? await Task.sleep(nanoseconds: 350_000_000)
-                        await self.injector.pressReturn(targetPID: self.lastActiveApp?.processIdentifier)
-                    }
-                    self.statusBar.lastTranscript = text
-                    if !text.isEmpty {
-                        self.recentTranscripts.append(text)
-                        if self.recentTranscripts.count > 5 {
-                            self.recentTranscripts.removeFirst()
-                        }
-                        self.learnFromDictation(raw: raw, polished: text)
-                    }
-                    DatasetLogger.shared.log(mode: "dictation", app: self.lastActiveApp?.localizedName, rawTranscript: raw, response: text, kind: "polish", samples: samples)
-
-                    let totalDuration = CFAbsoluteTimeGetCurrent() - pipelineStart
-                    print("[BENCHMARK] Pipeline executed successfully in \(String(format: "%.2f", totalDuration * 1000))ms (Whisper: \(String(format: "%.2f", transcribeDuration * 1000))ms, Qwen: \(String(format: "%.2f", polishDuration * 1000))ms)")
-                    
-                    self.hud.show("✓ Done (\(String(format: "%.1f", totalDuration))s)")
-                    showedSuccessHUD = true
-                    
-                    Task {
-                        try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5s
-                        self.hud.hide()
-                    }
-                } else {
-                    print("[APP] Transcript, search shortcut, and file URL are empty, skipping injection")
-                }
-                self.state = .idle
             } catch {
                 NSSound(named: "Basso")?.play()
+                self.hud.hide()
                 self.state = .error("Transcription failed: \(error.localizedDescription)")
                 self.scheduleErrorRecovery()
             }
         }
+    }
+
+    // MARK: - Dictation pipeline (⌘⇧K) — PURE dictation: listen → AI polish → paste.
+    //         No commands, no tasks, no Jarvis. Those live only in the Jarvis pipeline.
+
+    private func runDictationPipeline(raw: String, samples: [Float], context: AppContext) async {
+        let pipelineStart = CFAbsoluteTimeGetCurrent()
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        var polishDuration = 0.0
+
+        guard !text.isEmpty else {
+            state = .idle
+            hud.hide()
+            return
+        }
+
+        // AI polish (Apple Intelligence, warm) with a 15s safety timeout + sanity checks.
+        if polishEnabled, let qwen = self.qwen {
+            state = .polishing
+            hud.show("✨  Polishing…")
+            let polishStart = CFAbsoluteTimeGetCurrent()
+            do {
+                let polished = try await withThrowingTaskGroup(of: String.self) { group in
+                    group.addTask { try await qwen.refine(text, context: context, history: self.recentTranscripts) }
+                    group.addTask {
+                        try await Task.sleep(nanoseconds: 15_000_000_000)
+                        throw NSError(domain: "SottoQwen", code: -1, userInfo: [NSLocalizedDescriptionKey: "AI Polish timed out"])
+                    }
+                    guard let result = try await group.next() else {
+                        throw NSError(domain: "SottoQwen", code: -2, userInfo: [NSLocalizedDescriptionKey: "No result returned"])
+                    }
+                    group.cancelAll()
+                    return result
+                }
+                if isAcceptablePolish(original: text, polished: polished) {
+                    text = polished
+                }
+            } catch {
+                print("[DICTATION] AI Polish failed/timed out: \(error.localizedDescription). Using raw text.")
+            }
+            polishDuration = CFAbsoluteTimeGetCurrent() - polishStart
+        }
+
+        NSSound(named: "Tink")?.play()
+
+        // Reactivate the target app and paste. No search shortcuts, no files, no commands.
+        if let app = self.lastActiveApp {
+            if #available(macOS 14.0, *) { NSApplication.shared.yieldActivation(to: app) }
+            app.activate(options: [])
+            try? await Task.sleep(nanoseconds: 150_000_000)
+        }
+        await injector.inject(text, fileURL: nil, targetPID: lastActiveApp?.processIdentifier)
+
+        statusBar.lastTranscript = text
+        recentTranscripts.append(text)
+        if recentTranscripts.count > 5 { recentTranscripts.removeFirst() }
+        learnFromDictation(raw: raw, polished: text)
+        DatasetLogger.shared.log(mode: "dictation", app: lastActiveApp?.localizedName, rawTranscript: raw, response: text, kind: "polish", samples: samples)
+
+        let total = CFAbsoluteTimeGetCurrent() - pipelineStart
+        print("[BENCHMARK] Dictation \(String(format: "%.0f", total * 1000))ms (polish: \(String(format: "%.0f", polishDuration * 1000))ms)")
+        hud.show("✓ Done (\(String(format: "%.1f", total))s)")
+        state = .idle
+        Task { try? await Task.sleep(nanoseconds: 1_500_000_000); hud.hide() }
+    }
+
+    /// Sanity-checks an AI-polished dictation against truncation / expansion / loops.
+    private func isAcceptablePolish(original: String, polished: String) -> Bool {
+        if polished.isEmpty { return false }
+        let originalWords = original.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+        let polishedWords = polished.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+        if (polishedWords.count < originalWords.count / 3) || (originalWords.count >= 8 && polishedWords.count <= 2) {
+            print("[DICTATION] Polish truncated; using raw."); return false
+        }
+        if (Double(polishedWords.count) > Double(originalWords.count) * 2.5) && originalWords.count >= 6 {
+            print("[DICTATION] Polish expanded (likely hallucination); using raw."); return false
+        }
+        if hasRepetitiveLoops(polished) {
+            print("[DICTATION] Polish looped; using raw."); return false
+        }
+        return true
+    }
+
+    // MARK: - Jarvis pipeline (⌘⇧J) — full OS assistant: skills, native actions, agent, orchestrator.
+
+    private func runJarvisPipeline(raw: String, samples: [Float], context: AppContext) async {
+        // 1. User-only skill approval gate (the only way a drafted skill becomes runnable).
+        let lowerApproval = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        for prefix in ["enable skill ", "approve skill ", "activate skill "] {
+            if lowerApproval.hasPrefix(prefix) {
+                var skillName = String(raw.trimmingCharacters(in: .whitespacesAndNewlines).dropFirst(prefix.count))
+                while let last = skillName.last, ".,!?".contains(last) { skillName.removeLast() }
+                let result = SkillStore.enable(skillName.trimmingCharacters(in: .whitespacesAndNewlines))
+                print("[SKILL] \(result)")
+                speak(result)
+                hud.show("✓ \(result)")
+                state = .idle
+                Task { try? await Task.sleep(nanoseconds: 2_000_000_000); hud.hide() }
+                return
+            }
+        }
+
+        // 2. Grab the active selection when referenced.
+        if raw.lowercased().contains("selection") || raw.lowercased().contains("selected text") {
+            let sel = await injector.grabActiveSelection(targetPID: lastActiveApp?.processIdentifier)
+            print("[JARVIS] Grabbed selection: '\(sel ?? "none")'")
+        }
+
+        // 3. Zero-latency deterministic shortcuts (native Swift actions, no LLM).
+        if let shortcut = CommandEngine.checkZeroLatencyShortcut(for: raw) {
+            await runZeroLatencyShortcut(shortcut)
+            return
+        }
+
+        // 4. Native Apple Intelligence agent (tool calling) — the catch-all brain.
+        var agentError: Error? = nil
+        if SettingsController.apiProvider.lowercased() == "apple",
+           #available(macOS 26.0, *), JarvisAgent.isAvailable() {
+            state = .polishing
+            hud.show("✨  Jarvis…")
+            do {
+                let reply = try await JarvisAgent.run(raw)
+                print("[JARVIS] Agent reply: '\(reply)'")
+                DatasetLogger.shared.log(mode: "jarvis-apple", app: lastActiveApp?.localizedName, rawTranscript: raw, response: reply, kind: "agent", samples: samples)
+                TaskJournal.record(command: raw, reply: reply)
+                if reply.isEmpty { hud.show("✓ Done") } else { hud.show("🗣 \(reply)"); speak(reply) }
+                state = .idle
+                Task { try? await Task.sleep(nanoseconds: 2_000_000_000); hud.hide() }
+                return
+            } catch {
+                agentError = error
+                print("[JARVIS] Agent failed (\(error.localizedDescription)); trying orchestrator.")
+            }
+        }
+
+        // 5. Deterministic browser-orchestration (Claude popover) commands.
+        if let action = CommandEngine.orchestratorAction(for: raw) {
+            print("[JARVIS] Orchestrator command: \(action)")
+            DatasetLogger.shared.log(mode: "orchestrator", app: lastActiveApp?.localizedName, rawTranscript: raw, response: "\(action)", kind: "orchestrator", samples: samples)
+            switch action {
+            case .claudeNewChat:
+                hud.show("🔑 Summoning Claude popover…")
+                speak("Claude popover खोल रहा हूँ बॉस।")
+                await ClaudeQuickEntry.send("")
+            case .prepPrompt(let useCase):
+                await handlePrepPrompt(useCase)
+            case .sendLastPromptToClaude:
+                await handleSendLastPrompt()
+            }
+            state = .idle
+            Task { try? await Task.sleep(nanoseconds: 2_000_000_000); hud.hide() }
+            return
+        }
+
+        // 6. Nothing matched — report why Jarvis couldn't act.
+        let errorMessage: String
+        if let err = agentError { errorMessage = err.localizedDescription }
+        else if let availErr = JarvisAgent.availabilityError() { errorMessage = availErr }
+        else { errorMessage = "Apple Intelligence is unavailable on this machine." }
+        print("[JARVIS] Failed: \(errorMessage)")
+        hud.show("⚠️ Jarvis Error")
+        speak("Jarvis is unavailable. \(errorMessage)")
+        state = .idle
+        Task { try? await Task.sleep(nanoseconds: 3_500_000_000); hud.hide() }
+    }
+
+    /// Executes a matched zero-latency shortcut (native actions / system info report).
+    private func runZeroLatencyShortcut(_ shortcut: CommandEngine.ZeroLatencyShortcut) async {
+        print("[JARVIS] Zero-latency shortcut: \(shortcut.hudMessage)")
+        state = .polishing
+        hud.show("✨ \(shortcut.hudMessage)…")
+
+        let output: String
+        if shortcut.command.hasPrefix("native:") {
+            let action = String(shortcut.command.dropFirst(7))
+            switch action {
+            case "mute": SystemControlHelper.setMuted(true); output = "Muted"
+            case "unmute": SystemControlHelper.setMuted(false); output = "Unmuted"
+            case "volume_up": SystemControlHelper.setVolume(SystemControlHelper.getVolume() + 10.0); output = "Volume Set"
+            case "volume_down": SystemControlHelper.setVolume(SystemControlHelper.getVolume() - 10.0); output = "Volume Set"
+            case "brightness_up": SystemControlHelper.setBrightness(SystemControlHelper.getBrightness() + 0.1); output = "Brightness Set"
+            case "brightness_down": SystemControlHelper.setBrightness(SystemControlHelper.getBrightness() - 0.1); output = "Brightness Set"
+            case "system_info":
+                let battery = SystemDiagnostics.getBatteryPercentage()
+                let wifi = SystemDiagnostics.getWifiSSID()
+                let disk = SystemDiagnostics.getFreeDiskSpace()
+                output = "# System Status Report\n\n- **Battery**: \(battery)\n- **Wi-Fi SSID**: \(wifi)\n- **Free Disk Space**: \(disk)\n"
+                speak("मिस्टर लॉर्ड, battery \(battery) पर है, Wi-Fi network '\(wifi)' से connected है, और disk पर \(disk) space खाली है। दिल्ली से हूँ भाई, सब चकाचक चल रहा है।")
+            case "ram_info":
+                let ram = SystemDiagnostics.getRAMUsage()
+                let hogs = SystemDiagnostics.getTopMemoryProcesses()
+                var report = "# 🧠 RAM Memory Status\n\n"
+                report += "- **Total RAM**: \(String(format: "%.2f", ram.totalGB)) GB\n"
+                report += "- **Used RAM**: \(String(format: "%.2f", ram.totalGB - ram.freeGB)) GB (\(String(format: "%.1f", ram.usedPercent))%)\n"
+                report += "- **Free RAM**: \(String(format: "%.2f", ram.freeGB)) GB\n"
+                report += "- **Wired (System)**: \(String(format: "%.2f", ram.wiredGB)) GB\n"
+                report += "- **Active (App)**: \(String(format: "%.2f", ram.activeGB)) GB\n"
+                report += "- **Compressed**: \(String(format: "%.2f", ram.compressedGB)) GB\n\n"
+                report += "## 🏆 Top Memory Consumers\n\n| Process Name | Memory Usage |\n| :--- | :--- |\n"
+                report += hogs
+                output = report
+            default:
+                output = await NativeActions.perform(action)
+            }
+        } else {
+            output = CommandEngine.runCommandNatively(shortcut.command)
+        }
+        print("[JARVIS] Zero-latency output: \(output)")
+
+        if shortcut.hudMessage == "List of Tabs" && !output.isEmpty {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(output, forType: .string)
+        }
+        if !shortcut.voiceFeedback.isEmpty { speak(shortcut.voiceFeedback) }
+        if shortcut.showOutputInWindow { explanationController.show(text: output, title: shortcut.windowTitle) }
+
+        hud.show("✓ \(shortcut.hudMessage)")
+        state = .idle
+        Task { try? await Task.sleep(nanoseconds: 1_500_000_000); hud.hide() }
     }
 
     private func writeNoteFile(filename: String, content: String) {
