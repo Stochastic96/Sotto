@@ -70,6 +70,16 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
     <string>Sotto records your voice only while you hold the hotkey, transcribes it on-device, and never sends audio anywhere.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Sotto uses speech recognition to transcribe your voice locally or using Siri's speech engine.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Sotto controls apps like Spotify, Notes, and Finder on your behalf to carry out your spoken commands.</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>Sotto creates calendar events when you ask Jarvis to schedule something.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Sotto creates calendar events when you ask Jarvis to schedule something.</string>
+    <key>NSRemindersUsageDescription</key>
+    <string>Sotto creates reminders when you ask Jarvis to remind you of something.</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>Sotto creates reminders when you ask Jarvis to remind you of something.</string>
 </dict>
 </plist>
 EOF

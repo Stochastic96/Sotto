@@ -47,10 +47,10 @@ struct SpotifyTool: Tool {
         // Every command is addressed to Spotify by name (see SpotifyControl), so it can
         // never accidentally drive Apple Music or another player.
         switch arguments.action {
-        case .play:     await SpotifyControl.play();     return "Spotify playing."
-        case .pause:    await SpotifyControl.pause();    return "Spotify paused."
-        case .next:     await SpotifyControl.next();     return "Skipped to the next track."
-        case .previous: await SpotifyControl.previous(); return "Back to the previous track."
+        case .play:     return await SpotifyControl.play()     ? "Spotify playing." : SpotifyControl.permissionHint
+        case .pause:    return await SpotifyControl.pause()    ? "Spotify paused." : SpotifyControl.permissionHint
+        case .next:     return await SpotifyControl.next()     ? "Skipped to the next track." : SpotifyControl.permissionHint
+        case .previous: return await SpotifyControl.previous() ? "Back to the previous track." : SpotifyControl.permissionHint
         case .playSong:
             let q = (arguments.query ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !q.isEmpty else { return "Tell me which song or artist to play." }

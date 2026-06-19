@@ -41,32 +41,46 @@ enum SpotifyControl {
 
     // MARK: - AppleScript transport (always addressed to Spotify)
 
+    /// Shown when macOS blocks Apple Events (error -1743) — so the tool reports the truth
+    /// instead of the model claiming a success that never happened.
+    static let permissionHint = "macOS is blocking Sotto from controlling Spotify. Enable it under System Settings ▸ Privacy & Security ▸ Automation ▸ Sotto ▸ Spotify, then try again."
+
     /// Runs `tell application "Spotify" to <command>` on the main thread (Apple Events are
-    /// delivered most reliably via the main run loop) and returns its string result.
+    /// delivered most reliably via the main run loop). Returns true only when it actually
+    /// succeeded — a failed/blocked command returns false so callers never fake success.
     @MainActor
     @discardableResult
-    static func tell(_ command: String) -> String? {
+    static func tell(_ command: String) -> Bool {
+        guard let script = NSAppleScript(source: "tell application \"Spotify\" to \(command)") else { return false }
+        var error: NSDictionary?
+        script.executeAndReturnError(&error)
+        if let error = error {
+            print("[SPOTIFY] '\(command)' failed: \(error)")
+            return false
+        }
+        return true
+    }
+
+    /// Reads a string property from Spotify (e.g. current track), or nil on error.
+    @MainActor
+    static func query(_ command: String) -> String? {
         guard let script = NSAppleScript(source: "tell application \"Spotify\" to \(command)") else { return nil }
         var error: NSDictionary?
         let out = script.executeAndReturnError(&error)
-        if let error = error {
-            print("[SPOTIFY] '\(command)' failed: \(error)")
-            return nil
-        }
-        return out.stringValue
+        return error == nil ? out.stringValue : nil
     }
 
-    @MainActor static func play()      { _ = tell("play") }
-    @MainActor static func pause()     { _ = tell("pause") }
-    @MainActor static func playPause() { _ = tell("playpause") }
-    @MainActor static func next()      { _ = tell("next track") }
-    @MainActor static func previous()  { _ = tell("previous track") }
-    @MainActor static func playTrack(uri: String) { _ = tell("play track \"\(uri)\"") }
+    @MainActor @discardableResult static func play()      -> Bool { tell("play") }
+    @MainActor @discardableResult static func pause()     -> Bool { tell("pause") }
+    @MainActor @discardableResult static func playPause() -> Bool { tell("playpause") }
+    @MainActor @discardableResult static func next()      -> Bool { tell("next track") }
+    @MainActor @discardableResult static func previous()  -> Bool { tell("previous track") }
+    @MainActor @discardableResult static func playTrack(uri: String) -> Bool { tell("play track \"\(uri)\"") }
 
     /// "Song — Artist" for the currently playing track, or nil if nothing is playing.
     @MainActor static func currentTrack() -> String? {
-        guard let name = tell("name of current track"),
-              let artist = tell("artist of current track"),
+        guard let name = query("name of current track"),
+              let artist = query("artist of current track"),
               !name.isEmpty else { return nil }
         return artist.isEmpty ? name : "\(name) — \(artist)"
     }
@@ -116,8 +130,8 @@ enum SpotifyControl {
         guard await ensureRunning() else { return "Couldn't launch Spotify." }
 
         if let found = await searchTrackURI(query) {
-            await playTrack(uri: found.uri)
-            return "Playing \(found.label) on Spotify."
+            let ok = await playTrack(uri: found.uri)
+            return ok ? "Playing \(found.label) on Spotify." : "Found \(found.label), but \(permissionHint)"
         }
 
         let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
