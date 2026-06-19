@@ -501,6 +501,25 @@ import AVFoundation
         return true
     }
 
+    /// If the utterance is a weather ask, returns the city to look up (named city, or the
+    /// saved home city). Lets us answer weather deterministically instead of trusting the
+    /// small model, which sometimes hallucinates a "permission denied" for a keyless API.
+    private static func weatherCity(in raw: String) -> String? {
+        let lower = raw.lowercased()
+        guard lower.contains("weather") || lower.contains("temperature") || lower.contains("forecast") else { return nil }
+        let stop = ["today", "right now", "now", "please", "currently", "tomorrow", "outside", "like"]
+        for marker in ["weather in ", "weather for ", "weather at ", "temperature in ", "forecast for ", "forecast in "] {
+            if let r = lower.range(of: marker) {
+                var city = String(lower[r.upperBound...])
+                for w in stop { city = city.replacingOccurrences(of: w, with: "") }
+                city = city.trimmingCharacters(in: CharacterSet(charactersIn: " .,!?"))
+                if !city.isEmpty { return city }
+            }
+        }
+        let home = UserDefaults.standard.string(forKey: "sotto_home_city") ?? ""
+        return home.isEmpty ? nil : home
+    }
+
     /// One spoken line for a result: the headline clause only. The glass HUD card carries
     /// the full detail, so Jarvis says a quick line instead of reading everything aloud.
     private func shortSpoken(_ text: String) -> String {
@@ -538,6 +557,21 @@ import AVFoundation
         // 3. Zero-latency deterministic shortcuts (native Swift actions, no LLM).
         if let shortcut = CommandEngine.checkZeroLatencyShortcut(for: raw) {
             await runZeroLatencyShortcut(shortcut)
+            return
+        }
+
+        // 3b. Deterministic weather — never let the small model fumble an obvious weather
+        // ask (it sometimes hallucinates "permission denied" for a keyless API). Call the
+        // service directly and present it in the glass card.
+        if let city = Self.weatherCity(in: raw) {
+            hud.show("🌤  Weather…")
+            let summary = await WeatherService.summary(city: city) ?? "Couldn't get the weather for \(city) right now."
+            print("[JARVIS] Deterministic weather (\(city)): \(summary)")
+            hud.showResult(summary)
+            speak(shortSpoken(summary))
+            TaskJournal.record(command: raw, reply: summary)
+            state = .idle
+            Task { try? await Task.sleep(nanoseconds: 2_000_000_000); hud.hide() }
             return
         }
 
