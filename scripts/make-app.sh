@@ -1,0 +1,78 @@
+#!/bin/bash
+# Builds Sotto in release mode and wraps it into a proper .app bundle.
+#
+# Uses xcodebuild (not `swift build`): plain SwiftPM cannot compile the Metal
+# GPU shaders that MLX (the Qwen engine) needs — see mlx-swift README.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+DERIVED=".xcbuild"
+xcodebuild build \
+    -scheme Sotto \
+    -configuration Release \
+    -destination 'platform=macOS' \
+    -derivedDataPath "$DERIVED" \
+    -clonedSourcePackagesDirPath "$DERIVED/spm" \
+    -skipMacroValidation \
+    -quiet
+
+PRODUCTS="$DERIVED/Build/Products/Release"
+APP="build/Sotto.app"
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+
+cp "$PRODUCTS/Sotto" "$APP/Contents/MacOS/Sotto"
+
+# MLX's Metal shader library and other SPM resources live in .bundle folders
+# next to the built product — the app aborts at LLM load without them.
+for bundle in "$PRODUCTS"/*.bundle; do
+    [ -e "$bundle" ] && cp -R "$bundle" "$APP/Contents/Resources/"
+done
+
+# Copy voice generation scripts into Resources
+cp -R scripts "$APP/Contents/Resources/"
+
+cat > "$APP/Contents/Info.plist" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>local.sotto.app</string>
+    <key>CFBundleName</key>
+    <string>Sotto</string>
+    <key>CFBundleDisplayName</key>
+    <string>Sotto</string>
+    <key>CFBundleExecutable</key>
+    <string>Sotto</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.2.0</string>
+    <key>CFBundleVersion</key>
+    <string>2</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>Local Sotto URL</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>sotto</string>
+            </array>
+        </dict>
+    </array>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Sotto records your voice only while you hold the hotkey, transcribes it on-device, and never sends audio anywhere.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Sotto uses speech recognition to transcribe your voice locally or using Siri's speech engine.</string>
+</dict>
+</plist>
+EOF
+
+codesign --force --deep --sign - "$APP"
+echo "Built $APP — move it to /Applications if you like, then open it."

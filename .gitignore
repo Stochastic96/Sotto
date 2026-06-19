@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# Swift Package Manager / Xcode build artifacts
+.build/
+.xcbuild/
+.swiftpm/
+DerivedData/
+*.xcuserstate
+*.xcodeproj
+
+# App bundle output
+build/
+
+# Logs
+*.log
+
+# Runtime + model data (large binaries + personal voice/usage data)
+sotto-data/
+*.wav
+
+# Local Claude Code settings (machine-specific)
+.claude/settings.local.json
