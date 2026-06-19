@@ -501,6 +501,15 @@ import AVFoundation
         return true
     }
 
+    /// One spoken line for a result: the headline clause only. The glass HUD card carries
+    /// the full detail, so Jarvis says a quick line instead of reading everything aloud.
+    private func shortSpoken(_ text: String) -> String {
+        let firstLine = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
+        let clause = firstLine.split(separator: ",", maxSplits: 1).first.map(String.init) ?? firstLine
+        let trimmed = clause.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.count <= 70 ? trimmed : String(trimmed.prefix(70))
+    }
+
     // MARK: - Jarvis pipeline (⌘⇧J) — full OS assistant: skills, native actions, agent, orchestrator.
 
     private func runJarvisPipeline(raw: String, samples: [Float], context: AppContext) async {
@@ -543,7 +552,14 @@ import AVFoundation
                 print("[JARVIS] Agent reply: '\(reply)'")
                 DatasetLogger.shared.log(mode: "jarvis-apple", app: lastActiveApp?.localizedName, rawTranscript: raw, response: reply, kind: "agent", samples: samples)
                 TaskJournal.record(command: raw, reply: reply)
-                if reply.isEmpty { hud.show("✓ Done") } else { hud.show("🗣 \(reply)"); speak(reply) }
+                if reply.isEmpty {
+                    hud.showResult("✓ Done")
+                } else {
+                    // Show the full reply in the glass card (fast, read it on screen) but
+                    // speak only the one-line headline so Jarvis doesn't read the whole thing.
+                    hud.showResult(reply)
+                    speak(shortSpoken(reply))
+                }
                 state = .idle
                 Task { try? await Task.sleep(nanoseconds: 2_000_000_000); hud.hide() }
                 return
