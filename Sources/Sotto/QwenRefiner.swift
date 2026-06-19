@@ -9,11 +9,13 @@ struct DictationExample: Codable {
 }
 
 /// On-device text refiner / generator. Sotto's brain is fully native:
-///   • Dictation polish + quick tasks → Apple Foundation Models (Apple Intelligence),
-///     using ONE warm, reused `LanguageModelSession` so there is no per-call
-///     session/first-token cost (this is what makes it fast again).
-///   • Heavier / longer generation → the in-process MLX Qwen engine when available
-///     (see `MLXEngine`), which keeps the model resident in memory.
+///   • Dictation polish + quick tasks → Apple Foundation Models (Apple Intelligence).
+///     Each call uses a FRESH `LanguageModelSession` (per Apple TN3193: independent
+///     one-shot tasks should not share a transcript or it grows and eats the ~4k
+///     token budget). Speed comes from a persistent prewarmed keep-alive session that
+///     keeps the model resident — not from reusing a session.
+///   • Heavier / long-form / oversized-context work → the in-process MLX Qwen engine
+///     (`MLXEngine`), which is also the fallback when Apple Intelligence declines.
 /// No Python, no localhost servers, no network.
 actor QwenRefiner {
     enum Status: Equatable {
@@ -25,20 +27,16 @@ actor QwenRefiner {
 
     private let onStatus: @Sendable (Status) -> Void
 
-    // A single warm Apple Intelligence session reused across dictations. Reusing it
-    // keeps the model resident and caches the (stable) instruction prefix, so each
-    // polish pays only for the new turn — not a cold start. Recreated periodically
-    // to keep the transcript from growing unbounded.
-    private var warmSessionBox: AnyObject?
-    private var warmSessionTurns = 0
-    private static let maxWarmTurns = 12
+    /// A prewarmed session held only to keep the on-device model resident (warm).
+    /// We never `respond` on it — fresh sessions are created per request.
+    private var keepAliveBox: AnyObject?
 
     init(onStatus: @escaping @Sendable (Status) -> Void) {
         self.onStatus = onStatus
     }
 
-    /// Stable polish instructions. Kept constant so the warm session can cache the
-    /// prefix; per-call vocabulary / style / history go into the user turn instead.
+    /// Stable polish instructions. Per-call vocabulary / style / history go into the
+    /// user turn so they don't accumulate in a session transcript.
     private static let instructions = """
         You are a voice dictation assistant. Clean up and polish the input speech.
 
@@ -58,46 +56,27 @@ actor QwenRefiner {
         if #available(macOS 26.0, *), SystemLanguageModel.default.isAvailable {
             let session = LanguageModelSession(instructions: Self.instructions)
             session.prewarm()
-            warmSessionBox = session
-            warmSessionTurns = 0
-            onStatus(.ready)
-            return
+            keepAliveBox = session
         }
         #endif
         onStatus(.ready)
     }
 
-    /// Drop the warm session (e.g. on memory pressure). It is rebuilt lazily.
+    /// Drop the keep-alive session (e.g. on memory pressure). Rebuilt on next preload.
     func forceUnload() async {
-        warmSessionBox = nil
-        warmSessionTurns = 0
+        keepAliveBox = nil
     }
 
-    // MARK: - Apple Foundation Models
+    // MARK: - Apple Foundation Models (fresh session per call)
 
-    #if canImport(FoundationModels)
-    @available(macOS 26.0, *)
-    private func warmSession() -> LanguageModelSession {
-        if warmSessionTurns >= Self.maxWarmTurns { warmSessionBox = nil }
-        if let s = warmSessionBox as? LanguageModelSession { return s }
-        let s = LanguageModelSession(instructions: Self.instructions)
-        s.prewarm()
-        warmSessionBox = s
-        warmSessionTurns = 0
-        return s
-    }
-    #endif
-
-    /// One-off Apple Intelligence completion with an arbitrary system prompt
-    /// (fresh session — used for ad-hoc generation, not the hot dictation path).
-    private func appleCompletion(systemPrompt: String, userPrompt: String, temperature: Double, maxTokens: Int) async throws -> String {
+    private func appleRespond(instructions: String, prompt: String, temperature: Double, maxTokens: Int) async throws -> String {
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *) {
             try Self.assertAppleAvailable()
             do {
-                let session = LanguageModelSession(instructions: systemPrompt)
+                let session = LanguageModelSession(instructions: instructions)
                 let options = GenerationOptions(temperature: temperature, maximumResponseTokens: maxTokens)
-                return try await session.respond(to: userPrompt, options: options).content
+                return try await session.respond(to: prompt, options: options).content
             } catch let genErr as LanguageModelSession.GenerationError {
                 throw Self.mapGenerationError(genErr)
             }
@@ -141,32 +120,32 @@ actor QwenRefiner {
     }
     #endif
 
-    // MARK: - Public API
+    // MARK: - MLX Qwen fallback
 
-    /// General-purpose completion. Heavier / longer tasks prefer the warm in-process
-    /// MLX Qwen engine (no token-window cap, stays resident); falls back to Apple
-    /// Intelligence when MLX isn't built in or the model isn't ready.
-    func getCompletion(systemPrompt: String, userPrompt: String, temperature: Double = 0.5, maxTokens: Int = 800) async throws -> String {
-        // Heavy / long-form generation prefers the warm in-process MLX Qwen engine.
-        // `MLXEngine` is a no-op when the MLX packages aren't built in, so this call
-        // is always safe and transparently falls back to Apple Intelligence.
-        if await MLXEngine.shared.prepareIfNeeded() {
-            do {
-                return try await MLXEngine.shared.generate(
-                    systemPrompt: systemPrompt, userPrompt: userPrompt,
-                    temperature: Float(temperature), maxTokens: maxTokens)
-            } catch {
-                print("[BRAIN] MLX generation failed (\(error.localizedDescription)); falling back to Apple Intelligence.")
-            }
-        }
-        return try await appleCompletion(systemPrompt: systemPrompt, userPrompt: userPrompt, temperature: temperature, maxTokens: maxTokens)
+    /// Generate via the warm in-process MLX Qwen engine, or nil if it isn't usable.
+    private func mlxFallback(system: String, user: String, temperature: Double, maxTokens: Int) async -> String? {
+        guard await MLXEngine.shared.prepareIfNeeded() else { return nil }
+        return try? await MLXEngine.shared.generate(
+            systemPrompt: system, userPrompt: user,
+            temperature: Float(temperature), maxTokens: maxTokens)
     }
 
-    /// Hot path: polish a dictated utterance. Uses the warm, reused Apple
-    /// Intelligence session for minimal latency.
+    // MARK: - Public API
+
+    /// General-purpose completion for heavier / long-form generation. Prefers the warm
+    /// in-process MLX Qwen engine; falls back to Apple Intelligence when MLX isn't
+    /// built in or the model isn't ready.
+    func getCompletion(systemPrompt: String, userPrompt: String, temperature: Double = 0.5, maxTokens: Int = 800) async throws -> String {
+        if let mlx = await mlxFallback(system: systemPrompt, user: userPrompt, temperature: temperature, maxTokens: maxTokens) {
+            return mlx
+        }
+        return try await appleRespond(instructions: systemPrompt, prompt: userPrompt, temperature: temperature, maxTokens: maxTokens)
+    }
+
+    /// Hot path: polish a dictated utterance.
+    /// Routing: oversized prompt → MLX Qwen (bigger window); otherwise Apple Intelligence
+    /// (fresh warm session), falling back to MLX on any context/guardrail failure.
     func refine(_ text: String, context: AppContext, history: [String]) async throws -> String {
-        // Build the dynamic context (vocabulary, style examples, recent history) into
-        // the user turn, keeping the *session* instructions stable so it stays warm.
         let styleHint: String
         switch context.style {
         case .chat: styleHint = "Style: casual chat message, no trailing period."
@@ -202,10 +181,10 @@ actor QwenRefiner {
             contextBlock += "\nPolish and return ONLY the new sentence below. Do NOT merge the history in."
         }
 
-        // Allow a custom user system prompt to override the built-in polish rules.
         let custom = SettingsController.customSystemPrompt
+        let instructions = custom.isEmpty ? Self.instructions : custom
         let promptInput = """
-        \(custom.isEmpty ? "" : custom + "\n")\(contextBlock)
+        \(contextBlock)
 
         Input speech to polish:
         ---
@@ -216,36 +195,30 @@ actor QwenRefiner {
         """
 
         onStatus(.ready)
+
+        // Proactive: an oversized prompt would blow Apple's window → use MLX directly.
+        if !PromptBudget.fitsAppleWindow(instructions, promptInput) {
+            if let mlx = await mlxFallback(system: instructions, user: promptInput, temperature: 0.3, maxTokens: 512) {
+                return finalize(mlx, fallback: text)
+            }
+        }
+
         do {
-            var reply = try await polish(promptInput)
-            reply = QwenRefiner.cleanup(reply)
-            return reply.isEmpty ? text : reply
+            let reply = try await appleRespond(instructions: instructions, prompt: promptInput, temperature: 0.3, maxTokens: 512)
+            return finalize(reply, fallback: text)
         } catch {
+            // Reactive: Apple declined (context overflow / guardrail / unavailable) → MLX.
+            if let mlx = await mlxFallback(system: instructions, user: promptInput, temperature: 0.3, maxTokens: 512) {
+                return finalize(mlx, fallback: text)
+            }
             onStatus(.failed("Apple Intelligence error: \(error.localizedDescription)"))
             throw error
         }
     }
 
-    /// Runs the polish prompt through the warm Apple Intelligence session.
-    private func polish(_ prompt: String) async throws -> String {
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
-            try Self.assertAppleAvailable()
-            do {
-                let session = warmSession()
-                let options = GenerationOptions(temperature: 0.3, maximumResponseTokens: 512)
-                let out = try await session.respond(to: prompt, options: options).content
-                warmSessionTurns += 1
-                return out
-            } catch let genErr as LanguageModelSession.GenerationError {
-                // A context overflow on the reused session: reset and retry once fresh.
-                warmSessionBox = nil
-                warmSessionTurns = 0
-                throw Self.mapGenerationError(genErr)
-            }
-        }
-        #endif
-        throw NSError(domain: "SottoApple", code: -13, userInfo: [NSLocalizedDescriptionKey: "Apple Intelligence requires macOS 26 or later."])
+    private func finalize(_ reply: String, fallback: String) -> String {
+        let cleaned = Self.cleanup(reply)
+        return cleaned.isEmpty ? fallback : cleaned
     }
 
     // MARK: - Output cleanup
