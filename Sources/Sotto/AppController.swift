@@ -520,6 +520,25 @@ import AVFoundation
         return home.isEmpty ? nil : home
     }
 
+    /// If the utterance explicitly asks to route to Siri/Apple Intelligence, returns the
+    /// prompt to forward. Deterministic so the small model can't drop it.
+    private static func siriPrompt(in raw: String) -> String? {
+        var t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lead = t.lowercased()
+        for p in ["hey jarvis", "jarvis"] where lead.hasPrefix(p) {
+            t = String(t.dropFirst(p.count)).trimmingCharacters(in: CharacterSet(charactersIn: " ,."))
+            break
+        }
+        let l = t.lowercased()
+        for marker in ["ask siri to ", "ask siri ", "ask apple intelligence to ", "ask apple intelligence ", "type to siri ", "siri "] {
+            if l.hasPrefix(marker) {
+                let prompt = String(t.dropFirst(marker.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                return prompt.isEmpty ? nil : prompt
+            }
+        }
+        return nil
+    }
+
     /// One spoken line for a result: the headline clause only. The glass HUD card carries
     /// the full detail, so Jarvis says a quick line instead of reading everything aloud.
     private func shortSpoken(_ text: String) -> String {
@@ -570,6 +589,20 @@ import AVFoundation
             hud.showResult(summary)
             speak(shortSpoken(summary))
             TaskJournal.record(command: raw, reply: summary)
+            state = .idle
+            Task { try? await Task.sleep(nanoseconds: 2_000_000_000); hud.hide() }
+            return
+        }
+
+        // 3c. Explicit "ask Siri …" → forward straight to the Siri / Apple Intelligence box
+        // (fire-and-forget: Siri answers in its own window). Deterministic, no model needed.
+        if let siriAsk = Self.siriPrompt(in: raw) {
+            hud.show("􀊫  Asking Siri…")
+            await SiriBridge.send(siriAsk)
+            print("[JARVIS] Forwarded to Siri: \(siriAsk)")
+            hud.showResult("Asked Siri: \(siriAsk)")
+            speak("Asked Siri.")
+            TaskJournal.record(command: raw, reply: "Forwarded to Siri: \(siriAsk)")
             state = .idle
             Task { try? await Task.sleep(nanoseconds: 2_000_000_000); hud.hide() }
             return

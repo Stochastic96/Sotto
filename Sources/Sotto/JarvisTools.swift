@@ -736,6 +736,28 @@ struct KeySimulatorTool: Tool {
     }
 }
 
+/// Hand a prompt to the macOS Siri / Apple Intelligence box for web answers, rich info
+/// cards, or app actions the on-device tools can't do. Fire-and-forget (no text back).
+@available(macOS 26.0, *)
+struct AskSiriTool: Tool {
+    let name = "ask_siri"
+    let description = "Send a question or command to the macOS Siri / Apple Intelligence box — use for live web answers, rich info cards, or app actions the other tools cannot do. Fire-and-forget: Siri shows the answer in its own window; you do NOT get the text back."
+
+    @Generable
+    struct Arguments {
+        @Guide(description: "The exact prompt to type into Siri, e.g. 'what's the latest news on the EU AI Act'.")
+        let prompt: String
+    }
+
+    @MainActor
+    func call(arguments: Arguments) async throws -> String {
+        let p = arguments.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !p.isEmpty else { return "Nothing to ask Siri." }
+        await SiriBridge.send(p)
+        return "Sent to Siri: \(p)"
+    }
+}
+
 /// Current weather + today's high/low for a city. Free, no API key (Open-Meteo).
 @available(macOS 26.0, *)
 struct WeatherTool: Tool {
@@ -767,7 +789,7 @@ struct WeatherTool: Tool {
 enum JarvisToolbox {
     static func all() -> [any Tool] {
         [
-            SpotifyTool(), WeatherTool(), VolumeTool(), BrightnessTool(),
+            SpotifyTool(), WeatherTool(), AskSiriTool(), VolumeTool(), BrightnessTool(),
             OpenWebsiteTool(), OpenAppTool(), CreateNoteTool(), WebSearchTool(),
             ReadScreenTool(), ClickElementTool(), DraftSkillTool(), RunSkillTool(),
             RecallHistoryTool(), SystemStatusTool(), RAMMemoryStatusTool(),
@@ -794,8 +816,8 @@ enum JarvisToolbox {
               make: { [SystemStatusTool(), RAMMemoryStatusTool(), NetworkDiagnosticsTool()] }),
         Group(keywords: ["open", "launch", "app", "website", "url", "browser", "window", "switch", "activate", "foreground"],
               make: { [OpenAppTool(), OpenWebsiteTool(), AppWindowManagerTool()] }),
-        Group(keywords: ["search", "google", "look up", "wikipedia", "who is", "what is", "define", "research", "claude", "explain"],
-              make: { [WebSearchTool(), WikipediaLookupTool(), AskClaudeTool()] }),
+        Group(keywords: ["search", "google", "look up", "wikipedia", "who is", "what is", "define", "research", "claude", "explain", "siri", "apple intelligence", "news", "latest"],
+              make: { [WebSearchTool(), WikipediaLookupTool(), AskClaudeTool(), AskSiriTool()] }),
         Group(keywords: ["note", "remind", "reminder", "calendar", "event", "appointment", "meeting", "schedule", "clipboard", "copy", "paste"],
               make: { [CreateNoteTool(), ReminderTool(), CalendarTool(), ClipboardTool()] }),
         Group(keywords: ["file", "spotlight", "pdf", "document", "find file", "folder"],
