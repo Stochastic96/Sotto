@@ -212,7 +212,6 @@ extension CapabilityRegistry {
             // ── Previously undescribed tools (kept in sync by the drift guard in
             //    IntegrationTests.runCapabilityConsistencyCheck). NB: none of these may
             //    use the "open"/"launch" keywords or they'd out-compete open_app's reflex. ─
-            .init(name: "ask_siri",            description: "Forward a prompt to the Apple Intelligence / Siri box", keywords: ["siri","apple","intelligence"],                           latencyMs: 500, tier: .foundationModel),
             .init(name: "recall_history",      description: "Recall what Jarvis recently did",                       keywords: ["history","recall","recent","did","you","earlier"],        latencyMs: 200, tier: .reflex),
             .init(name: "system_power_state",  description: "Lock, sleep, restart or shut down the Mac",             keywords: ["lock","sleep","restart","shutdown","power","logout"],     latencyMs: 50,  tier: .reflex, risk: .medium),
             .init(name: "network_diagnostics", description: "Check Wi-Fi / internet connectivity",                   keywords: ["wifi","wi-fi","internet","connection","reachable","ping","online"], latencyMs: 200, tier: .reflex),

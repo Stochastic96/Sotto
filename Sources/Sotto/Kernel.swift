@@ -87,10 +87,67 @@ actor Kernel {
     // sends to the model.
 
     func seedReflexes() {
+        // App launch — "open xcode", "launch terminal", "start notes"
         bindReflex("open_app") { intent in
             guard let app = Kernel.appName(from: intent) else { return nil }
             let ok = await MainActor.run { CommandEngine.openApp(named: app) }
             return ok ? "Opening \(app)." : nil
+        }
+
+        // Web search — "search for X", "google X", "look up X"
+        // Pure Swift: extract query, open google URL. 0 tokens.
+        bindReflex("web_search") { intent in
+            guard let query = Kernel.searchQuery(from: intent) else { return nil }
+            let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+            guard let url = URL(string: "https://www.google.com/search?q=\(encoded)") else { return nil }
+            _ = await MainActor.run { NSWorkspace.shared.open(url) }
+            return "Searching for \(query)."
+        }
+
+        // Spotify play/pause — "play", "resume", "open Spotify and play"
+        // "open Spotify" alone hits this binding because media_play (5 ms) beats open_app
+        // (80 ms) when the utterance contains "spotify". Handle both cases here so the
+        // compound "open Spotify and play song" resolves entirely at reflex tier (0 tokens).
+        bindReflex("media_play") { intent in
+            let lower = intent.lowercased()
+            // "open Spotify" / "launch Spotify" → just open the app, don't force play.
+            if lower.contains("spotify") && lower.contains("open") || lower.contains("launch") {
+                let ok = await MainActor.run { CommandEngine.openApp(named: "Spotify") }
+                return ok ? "Opening Spotify." : nil
+            }
+            let ok = await MainActor.run { SpotifyControl.play() }
+            return ok ? "Playing." : SpotifyControl.permissionHint
+        }
+
+        // Spotify next — "next song", "skip", "skip track"
+        bindReflex("media_next") { _ in
+            let ok = await MainActor.run { SpotifyControl.next() }
+            return ok ? "Skipped to next track." : SpotifyControl.permissionHint
+        }
+
+        // Spotify previous — "previous song", "back", "go back"
+        bindReflex("media_prev") { _ in
+            let ok = await MainActor.run { SpotifyControl.previous() }
+            return ok ? "Back to previous track." : SpotifyControl.permissionHint
+        }
+
+        // Spotlight file search — "find file X", "where is X", "locate X"
+        // Uses mdfind, returns top 3 names. 0 tokens, ~50 ms.
+        bindReflex("spotlight_search_files") { intent in
+            guard let query = Kernel.fileQuery(from: intent) else { return nil }
+            let p = Process(), pipe = Pipe()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
+            p.arguments = ["-name", query]
+            p.standardOutput = pipe
+            p.standardError = Pipe()
+            try? p.run(); p.waitUntilExit()
+            let raw = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let names = raw.components(separatedBy: "\n")
+                .filter { !$0.isEmpty }
+                .prefix(3)
+                .map { URL(fileURLWithPath: $0).lastPathComponent }
+            guard !names.isEmpty else { return nil }  // no match → escalate to AI
+            return "Found: \(names.joined(separator: ", "))"
         }
     }
 
@@ -116,5 +173,32 @@ actor Kernel {
         if name.lowercased().hasPrefix("the ") { name = String(name.dropFirst(4)) }
         name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? nil : name
+    }
+
+    /// Extracts a web search query from utterances like "search for X", "google X".
+    nonisolated static func searchQuery(from intent: String) -> String? {
+        var s = intent.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = s.lowercased()
+        for verb in ["search the web for ", "search for ", "search ", "google ",
+                     "look up ", "look for ", "find information on ", "find info on "] {
+            if lower.hasPrefix(verb) { s = String(s.dropFirst(verb.count)); break }
+        }
+        while let last = s.last, ".,!?".contains(last) { s.removeLast() }
+        s = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Must be meaningfully different from the trigger verb alone
+        return s.isEmpty || s.count < 2 ? nil : s
+    }
+
+    /// Extracts a filename/query from utterances like "find file X", "where is X".
+    nonisolated static func fileQuery(from intent: String) -> String? {
+        var s = intent.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = s.lowercased()
+        for verb in ["find file ", "find document ", "locate file ", "where is ",
+                     "locate ", "find "] {
+            if lower.hasPrefix(verb) { s = String(s.dropFirst(verb.count)); break }
+        }
+        while let last = s.last, ".,!?".contains(last) { s.removeLast() }
+        s = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        return s.isEmpty ? nil : s
     }
 }
