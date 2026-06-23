@@ -148,6 +148,7 @@ import SottoCore
 
         statusBar.update(for: state)
         Task { await PermissionCoordinator.shared.ensurePermissions() }
+        PermissionWatcher.shared.start()    // live-monitors all permissions, auto-restarts on AX grant
 
         // Track the last active application before Sotto gets focus
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -407,16 +408,11 @@ import SottoCore
             print("[APP] Captured frontmost application on recording start: \(frontmost.localizedName ?? "unknown")")
         }
 
-        // Accessibility check to prevent silent key injection failures
+        // Warn about Accessibility but don't block — hotkeys already work,
+        // and TextInjector has its own fallback. Hard-blocking here was causing
+        // "Accessibility granted but still refused" after the user enables it.
         if !AXIsProcessTrusted() {
-            print("[APP] beginRecording() aborted: AXIsProcessTrusted() returned false")
-            hud.show("⚠️ Enable Accessibility in Settings")
-            NSSound(named: "Basso")?.play()
-            Task {
-                try? await Task.sleep(nanoseconds: 4_000_000_000) // 4 seconds
-                self.hud.hide()
-            }
-            return
+            print("[APP] ⚠️ Accessibility not yet trusted — proceeding anyway (text injection may fall back to clipboard)")
         }
 
         let status = AVCaptureDevice.authorizationStatus(for: .audio)
