@@ -147,7 +147,7 @@ import SottoCore
         ContextDetector.startObservingAppSwitches()
 
         statusBar.update(for: state)
-        requestPermissions()
+        Task { await PermissionCoordinator.shared.ensurePermissions() }
 
         // Track the last active application before Sotto gets focus
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -331,62 +331,9 @@ import SottoCore
         }
     }
 
-    // MARK: - Permission management
-    //
-    // Requests all required permissions at startup. If already denied, opens System Settings
-    // directly to the relevant pane so the user can re-enable without hunting through menus.
-
-    private func requestPermissions() {
-        Task { await requestAllPermissions() }
-    }
-
-    @MainActor
-    private func requestAllPermissions() async {
-        // 1. Microphone
-        let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
-        switch micStatus {
-        case .notDetermined:
-            let granted = await AVCaptureDevice.requestAccess(for: .audio)
-            print("[PERM] Microphone: \(granted ? "granted" : "denied")")
-        case .denied, .restricted:
-            print("[PERM] Microphone denied — opening System Settings")
-            hud.show("⚠️ Sotto needs Microphone access")
-            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
-        default: break
-        }
-
-        // 2. Speech Recognition (needed for SFSpeechRecognizer / appleSpeech engine)
-        SFSpeechRecognizer.requestAuthorization { status in
-            print("[PERM] Speech recognition: \(status == .authorized ? "granted" : "denied/restricted")")
-        }
-
-        // 3. Accessibility — prompts with the system trust dialog
-        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-        if !AXIsProcessTrustedWithOptions(options) {
-            print("[PERM] Accessibility: waiting for user approval")
-        }
-
-        // 4. Screen Recording (ScreenCaptureKit / OCR)
-        if !CGPreflightScreenCaptureAccess() {
-            _ = CGRequestScreenCaptureAccess()
-            print("[PERM] Screen Recording: requested")
-        }
-    }
-
-    /// Call from Settings menu → "Check Permissions" to re-trigger any missing grants.
-    @MainActor
-    func recheckPermissions() async {
-        await requestAllPermissions()
-        let mic = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        let ax  = AXIsProcessTrusted()
-        let scr = CGPreflightScreenCaptureAccess()
-        let summary = [
-            mic ? "✅ Mic" : "❌ Mic",
-            ax  ? "✅ Accessibility" : "❌ Accessibility",
-            scr ? "✅ Screen" : "❌ Screen"
-        ].joined(separator: "  ")
-        hud.show(summary)
-        Task { try? await Task.sleep(nanoseconds: 4_000_000_000); hud.hide() }
+    /// Re-check permissions from Settings menu.
+    func recheckPermissions() {
+        Task { await PermissionCoordinator.shared.ensurePermissions() }
     }
 
     @MainActor
