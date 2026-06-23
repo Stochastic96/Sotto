@@ -170,7 +170,13 @@ final class SottoEngine {
             return
         }
 
-        // Tier 2: Foundation Models agent (macOS 26+)
+        // Tier 2a: Mission orchestrator for multi-step / big tasks
+        if #available(macOS 26.0, *), isMission(raw) {
+            Task { await MissionOrchestrator.shared.run(goal: raw) }
+            return
+        }
+
+        // Tier 2b: Foundation Models agent (macOS 26+)
         if #available(macOS 26.0, *), let coord = coordinator as? CoordinatorAgent {
             do {
                 let reply = AppController.sanitizeReply(try await coord.handleTurn(userInput: raw))
@@ -201,6 +207,18 @@ final class SottoEngine {
         let pW = polished.components(separatedBy: .whitespaces).filter { !$0.isEmpty }.count
         guard oW >= 3 else { return false }
         return Double(pW) <= Double(oW) * 2.2 && Double(pW) >= Double(oW) * 0.5
+    }
+
+    // A "mission" is a compound goal with connectives: "and", "then", "also", "after that"
+    // or explicit multi-step keywords. Single commands stay on the fast path.
+    private func isMission(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        let connectives = [" and then ", " and also ", " after that ", " then ", " also "]
+        if connectives.contains(where: { lower.contains($0) }) { return true }
+        let missionKeywords = ["for all", "for every", "all my", "bulk", "batch",
+                               "clean up", "organise", "organize and", "read and", "summarise and",
+                               "summarize and", "find and", "check and"]
+        return missionKeywords.contains(where: { lower.contains($0) })
     }
 
     private func stripWakePrefix(_ raw: String) -> String {
