@@ -115,8 +115,9 @@ struct EndWorkdayTool: Tool {
         // e) Save to semantic memory
         SemanticMemory.remember(summary, kind: "journal")
 
-        // f) Speak the summary
-        await MainActor.run { AppController.shared?.speak(summary) }
+        // f) Speak the summary (copy to let to avoid Swift 6 captured-var warning)
+        let spokenSummary = summary
+        await MainActor.run { AppController.shared?.speak(spokenSummary) }
         await MainActor.run { AppController.shared?.showHUD("Workday Ended") }
 
         // g) Return summary

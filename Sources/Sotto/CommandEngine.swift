@@ -35,8 +35,7 @@ enum OrchestratorAction: CustomStringConvertible {
     }
 }
 
-/// Rules-first command processing. Cheap, instant, zero RAM — the optional
-/// Qwen polish pass (QwenRefiner) runs afterwards in AppController.
+/// Rules-first command processing. Cheap, instant, zero RAM.
 enum CommandEngine {
     struct ZeroLatencyShortcut {
         let command: String
@@ -54,9 +53,7 @@ enum CommandEngine {
         }
         cleanT = cleanT.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Parametric reflex: "set volume to 90 percent" / "brightness to 60%" — parsed
-        // deterministically and executed natively, so it's Siri-fast instead of taking
-        // a Foundation Models round-trip. The percent rides in the native command.
+        // Parametric reflex: "set volume to 90 percent" / "brightness to 60%"
         if let cmd = SystemCommandParser.parse(cleanT) {
             switch cmd {
             case .setVolume(let pct):
@@ -72,137 +69,13 @@ enum CommandEngine {
             }
         }
 
+        // Delegate to split command categories
+        if let shortcut = checkWindowShortcut(for: cleanT) { return shortcut }
+        if let shortcut = checkBrowserShortcut(for: cleanT) { return shortcut }
+        if let shortcut = checkMediaShortcut(for: cleanT) { return shortcut }
+
+        // System controls and other reflexes
         switch cleanT {
-        // --- 1. WINDOW CONTROLS ---
-        case "maximize", "maximize window", "full screen", "full screen window", "make window full screen":
-            return ZeroLatencyShortcut(
-                command: "native:win_maximize",
-                voiceFeedback: "मिस्टर लॉर्ड, window को फुल स्क्रीन पे चेप दिया है। दिल्ली से हूँ भाई, सीन एकदम मक्खन कर दिया।",
-                hudMessage: "Window Maximized"
-            )
-        case "minimize", "minimize window", "hide window":
-            return ZeroLatencyShortcut(
-                command: "native:win_minimize",
-                voiceFeedback: "window को छोटा कर दिया है मिस्टर लॉर्ड, चिल मारो।",
-                hudMessage: "Window Minimized"
-            )
-        case "tile left", "tile window left", "left align window", "window left":
-            return ZeroLatencyShortcut(
-                command: "native:win_left",
-                voiceFeedback: "लो मिस्टर लॉर्ड, window को left में सेट कर दिया है। भौकाल टाइलिंग!",
-                hudMessage: "Window Tiled Left"
-            )
-        case "tile right", "tile window right", "right align window", "window right":
-            return ZeroLatencyShortcut(
-                command: "native:win_right",
-                voiceFeedback: "Right side में window चेप दी है मिस्टर लॉर्ड, एकदम सॉलिड सीन है।",
-                hudMessage: "Window Tiled Right"
-            )
-        case "center", "center window", "center active window":
-            return ZeroLatencyShortcut(
-                command: "native:win_center",
-                voiceFeedback: "Window को center में सेट कर दिया है, मिस्टर लॉर्ड। तेरे भाई का जुगाड़ एकदम मक्खन है।",
-                hudMessage: "Window Centered"
-            )
-        case "close window", "close active window":
-            return ZeroLatencyShortcut(
-                command: "native:win_close",
-                voiceFeedback: "लो भाई, window ही साफ़ कर दी। भसड़ ख़त्म!",
-                hudMessage: "Window Closed"
-            )
-        case "tile top", "tile window top", "top half window", "window top", "tile top half", "tile window top half":
-            return ZeroLatencyShortcut(
-                command: "native:win_top_half",
-                voiceFeedback: "लो भाई, window को ऊपर वाले half में सेट कर दिया है मिस्टर लॉर्ड।",
-                hudMessage: "Window Tiled Top"
-            )
-        case "tile bottom", "tile window bottom", "bottom half window", "window bottom", "tile bottom half", "tile window bottom half":
-            return ZeroLatencyShortcut(
-                command: "native:win_bottom_half",
-                voiceFeedback: "लो भाई, window को नीचे वाले half में सेट कर दिया है मिस्टर लॉर्ड।",
-                hudMessage: "Window Tiled Bottom"
-            )
-        case "tile top left", "window top left", "tile window top left":
-            return ZeroLatencyShortcut(
-                command: "native:win_top_left",
-                voiceFeedback: "Window top-left corner में सेट कर दी है मिस्टर लॉर्ड।",
-                hudMessage: "Window Tiled Top-Left"
-            )
-        case "tile top right", "window top right", "tile window top right":
-            return ZeroLatencyShortcut(
-                command: "native:win_top_right",
-                voiceFeedback: "Window top-right corner में सेट कर दी है मिस्टर लॉर्ड।",
-                hudMessage: "Window Tiled Top-Right"
-            )
-        case "tile bottom left", "window bottom left", "tile window bottom left":
-            return ZeroLatencyShortcut(
-                command: "native:win_bottom_left",
-                voiceFeedback: "Window bottom-left corner में सेट कर दी है मिस्टर लॉर्ड।",
-                hudMessage: "Window Tiled Bottom-Left"
-            )
-        case "tile bottom right", "window bottom right", "tile window bottom right":
-            return ZeroLatencyShortcut(
-                command: "native:win_bottom_right",
-                voiceFeedback: "Window bottom-right corner में सेट कर दी है मिस्टर लॉर्ड।",
-                hudMessage: "Window Tiled Bottom-Right"
-            )
-        case "make window small", "small window", "resize small":
-            return ZeroLatencyShortcut(
-                command: "native:win_small",
-                voiceFeedback: "Window को छोटा और center में कर दिया है मिस्टर लॉर्ड।",
-                hudMessage: "Window Resized Small"
-            )
-        case "make window medium", "medium window", "resize medium":
-            return ZeroLatencyShortcut(
-                command: "native:win_medium",
-                voiceFeedback: "Window को medium size में center कर दिया है मिस्टर लॉर्ड।",
-                hudMessage: "Window Resized Medium"
-            )
-        case "make window large", "large window", "resize large":
-            return ZeroLatencyShortcut(
-                command: "native:win_large",
-                voiceFeedback: "Window को large size में center कर दिया है मिस्टर लॉर्ड।",
-                hudMessage: "Window Resized Large"
-            )
-            
-        // --- 2. BROWSER CONTROLS ---
-        case "reload page", "reload tab", "refresh page", "refresh tab", "refresh", "reload":
-            return ZeroLatencyShortcut(
-                command: "native:browser_reload",
-                voiceFeedback: "Page refresh मार दिया है मिस्टर लॉर्ड, चकाचक नया लोड हो गया।",
-                hudMessage: "Page Reloaded"
-            )
-        case "go back", "go back page", "page back", "back tab", "browser back", "go back tab":
-            return ZeroLatencyShortcut(
-                command: "native:browser_back",
-                voiceFeedback: "पीछे वाले page पे आ गए भाई।",
-                hudMessage: "Page Back"
-            )
-        case "go forward", "go forward page", "page forward", "forward tab", "browser forward", "go forward tab":
-            return ZeroLatencyShortcut(
-                command: "native:browser_forward",
-                voiceFeedback: "आगे वाले page पे आ गए मिस्टर लॉर्ड।",
-                hudMessage: "Page Forward"
-            )
-        case "new tab", "open new tab", "create tab", "create new tab":
-            return ZeroLatencyShortcut(
-                command: "native:browser_new_tab",
-                voiceFeedback: "नया tab खोल दिया है भाई, बकचोदी चालू करो।",
-                hudMessage: "New Tab Opened"
-            )
-        case "close tab", "close current tab":
-            return ZeroLatencyShortcut(
-                command: "native:browser_close_tab",
-                voiceFeedback: "Tab बंद कर दिया मिस्टर लॉर्ड, सीन क्लियर है।",
-                hudMessage: "Tab Closed"
-            )
-        case "list tabs", "show all tabs", "what tabs are open", "get all tabs", "show tabs":
-            return ZeroLatencyShortcut(
-                command: "native:browser_list_tabs",
-                voiceFeedback: "मिस्टर लॉर्ड, open tabs की list निकाल दी है, clipboard पे copy कर दी है।",
-                hudMessage: "List of Tabs"
-            )
-            
         // --- 3. SYSTEM CONTROL & POWER ---
         case "sleep mac", "put mac to sleep", "sleep computer":
             return ZeroLatencyShortcut(
@@ -222,174 +95,47 @@ enum CommandEngine {
                 voiceFeedback: "Trash की सारी भसड़ साफ़ कर दी है भाई, एकदम चकाचक!",
                 hudMessage: "Trash Emptied"
             )
-            
-        // --- 4. SPOTIFY CONTROLS ---
-        case "play spotify", "resume spotify", "spotify play", "resume music", "play music":
-            return ZeroLatencyShortcut(
-                command: "native:media_play",
-                voiceFeedback: "लो भाई, गाना चालू कर दिया। मचा दो भौकाल!",
-                hudMessage: "Spotify Playing"
-            )
-        case "pause spotify", "stop spotify", "spotify pause", "pause music", "stop music":
-            return ZeroLatencyShortcut(
-                command: "native:media_play",
-                voiceFeedback: "गाना रोक दिया भाई।",
-                hudMessage: "Spotify Paused"
-            )
-        case "next song", "next track", "skip song", "spotify next", "skip track":
-            return ZeroLatencyShortcut(
-                command: "native:media_next",
-                voiceFeedback: "अगला गाना लगा दिया मिस्टर लॉर्ड, चिल मारो।",
-                hudMessage: "Spotify Next Track"
-            )
-        case "previous song", "previous track", "back track", "spotify back", "spotify previous":
-            return ZeroLatencyShortcut(
-                command: "native:media_prev",
-                voiceFeedback: "पीछे वाला गाना चालू कर दिया भाई।",
-                hudMessage: "Spotify Previous Track"
-            )
-            
-        // --- 5. SYSTEM VOLUME & BRIGHTNESS ---
-        case "mute volume", "mute", "mute system", "silence mac":
-            return ZeroLatencyShortcut(
-                command: "native:mute",
-                voiceFeedback: "आवाज़ बंद कर दी मिस्टर लॉर्ड, एकदम सन्नाटा!",
-                hudMessage: "Volume Muted"
-            )
-        case "unmute volume", "unmute", "unmute system":
-            return ZeroLatencyShortcut(
-                command: "native:unmute",
-                voiceFeedback: "लो भाई, आवाज़ वापस चालू कर दी।",
-                hudMessage: "Volume Unmuted"
-            )
-        case "volume up", "increase volume", "louder", "make it louder":
-            return ZeroLatencyShortcut(
-                command: "native:volume_up",
-                voiceFeedback: "आवाज़ बढ़ा दी भाई, भौकाल शुरू!",
-                hudMessage: "Volume Up"
-            )
-        case "volume down", "decrease volume", "softer", "make it softer":
-            return ZeroLatencyShortcut(
-                command: "native:volume_down",
-                voiceFeedback: "आवाज़ कम कर दी मिस्टर लॉर्ड।",
-                hudMessage: "Volume Down"
-            )
-        case "brightness up", "increase brightness", "brighter", "make screen brighter":
-            return ZeroLatencyShortcut(
-                command: "native:brightness_up",
-                voiceFeedback: "Brightness बढ़ा दी भाई, चकाचक रोशनी!",
-                hudMessage: "Brightness Up"
-            )
-        case "brightness down", "decrease brightness", "dim screen", "make screen dimmer":
-            return ZeroLatencyShortcut(
-                command: "native:brightness_down",
-                voiceFeedback: "Brightness कम कर दी मिस्टर लॉर्ड।",
-                hudMessage: "Brightness Down"
-            )
-            
-        // --- 6. DARK MODE & SHOW DESKTOP ---
-        case "toggle dark mode", "dark mode", "toggle light mode", "appearance toggle", "toggle light dark mode":
-            return ZeroLatencyShortcut(
-                command: "native:dark_mode_toggle",
-                voiceFeedback: "लो भाई, डार्क मोड चालू कर दिया। आँखों को चिल मारो मिस्टर लॉर्ड।",
-                hudMessage: "Toggle Appearance"
-            )
-        case "show desktop", "hide windows", "desktop show", "reveal desktop":
-            return ZeroLatencyShortcut(
-                command: "native:show_desktop",
-                voiceFeedback: "लो मिस्टर लॉर्ड, desktop साफ़ दिख रहा है। भसड़ गायब!",
-                hudMessage: "Showing Desktop"
-            )
-            
-        // --- 7. SYSTEM STATUS / DIAGNOSTICS ---
-        case "system status", "system info", "check system status", "check system info", "mac status", "how is my mac", "status of my mac":
-            return ZeroLatencyShortcut(
-                command: "native:system_info",
-                voiceFeedback: "", // Speak inside AppController
-                hudMessage: "System Status Report",
-                showOutputInWindow: true,
-                windowTitle: "System Status Report"
-            )
-            
-        // --- 8. RAM MEMORY STATUS ---
-        case "ram status", "open ram", "check ram", "what is ram status", "ram info", "memory status", "check memory", "open memory", "memory info":
-            return ZeroLatencyShortcut(
-                command: "native:ram_info",
-                voiceFeedback: "मिस्टर लॉर्ड, RAM status window खोल दी है। तेरे भाई ने सारा memory breakdown दिखा दिया है, चिल मारो।",
-                hudMessage: "RAM Memory Status",
-                showOutputInWindow: true,
-                windowTitle: "RAM Memory Status"
-            )
-            
         default:
             return nil
         }
     }
 
-    private static let sendPhrases = ["send it", "send message", "press enter", "press return"]
-
-    /// Zero-LLM, deterministic matcher for multi-step browser flows. Returns an
-    /// action only on an exact phrase match so it never hijacks normal dictation.
-    /// Runs before any Qwen call, so these commands cost no tokens and no latency.
     static func orchestratorAction(for raw: String) -> OrchestratorAction? {
-        var t = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        while let last = t.last, ".,!?".contains(last) { t.removeLast() }
-
-        // 1. Prep-prompt (screen-aware co-pilot) commands — checked first because
-        //    these need not mention Claude at all.
-        if let prep = prepPromptAction(for: t) { return prep }
-
-        // 2. "Send the prepared prompt to Claude" (batch step 2).
-        if t.contains("send") && (t.contains("claude") || t.contains("cloud"))
-            && (t.contains("prompt") || t.contains("that") || t.contains("it")) {
+        let t = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if t == "open claude" || t == "open claude popover" || t == "claude popover" || t == "claude" || t == "ask claude" {
+            return .claudeNewChat
+        }
+        if t == "send to claude" || t == "send prompt" || t == "send this to claude" {
             return .sendLastPromptToClaude
         }
-
-        // 3. Open Claude / start a new chat. Parakeet routinely mishears "Claude"
-        //    as "cloud day" / "cloud ai" — normalize those first.
-        var c = t
-        for alias in ["cloud day", "cloud a i", "cloud ai", "cloud.ai",
-                      "claude a i", "claude.ai", "clawed", "claw",
-                      "cloudy", "claud", "clod"] {
-            c = c.replacingOccurrences(of: alias, with: "claude")
-        }
-        // Don't hijack the one-shot "ask claude <question>" flow (handled in process()).
-        if c.hasPrefix("ask claude") { return nil }
-        if c.contains("claude") {
-            let openIntents = ["open", "launch", "start", "go to", "goto",
-                               "new chat", "initiate", "chat with", "begin", "switch to"]
-            if openIntents.contains(where: { c.contains($0) }) { return .claudeNewChat }
-        }
-        return nil
+        return prepPromptAction(for: t)
     }
 
-    /// Recognizes "prep / prepare / draft" style commands and maps them to a use case.
     private static func prepPromptAction(for t: String) -> OrchestratorAction? {
-        let isPrep = t.hasPrefix("prep") || t.contains("prepare")
-            || t.hasPrefix("draft") || t.contains("write a linkedin")
-            || t.contains("help me with")
-        guard isPrep else { return nil }
-
-        if t.contains("linkedin") {
-            return .prepPrompt(.linkedInPost(topic: topicAfterAbout(in: t)))
+        if t.hasPrefix("prep linkedin post") || t.hasPrefix("prep post") {
+            let topic = topicAfterAbout(in: t)
+            return .prepPrompt(.linkedInPost(topic: topic))
         }
-        if t.contains("ad") { // "ads", "google ads", "ad help"
+        if t.hasPrefix("prep google ad") || t.hasPrefix("prep copy") {
             return .prepPrompt(.googleAds)
         }
-        if t.contains("screen") || t.contains("this") {
+        if t.hasPrefix("prep screen summary") || t.hasPrefix("explain screen") || t.hasPrefix("prep screen") {
             return .prepPrompt(.explainScreen)
+        }
+        if t.hasPrefix("prep custom prompt") || t.hasPrefix("prep prompt") {
+            return .prepPrompt(.custom(instruction: ""))
         }
         return nil
     }
 
-    /// Extracts the topic following the word "about", if present.
     private static func topicAfterAbout(in t: String) -> String? {
-        guard let range = t.range(of: " about ") else { return nil }
-        let topic = t[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
-        return topic.isEmpty ? nil : topic
+        if let r = t.range(of: " about ") {
+            let topic = String(t[r.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return topic.isEmpty ? nil : topic
+        }
+        return nil
     }
 
-    /// Public wrapper exposing on-device Vision OCR of the screen under the cursor.
     static func ocrScreen() async -> String { await performScreenOCR() }
 
     /// Last non-empty text result from any pipeline run — exposed so "copy that" can put
@@ -432,73 +178,12 @@ enum CommandEngine {
             return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
         }
 
-        // --- 0.4. Zero-Latency Direct Integrations (Wikipedia, Maps, LinkedIn, Google Ads) ---
-        
-        // Wikipedia/Fact Lookup
-        if lowerText.hasPrefix("who is ") || lowerText.hasPrefix("what is ") || lowerText.hasPrefix("tell me about ") || lowerText.hasPrefix("research ") {
-            var query = text
-            if lowerText.hasPrefix("who is ") { query = String(text.dropFirst(7)) }
-            else if lowerText.hasPrefix("what is ") { query = String(text.dropFirst(8)) }
-            else if lowerText.hasPrefix("tell me about ") { query = String(text.dropFirst(14)) }
-            else if lowerText.hasPrefix("research ") { query = String(text.dropFirst(9)) }
-            
-            while query.hasSuffix(".") || query.hasSuffix(",") || query.hasSuffix("?") || query.hasSuffix("!") { query.removeLast() }
-            let cleanQuery = query.trimmingCharacters(in: .whitespaces)
-            
-            print("[ENGINE] Native Swift trigger: Wiki lookup for '\(cleanQuery)'")
-            await JarvisSwiftExecutor.runWikiGet(query: cleanQuery)
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
-        }
-        
-        // Location Lookup
-        if lowerText.hasPrefix("where is ") || lowerText.hasPrefix("locate ") {
-            var query = text
-            if lowerText.hasPrefix("where is ") { query = String(text.dropFirst(9)) }
-            else if lowerText.hasPrefix("locate ") { query = String(text.dropFirst(7)) }
-            
-            while query.hasSuffix(".") || query.hasSuffix(",") || query.hasSuffix("?") || query.hasSuffix("!") { query.removeLast() }
-            let cleanQuery = query.trimmingCharacters(in: .whitespaces)
-            
-            print("[ENGINE] Native Swift trigger: Location lookup for '\(cleanQuery)'")
-            await JarvisSwiftExecutor.runLocation(placeName: cleanQuery)
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
-        }
-        
-        // LinkedIn Shortcuts
-        if lowerText == "check my linkedin messages" || lowerText == "open linkedin messages" || lowerText == "linkedin messages" {
-            print("[ENGINE] Native Swift trigger: LinkedIn Messages")
-            await JarvisSwiftExecutor.runLinkedIn(subcmd: "messages")
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
-        } else if lowerText == "go to linkedin feed" || lowerText == "open linkedin feed" || lowerText == "linkedin feed" || lowerText == "open linkedin" {
-            print("[ENGINE] Native Swift trigger: LinkedIn Feed")
-            await JarvisSwiftExecutor.runLinkedIn(subcmd: "feed")
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
-        } else if lowerText == "go to linkedin profile" || lowerText == "open linkedin profile" || lowerText == "linkedin profile" {
-            print("[ENGINE] Native Swift trigger: LinkedIn Profile")
-            await JarvisSwiftExecutor.runLinkedIn(subcmd: "profile")
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
-        }
-        
-        // Google Ads Shortcuts
-        if lowerText == "open google ads campaigns" || lowerText == "google ads campaigns" {
-            print("[ENGINE] Native Swift trigger: Google Ads Campaigns")
-            await JarvisSwiftExecutor.runGoogleAds(subcmd: "dashboard", arg: "campaigns")
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
-        } else if lowerText == "open google ads keyword planner" || lowerText == "google ads keyword planner" {
-            print("[ENGINE] Native Swift trigger: Google Ads Keyword Planner")
-            await JarvisSwiftExecutor.runGoogleAds(subcmd: "dashboard", arg: "keyword-planner")
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
-        } else if lowerText == "open google ads billing" || lowerText == "google ads billing" {
-            print("[ENGINE] Native Swift trigger: Google Ads Billing")
-            await JarvisSwiftExecutor.runGoogleAds(subcmd: "dashboard", arg: "billing")
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
-        } else if lowerText == "open google ads" || lowerText == "google ads" {
-            print("[ENGINE] Native Swift trigger: Google Ads Overview")
-            await JarvisSwiftExecutor.runGoogleAds(subcmd: "dashboard", arg: "overview")
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
+        // Search trigger delegates
+        if let out = await processSearchCommands(lowerText: lowerText, text: text) {
+            return out
         }
 
-        // Direct click triggers
+        // Click commands
         if lowerText.hasPrefix("click ") {
             let targetWord = String(text.dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
             print("[ENGINE] Spoken command: Click '\(targetWord)' on screen")
@@ -533,85 +218,12 @@ enum CommandEngine {
             )
         }
 
-        // 0.5. Selection-Aware Triggers
-        if lowerText.hasPrefix("ask chatgpt about this selection") || lowerText.hasPrefix("ask chatgpt to explain this selection") {
-            let selectedStr = selection ?? ""
-            let prompt = "Explain this selection:\n\(selectedStr)"
-            openWebsite(urlStr: "https://chatgpt.com")
-            return CommandOutput(text: prompt, pressReturnAfter: true, fileURL: nil, delayBeforeInject: 2.0)
-        } else if lowerText.hasPrefix("ask claude about this selection") || lowerText.hasPrefix("ask claude to explain this selection") {
-            let selectedStr = selection ?? ""
-            let prompt = "Explain this selection:\n\(selectedStr)"
-            let response = await ClaudeQuickEntry.sendAndReadResponse(prompt)
-            return CommandOutput(text: response, pressReturnAfter: false, fileURL: nil)
-        } else if lowerText.hasPrefix("ask gemini about this selection") || lowerText.hasPrefix("ask gemini to explain this selection") {
-            let selectedStr = selection ?? ""
-            let prompt = "Explain this selection:\n\(selectedStr)"
-            openWebsite(urlStr: "https://gemini.google.com")
-            return CommandOutput(text: prompt, pressReturnAfter: true, fileURL: nil, delayBeforeInject: 2.0)
-        } else if lowerText.hasPrefix("explain this selection") || lowerText.hasPrefix("summarize this selection") {
-            let selectedStr = selection ?? ""
-            let prompt = "Explain or summarize this selection in detail:\n\n\(selectedStr)"
-            return CommandOutput(
-                text: prompt,
-                pressReturnAfter: false,
-                fileURL: nil,
-                showLocalExplanation: true,
-                explanationTitle: "Selection Summary"
-            )
+        // AI Orchestration / OCR delegates
+        if let out = await processAIOrchestration(lowerText: lowerText, text: text, selection: selection) {
+            return out
         }
 
-        // 0.6. Screen-OCR Triggers
-        if lowerText.hasPrefix("ask chatgpt about this screen") {
-            let screenText = await performScreenOCR()
-            let prompt = "Please explain/summarize this screen content:\n\(screenText)"
-            openWebsite(urlStr: "https://chatgpt.com")
-            return CommandOutput(text: prompt, pressReturnAfter: true, fileURL: nil, delayBeforeInject: 2.0)
-        } else if lowerText.hasPrefix("ask claude about this screen") || lowerText.hasPrefix("explain this screen on claude") {
-            let screenText = await performScreenOCR()
-            let prompt = "Please explain/summarize this screen content:\n\(screenText)"
-            let response = await ClaudeQuickEntry.sendAndReadResponse(prompt)
-            return CommandOutput(text: response, pressReturnAfter: false, fileURL: nil)
-        } else if lowerText.hasPrefix("explain this screen") || lowerText.hasPrefix("summarize this screen") {
-            let screenText = await performScreenOCR()
-            let prompt = "Summarize the text captured from my screen. Provide a clear, structured explanation of the key content:\n\n\(screenText)"
-            return CommandOutput(
-                text: prompt,
-                pressReturnAfter: false,
-                fileURL: nil,
-                showLocalExplanation: true,
-                explanationTitle: "Screen Summary"
-            )
-        }
-
-        // AI Chatbot Orchestration Triggers
-        if lowerText.hasPrefix("ask chatgpt ") {
-            var question = String(text.dropFirst(12)).trimmingCharacters(in: .whitespaces)
-            while question.hasSuffix(".") || question.hasSuffix(",") || question.hasSuffix("?") || question.hasSuffix("!") { question.removeLast() }
-            print("[ENGINE] Command recognized: Ask ChatGPT '\(question)'")
-            openWebsite(urlStr: "https://chatgpt.com")
-            return CommandOutput(text: question, pressReturnAfter: true, fileURL: nil, delayBeforeInject: 2.0)
-        } else if lowerText.hasPrefix("ask claude ") {
-            var question = String(text.dropFirst(11)).trimmingCharacters(in: .whitespaces)
-            while question.hasSuffix(".") || question.hasSuffix(",") || question.hasSuffix("?") || question.hasSuffix("!") { question.removeLast() }
-            print("[ENGINE] Command recognized: Ask Claude Popover '\(question)'")
-            let response = await ClaudeQuickEntry.sendAndReadResponse(question)
-            return CommandOutput(text: response, pressReturnAfter: false, fileURL: nil)
-        } else if lowerText.hasPrefix("ask gemini ") {
-            var question = String(text.dropFirst(11)).trimmingCharacters(in: .whitespaces)
-            while question.hasSuffix(".") || question.hasSuffix(",") || question.hasSuffix("?") || question.hasSuffix("!") { question.removeLast() }
-            print("[ENGINE] Command recognized: Ask Gemini '\(question)'")
-            openWebsite(urlStr: "https://gemini.google.com")
-            return CommandOutput(text: question, pressReturnAfter: true, fileURL: nil, delayBeforeInject: 2.0)
-        } else if lowerText.hasPrefix("ask perplexity ") {
-            var question = String(text.dropFirst(15)).trimmingCharacters(in: .whitespaces)
-            while question.hasSuffix(".") || question.hasSuffix(",") || question.hasSuffix("?") || question.hasSuffix("!") { question.removeLast() }
-            print("[ENGINE] Command recognized: Ask Perplexity '\(question)'")
-            openWebsite(urlStr: "https://perplexity.ai")
-            return CommandOutput(text: question, pressReturnAfter: true, fileURL: nil, delayBeforeInject: 2.0)
-        }
-
-        // Shell/Terminal Command Triggers
+        // Shell / terminal commands
         if lowerText.hasPrefix("run terminal command ") {
             var cmd = String(text.dropFirst(21)).trimmingCharacters(in: .whitespaces)
             while cmd.hasSuffix(".") || cmd.hasSuffix(",") || cmd.hasSuffix("?") || cmd.hasSuffix("!") { cmd.removeLast() }
@@ -635,114 +247,17 @@ enum CommandEngine {
             return CommandOutput(text: output, pressReturnAfter: false, fileURL: nil)
         }
 
-        // 1. Chrome search triggers (checked first so "open google chrome..." doesn't fall into plain app open)
-        if lowerText.hasPrefix("open chrome and search ") {
-            var query = String(text.dropFirst(23)).trimmingCharacters(in: .whitespaces)
-            while query.hasSuffix(".") || query.hasSuffix(",") || query.hasSuffix("?") || query.hasSuffix("!") { query.removeLast() }
-            if query.lowercased().hasPrefix("for ") { query = String(query.dropFirst(4)).trimmingCharacters(in: .whitespaces) }
-            print("[ENGINE] Command recognized: Chrome search '\(query)'")
-            googleSearch(query: query, inBrowser: "Google Chrome")
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
-        } else if lowerText.hasPrefix("open google chrome and search ") {
-            var query = String(text.dropFirst(30)).trimmingCharacters(in: .whitespaces)
-            while query.hasSuffix(".") || query.hasSuffix(",") || query.hasSuffix("?") || query.hasSuffix("!") { query.removeLast() }
-            if query.lowercased().hasPrefix("for ") { query = String(query.dropFirst(4)).trimmingCharacters(in: .whitespaces) }
-            print("[ENGINE] Command recognized: Chrome search '\(query)'")
-            googleSearch(query: query, inBrowser: "Google Chrome")
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
-        } else if lowerText.hasPrefix("chrome search ") {
-            var query = String(text.dropFirst(14)).trimmingCharacters(in: .whitespaces)
-            while query.hasSuffix(".") || query.hasSuffix(",") || query.hasSuffix("?") || query.hasSuffix("!") { query.removeLast() }
-            print("[ENGINE] Command recognized: Chrome search '\(query)'")
-            googleSearch(query: query, inBrowser: "Google Chrome")
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
-        } else if lowerText.hasPrefix("google chrome search ") {
-            var query = String(text.dropFirst(21)).trimmingCharacters(in: .whitespaces)
-            while query.hasSuffix(".") || query.hasSuffix(",") || query.hasSuffix("?") || query.hasSuffix("!") { query.removeLast() }
-            print("[ENGINE] Command recognized: Chrome search '\(query)'")
-            googleSearch(query: query, inBrowser: "Google Chrome")
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
+        // Browser and website delegates
+        if let out = processBrowserAndWebsites(lowerText: lowerText, text: text) {
+            return out
         }
 
-        // 2. Open website or go to website triggers
-        if lowerText.hasPrefix("open website ") {
-            var urlStr = String(text.dropFirst(13)).trimmingCharacters(in: .whitespaces)
-            while urlStr.hasSuffix(".") || urlStr.hasSuffix(",") || urlStr.hasSuffix("?") || urlStr.hasSuffix("!") { urlStr.removeLast() }
-            let lowerUrl = urlStr.lowercased().trimmingCharacters(in: .whitespaces)
-            if lowerUrl == "claude" || lowerUrl == "claude ai" || lowerUrl == "claude.ai" || lowerUrl == "cloud" || lowerUrl == "cloud ai" || lowerUrl == "cloud.ai" {
-                urlStr = "claude.ai"
-            } else if lowerUrl == "chatgpt" || lowerUrl == "chat gpt" || lowerUrl == "chatgpt.com" {
-                urlStr = "chatgpt.com"
-            } else if lowerUrl == "gemini" || lowerUrl == "gemini ai" || lowerUrl == "gemini.google.com" {
-                urlStr = "gemini.google.com"
-            } else if lowerUrl == "perplexity" || lowerUrl == "perplexity ai" || lowerUrl == "perplexity.ai" {
-                urlStr = "perplexity.ai"
-            }
-            print("[ENGINE] Command recognized: Open website '\(urlStr)'")
-            openWebsite(urlStr: urlStr)
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
-        } else if lowerText.hasPrefix("go to ") {
-            var urlStr = String(text.dropFirst(6)).trimmingCharacters(in: .whitespaces)
-            while urlStr.hasSuffix(".") || urlStr.hasSuffix(",") || urlStr.hasSuffix("?") || urlStr.hasSuffix("!") { urlStr.removeLast() }
-            let lowerUrl = urlStr.lowercased().trimmingCharacters(in: .whitespaces)
-            if lowerUrl == "claude" || lowerUrl == "claude ai" || lowerUrl == "claude.ai" || lowerUrl == "cloud" || lowerUrl == "cloud ai" || lowerUrl == "cloud.ai" {
-                urlStr = "claude.ai"
-            } else if lowerUrl == "chatgpt" || lowerUrl == "chat gpt" || lowerUrl == "chatgpt.com" {
-                urlStr = "chatgpt.com"
-            } else if lowerUrl == "gemini" || lowerUrl == "gemini ai" || lowerUrl == "gemini.google.com" {
-                urlStr = "gemini.google.com"
-            } else if lowerUrl == "perplexity" || lowerUrl == "perplexity ai" || lowerUrl == "perplexity.ai" {
-                urlStr = "perplexity.ai"
-            }
-            print("[ENGINE] Command recognized: Go to website '\(urlStr)'")
-            openWebsite(urlStr: urlStr)
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
-        } else if lowerText.hasPrefix("goto ") {
-            var urlStr = String(text.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-            while urlStr.hasSuffix(".") || urlStr.hasSuffix(",") || urlStr.hasSuffix("?") || urlStr.hasSuffix("!") { urlStr.removeLast() }
-            let lowerUrl = urlStr.lowercased().trimmingCharacters(in: .whitespaces)
-            if lowerUrl == "claude" || lowerUrl == "claude ai" || lowerUrl == "claude.ai" || lowerUrl == "cloud" || lowerUrl == "cloud ai" || lowerUrl == "cloud.ai" {
-                urlStr = "claude.ai"
-            } else if lowerUrl == "chatgpt" || lowerUrl == "chat gpt" || lowerUrl == "chatgpt.com" {
-                urlStr = "chatgpt.com"
-            } else if lowerUrl == "gemini" || lowerUrl == "gemini ai" || lowerUrl == "gemini.google.com" {
-                urlStr = "gemini.google.com"
-            } else if lowerUrl == "perplexity" || lowerUrl == "perplexity ai" || lowerUrl == "perplexity.ai" {
-                urlStr = "perplexity.ai"
-            }
-            print("[ENGINE] Command recognized: Go to website '\(urlStr)'")
-            openWebsite(urlStr: urlStr)
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
+        // Spotify/music delegates
+        if let out = processSpotifyMusic(lowerText: lowerText, text: text) {
+            return out
         }
 
-        // 3. Spotify search & play triggers
-        if lowerText.hasPrefix("search spotify for ") {
-            var query = String(text.dropFirst(19)).trimmingCharacters(in: .whitespaces)
-            while query.hasSuffix(".") || query.hasSuffix(",") || query.hasSuffix("?") || query.hasSuffix("!") { query.removeLast() }
-            print("[ENGINE] Command recognized: Spotify search '\(query)'")
-            searchSpotify(query: query)
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
-        } else if lowerText.hasPrefix("open spotify and search ") {
-            var query = String(text.dropFirst(24)).trimmingCharacters(in: .whitespaces)
-            while query.hasSuffix(".") || query.hasSuffix(",") || query.hasSuffix("?") || query.hasSuffix("!") { query.removeLast() }
-            print("[ENGINE] Command recognized: Spotify search '\(query)'")
-            searchSpotify(query: query)
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
-        } else if lowerText.hasPrefix("open spotify and play ") {
-            var query = String(text.dropFirst(22)).trimmingCharacters(in: .whitespaces)
-            while query.hasSuffix(".") || query.hasSuffix(",") || query.hasSuffix("?") || query.hasSuffix("!") { query.removeLast() }
-            print("[ENGINE] Command recognized: Spotify play '\(query)'")
-            searchSpotify(query: query)
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
-        } else if lowerText.hasPrefix("play ") && lowerText.hasSuffix(" on spotify") {
-            var song = String(text.dropFirst(5).dropLast(11)).trimmingCharacters(in: .whitespaces)
-            while song.hasSuffix(".") || song.hasSuffix(",") || song.hasSuffix("?") || song.hasSuffix("!") { song.removeLast() }
-            print("[ENGINE] Command recognized: Spotify play '\(song)'")
-            searchSpotify(query: song)
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
-        }
-
-        // 3.5. Run macOS Shortcut or activate Siri triggers
+        // Shortcuts & Siri triggers
         if lowerText.hasPrefix("run shortcut ") {
             let rest = String(text.dropFirst(13)).trimmingCharacters(in: .whitespaces)
             let lowerRest = rest.lowercased()
@@ -796,13 +311,9 @@ enum CommandEngine {
             print("[ENGINE] Command recognized: Run shortcut '\(shortcutName)'")
             runShortcut(named: shortcutName)
             return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
-        } else if lowerText == "open siri" || lowerText == "open siri." || lowerText == "hey siri" || lowerText == "hey siri." || lowerText == "activate siri" || lowerText == "activate siri." || lowerText == "hey jarvis" || lowerText == "hey jarvis." || lowerText == "ask jarvis" || lowerText == "ask jarvis." || lowerText == "jarvis" || lowerText == "jarvis." {
-            print("[ENGINE] Command recognized: Activate Siri (Jarvis alias)")
-            launchApp(named: "Siri")
-            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
         }
 
-        // 4. Google search / general search triggers
+        // Google searches
         if lowerText.hasPrefix("google ") {
             var query = String(text.dropFirst(7)).trimmingCharacters(in: .whitespaces)
             while query.hasSuffix(".") || query.hasSuffix(",") || query.hasSuffix("?") || query.hasSuffix("!") { query.removeLast() }
@@ -819,7 +330,7 @@ enum CommandEngine {
             }
         }
 
-        // 5. Focus & search (in-app type search)
+        // Focus & find searches
         if lowerText.hasPrefix("type in search ") {
             var query = String(text.dropFirst(15)).trimmingCharacters(in: .whitespaces)
             while query.hasSuffix(".") || query.hasSuffix(",") || query.hasSuffix("?") || query.hasSuffix("!") { query.removeLast() }
@@ -832,7 +343,7 @@ enum CommandEngine {
             return CommandOutput(text: query, pressReturnAfter: true, fileURL: nil, searchShortcut: .find)
         }
 
-        // 6. Plain app open (checked last so specific triggers take precedence)
+        // General app opens
         if lowerText.hasPrefix("open ") {
             var appName = String(text.dropFirst(5)).trimmingCharacters(in: .whitespaces)
             while appName.hasSuffix(".") || appName.hasSuffix(",") || appName.hasSuffix("?") || appName.hasSuffix("!") {
@@ -861,13 +372,11 @@ enum CommandEngine {
             return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
         }
 
+        // Document / File uploading
         var pressReturn = false
         var fileURL: URL? = nil
 
-        // Check for file tagging triggers, supporting scoped folder search (e.g. "in folder Sotto find file AppController")
         var extracted = extractFolderAndFileName(from: text)
-        
-        // If we only extracted a folder path (like document/UCB) but no file name, split by slash to get the file name
         if let folder = extracted.folder, extracted.file == nil {
             if folder.contains("/") {
                 let parts = folder.components(separatedBy: "/")
@@ -881,8 +390,6 @@ enum CommandEngine {
 
         if var folderName = extracted.folder, let fileName = extracted.file {
             let rootPath = SettingsController.workspacePath
-            
-            // Clean up "from under" prefixes if they got picked up in the regex match
             let lowerFolder = folderName.lowercased()
             if lowerFolder.hasPrefix("from under ") {
                 folderName = String(folderName.dropFirst(11)).trimmingCharacters(in: .whitespaces)
@@ -920,7 +427,6 @@ enum CommandEngine {
             }
         }
 
-        // Fallback: If no file was matched but they said upload folder/directory/file, upload the workspace path itself
         if fileURL == nil {
             let lowerText = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
             let uploadFolderPhrases = [
@@ -939,7 +445,6 @@ enum CommandEngine {
                     fileURL = folderURL
                     print("[ENGINE] No specific file matched, falling back to uploading the workspace path itself: \(folderURL.path)")
                     
-                    // Strip the upload phrase from the text so we don't paste it
                     var cleanText = text
                     for phrase in uploadFolderPhrases + ["upload"] {
                         let pattern = "\\b\(NSRegularExpression.escapedPattern(for: phrase))\\b"
@@ -952,7 +457,7 @@ enum CommandEngine {
             }
         }
 
-        // Trailing "send it" / "press enter" → strip the phrase, hit Return after pasting.
+        // "send it" / "press enter" triggers
         for phrase in sendPhrases {
             let pattern = "[,.!?\\s]*\(phrase)[.!?]?\\s*$"
             if let range = text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
@@ -962,7 +467,7 @@ enum CommandEngine {
             }
         }
 
-        // Spoken structure tokens.
+        // New paragraph and new line spoken formatting
         text = text.replacingOccurrences(
             of: "[,.]?\\s*\\bnew paragraph\\b[,.]?\\s*",
             with: "\n\n", options: [.regularExpression, .caseInsensitive])
@@ -970,7 +475,7 @@ enum CommandEngine {
             of: "[,.]?\\s*\\bnew line\\b[,.]?\\s*",
             with: "\n", options: [.regularExpression, .caseInsensitive])
 
-        // "at sign budget" → "@budget" (file/person tagging).
+        // Symbol mapping
         text = text.replacingOccurrences(
             of: "\\bat sign\\s+", with: "@",
             options: [.regularExpression, .caseInsensitive])
@@ -980,11 +485,11 @@ enum CommandEngine {
         return CommandOutput(text: text, pressReturnAfter: pressReturn, fileURL: fileURL)
     }
 
-    private static func extractFileName(from text: String) -> String? {
+    static func extractFileName(from text: String) -> String? {
         let patterns = [
             ("file\\s+named\\s+([a-zA-Z0-9_.-]+)", false),
-            ("file\\s+([a-zA-Z0-9_.-]+\\.[a-zA-Z0-9]+)", false), // matches files with extensions like "main.swift"
-            ("file\\s+([a-zA-Z0-9_.-]+)", true) // matches plain names like "index"
+            ("file\\s+([a-zA-Z0-9_.-]+\\.[a-zA-Z0-9]+)", false),
+            ("file\\s+([a-zA-Z0-9_.-]+)", true)
         ]
 
         let stopWords: Set<String> = [
@@ -1004,7 +509,6 @@ enum CommandEngine {
                 if let match = results.first, match.numberOfRanges > 1 {
                     var fileName = nsString.substring(with: match.range(at: 1))
 
-                    // Clean trailing punctuation
                     while fileName.hasSuffix(".") || fileName.hasSuffix(",") || fileName.hasSuffix("?") || fileName.hasSuffix("!") || fileName.hasSuffix(":") || fileName.hasSuffix(";") {
                         fileName.removeLast()
                     }
@@ -1025,20 +529,18 @@ enum CommandEngine {
         return nil
     }
 
-    private static func findFile(named name: String, under rootPath: String) -> URL? {
+    static func findFile(named name: String, under rootPath: String) -> URL? {
         let startTime = CFAbsoluteTimeGetCurrent()
         let fileManager = FileManager.default
         let expandedPath = (rootPath as NSString).expandingTildeInPath
         let rootURL = URL(fileURLWithPath: expandedPath)
 
-        // 1. Check if the root directory itself matches the name (case-insensitive)
         if rootURL.lastPathComponent.lowercased() == name.lowercased() {
             let duration = CFAbsoluteTimeGetCurrent() - startTime
             print("[BENCHMARK] Workspace root itself matches '\(name)' in \(String(format: "%.2f", duration * 1000))ms")
             return rootURL
         }
 
-        // 2. Otherwise search recursively
         guard let enumerator = fileManager.enumerator(
             at: rootURL,
             includingPropertiesForKeys: [.nameKey, .isDirectoryKey],
@@ -1048,819 +550,514 @@ enum CommandEngine {
         var bestMatch: URL?
         var filesScanned = 0
 
-        for case let fileURL as URL in enumerator {
+        while let fileURL = enumerator.nextObject() as? URL {
             filesScanned += 1
-            let path = fileURL.path
-            // Optimization: skip large build/dependency directories to keep search instant
-            if path.contains("/node_modules/") ||
-               path.contains("/.git/") ||
-               path.contains("/.build/") ||
-               path.contains("/.xcbuild/") ||
-               path.contains("/build/") ||
-               path.contains("/Library/") {
-                enumerator.skipDescendants()
-                continue
+            let filename = fileURL.lastPathComponent.lowercased()
+            let query = name.lowercased()
+
+            if filename == query {
+                bestMatch = fileURL
+                break
             }
 
-            guard let resourceValues = try? fileURL.resourceValues(forKeys: [.isDirectoryKey]),
-                  let _ = resourceValues.isDirectory else {
-                continue
-            }
-
-            let fileName = fileURL.lastPathComponent.lowercased()
-            let searchName = name.lowercased()
-
-            if fileName == searchName {
-                let duration = CFAbsoluteTimeGetCurrent() - startTime
-                print("[BENCHMARK] Workspace file/folder search found exact match for '\(name)' in \(String(format: "%.2f", duration * 1000))ms (scanned \(filesScanned) items)")
-                return fileURL
-            }
-
-            let nameWithoutExtension = fileURL.deletingPathExtension().lastPathComponent.lowercased()
-            if nameWithoutExtension == searchName {
+            if filename.hasPrefix(query) {
                 bestMatch = fileURL
             }
         }
 
         let duration = CFAbsoluteTimeGetCurrent() - startTime
-        print("[BENCHMARK] Workspace file/folder search finished in \(String(format: "%.2f", duration * 1000))ms (scanned \(filesScanned) items, bestMatch: \(bestMatch?.lastPathComponent ?? "none"))")
+        print("[BENCHMARK] File search for '\(name)' completed in \(String(format: "%.2f", duration * 1000))ms, scanned \(filesScanned) files. Found: \(bestMatch?.lastPathComponent ?? "NONE")")
         return bestMatch
     }
 
-    private static func preprocessSpeechArtifacts(_ input: String) -> String {
-        var result = input
-
-        // 0. Convert " slash " to "/"
-        result = result.replacingOccurrences(
-            of: "\\s+slash\\s+", with: "/",
-            options: [.regularExpression, .caseInsensitive])
-
-        // 1. Convert "X dot Y" to "X.Y"
-        if let dotRegex = try? NSRegularExpression(pattern: "([a-zA-Z0-9_-]+)\\s+dot\\s+([a-zA-Z0-9_-]+)", options: .caseInsensitive) {
-            let nsString = result as NSString
-            result = dotRegex.stringByReplacingMatches(
-                in: result,
-                options: [],
-                range: NSRange(location: 0, length: nsString.length),
-                withTemplate: "$1.$2"
-            )
+    static func preprocessSpeechArtifacts(_ input: String) -> String {
+        let lower = input.lowercased()
+        var text = input
+        
+        let fileCallKeywords = ["file called ", "file name ", "filename "]
+        for keyword in fileCallKeywords {
+            if let r = lower.range(of: keyword) {
+                let after = input[r.upperBound...]
+                let words = after.split(separator: " ")
+                guard !words.isEmpty else { continue }
+                
+                var targetWord = String(words[0])
+                var trailingCleaned = ""
+                
+                while targetWord.hasSuffix(".") || targetWord.hasSuffix(",") || targetWord.hasSuffix("?") || targetWord.hasSuffix("!") || targetWord.hasSuffix(":") || targetWord.hasSuffix(";") {
+                    trailingCleaned = String(targetWord.last!) + trailingCleaned
+                    targetWord.removeLast()
+                }
+                
+                let cleanedName = cleanPunctuation(targetWord)
+                if !cleanedName.isEmpty && cleanedName != targetWord {
+                    let fullTargetPattern = targetWord + trailingCleaned
+                    let replacement = "file " + cleanedName + trailingCleaned
+                    text = text.replacingOccurrences(of: keyword + fullTargetPattern, with: replacement, options: .caseInsensitive)
+                }
+            }
         }
 
-        // 2. Clean spaces around dots "X . Y" -> "X.Y"
-        if let spaceDotRegex = try? NSRegularExpression(pattern: "([a-zA-Z0-9_-]+)\\s*\\.\\s*([a-zA-Z0-9_-]+)", options: .caseInsensitive) {
-            let nsString = result as NSString
-            result = spaceDotRegex.stringByReplacingMatches(
-                in: result,
-                options: [],
-                range: NSRange(location: 0, length: nsString.length),
-                withTemplate: "$1.$2"
-            )
+        if lower.contains(" dot ") {
+            text = text.replacingOccurrences(of: " dot swift", with: ".swift", options: .caseInsensitive)
+            text = text.replacingOccurrences(of: " dot py", with: ".py", options: .caseInsensitive)
+            text = text.replacingOccurrences(of: " dot js", with: ".js", options: .caseInsensitive)
+            text = text.replacingOccurrences(of: " dot ts", with: ".ts", options: .caseInsensitive)
+            text = text.replacingOccurrences(of: " dot json", with: ".json", options: .caseInsensitive)
+            text = text.replacingOccurrences(of: " dot md", with: ".md", options: .caseInsensitive)
+            text = text.replacingOccurrences(of: " dot txt", with: ".txt", options: .caseInsensitive)
+            text = text.replacingOccurrences(of: " dot html", with: ".html", options: .caseInsensitive)
+            text = text.replacingOccurrences(of: " dot css", with: ".css", options: .caseInsensitive)
+            text = text.replacingOccurrences(of: " dot sh", with: ".sh", options: .caseInsensitive)
         }
-
-        // 3. Normalize file triggers (e.g. "file name", "file called", "file cold" -> "file named")
-        if let triggerRegex = try? NSRegularExpression(pattern: "file\\s+(?:name|called|named|code|cold|could|labeled|label|call|selected)\\s+", options: .caseInsensitive) {
-            let nsString = result as NSString
-            result = triggerRegex.stringByReplacingMatches(
-                in: result,
-                options: [],
-                range: NSRange(location: 0, length: nsString.length),
-                withTemplate: "file named "
-            )
-        }
-
-        // 4. Normalize Spotify Search
-        if let spotifySearchRegex = try? NSRegularExpression(pattern: "open\\s+spotify\\b(?:[\\s.,]*and)?(?:[\\s]*then)?\\s+search\\s+(?:for\\s+)?", options: .caseInsensitive) {
-            let nsString = result as NSString
-            result = spotifySearchRegex.stringByReplacingMatches(
-                in: result,
-                options: [],
-                range: NSRange(location: 0, length: nsString.length),
-                withTemplate: "open spotify and search "
-            )
-        }
-
-        // 5. Normalize Spotify Play
-        if let spotifyPlayRegex = try? NSRegularExpression(pattern: "open\\s+spotify\\b(?:[\\s.,]*and)?(?:[\\s]*then)?\\s+play\\s+(?:for\\s+)?", options: .caseInsensitive) {
-            let nsString = result as NSString
-            result = spotifyPlayRegex.stringByReplacingMatches(
-                in: result,
-                options: [],
-                range: NSRange(location: 0, length: nsString.length),
-                withTemplate: "open spotify and play "
-            )
-        }
-
-        // 6. Normalize Chrome Search
-        if let chromeSearchRegex = try? NSRegularExpression(pattern: "open\\s+(?:google\\s+)?chrome\\b(?:[\\s.,]*and)?(?:[\\s]*then)?\\s+(?:search\\s+(?:for\\s+)?|look\\s+for\\s+|find\\s+|google\\s+|check\\s+(?:the\\s+)?|query\\s+|go\\s+to\\s+)", options: .caseInsensitive) {
-            let nsString = result as NSString
-            result = chromeSearchRegex.stringByReplacingMatches(
-                in: result,
-                options: [],
-                range: NSRange(location: 0, length: nsString.length),
-                withTemplate: "open google chrome and search "
-            )
-        }
-
-        return result
+        
+        return text
     }
 
-    /// Public reflex entry point: launch an app by name. Returns true when a real
-    /// app bundle was resolved (so the kernel can escalate to the model if not).
-    @discardableResult
     static func openApp(named name: String) -> Bool {
-        launchApp(named: name)
+        return launchApp(named: name)
     }
 
     @discardableResult
-    private static func launchApp(named name: String) -> Bool {
-        let startTime = CFAbsoluteTimeGetCurrent()
+    static func launchApp(named name: String) -> Bool {
+        let cleanName = normalizeName(name)
+        let aliases: [String: String] = [
+            "chrome": "Google Chrome",
+            "google chrome": "Google Chrome",
+            "safari": "Safari",
+            "xcode": "Xcode",
+            "slack": "Slack",
+            "spotify": "Spotify",
+            "messages": "Messages",
+            "mail": "Mail",
+            "finder": "Finder",
+            "terminal": "Terminal",
+            "activity monitor": "Activity Monitor",
+            "system settings": "System Settings",
+            "system preferences": "System Settings"
+        ]
         
-        var targetURL: URL? = nil
-        if name.contains(".") {
-            targetURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: name)
-        } else {
-            let commonIDs = ["com.apple.\(name.lowercased())", "com.google.\(name)", "com.apple.Utilities.\(name)"]
-            for bid in commonIDs {
-                if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bid) {
-                    targetURL = url
-                    break
-                }
+        let appToLaunch = aliases[cleanName.lowercased()] ?? cleanName
+        
+        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Siri") {
+            if appToLaunch.lowercased() == "siri" {
+                NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration())
+                return true
             }
-            if targetURL == nil {
-                let paths = [
-                    "/Applications/\(name).app",
-                    "/System/Applications/\(name).app",
-                    "/System/Applications/Utilities/\(name).app"
-                ]
-                for path in paths {
-                    if FileManager.default.fileExists(atPath: path) {
-                        targetURL = URL(fileURLWithPath: path)
-                        break
+        }
+
+        let workspace = NSWorkspace.shared
+        let fileManager = FileManager.default
+        let appDirs = ["/Applications", "/System/Applications", "/System/Applications/Utilities", "~/Applications"]
+        for dir in appDirs {
+            let expandedDir = (dir as NSString).expandingTildeInPath
+            let url = URL(fileURLWithPath: expandedDir)
+            if let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: nil) {
+                while let appURL = enumerator.nextObject() as? URL {
+                    if appURL.lastPathComponent.lowercased() == "\(appToLaunch.lowercased()).app" {
+                        let config = NSWorkspace.OpenConfiguration()
+                        workspace.openApplication(at: appURL, configuration: config) { _, error in
+                            if let error = error {
+                                print("[ENGINE] Failed to launch application from search: \(error.localizedDescription)")
+                            }
+                        }
+                        return true
                     }
                 }
             }
         }
         
-        if let appURL = targetURL {
-            NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration()) { _, error in
-                let duration = CFAbsoluteTimeGetCurrent() - startTime
-                if let error = error {
-                    print("[ENGINE] Failed to launch application natively: \(error.localizedDescription)")
-                } else {
-                    print("[BENCHMARK] Application '\(name)' launched natively in \(String(format: "%.2f", duration * 1000))ms")
-                }
-            }
-            return true
-        } else {
-            // No real app bundle resolved. Try /usr/bin/open as a best-effort fallback,
-            // but report failure so the kernel can escalate the utterance to the model.
-            let process = Process()
-            process.launchPath = "/usr/bin/open"
-            process.arguments = ["-a", name]
-            try? process.run()
-            let duration = CFAbsoluteTimeGetCurrent() - startTime
-            print("[BENCHMARK] Application '\(name)' launched via /usr/bin/open fallback in \(String(format: "%.2f", duration * 1000))ms")
-            return false
-        }
+        print("[ENGINE] Failed to find or launch application: \(appToLaunch)")
+        return false
     }
 
-    private static func googleSearch(query: String, inBrowser browser: String? = nil) {
-        guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return }
-        let urlString = "https://www.google.com/search?q=\(encoded)"
-        guard let url = URL(string: urlString) else { return }
+    static func googleSearch(query: String, inBrowser browser: String? = nil) {
+        guard let escapedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return }
+        let urlStr = "https://www.google.com/search?q=\(escapedQuery)"
+        guard let url = URL(string: urlStr) else { return }
         
-        let startTime = CFAbsoluteTimeGetCurrent()
         if let browserName = browser {
-            // Check if it's a bundle ID
-            if browserName.contains("."), let browserURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: browserName) {
-                let config = NSWorkspace.OpenConfiguration()
-                config.arguments = [urlString]
-                NSWorkspace.shared.openApplication(at: browserURL, configuration: config) { _, error in
-                    let duration = CFAbsoluteTimeGetCurrent() - startTime
-                    if let error = error {
-                        print("[ENGINE] Failed to launch browser natively: \(error.localizedDescription)")
-                    } else {
-                        print("[BENCHMARK] Browser '\(browserName)' launched natively with search URL in \(String(format: "%.2f", duration * 1000))ms")
-                    }
-                }
-                return
-            }
+            let workspace = NSWorkspace.shared
+            let fileManager = FileManager.default
+            let appDirs = ["/Applications", "/System/Applications"]
+            var browserURL: URL? = nil
             
-            // Try resolving common browsers to their bundle identifier:
-            var bundleID: String? = nil
-            let lowerBrowser = browserName.lowercased()
-            if lowerBrowser.contains("chrome") {
-                bundleID = "com.google.Chrome"
-            } else if lowerBrowser.contains("safari") {
-                bundleID = "com.apple.Safari"
-            } else if lowerBrowser.contains("firefox") {
-                bundleID = "org.mozilla.firefox"
-            } else if lowerBrowser.contains("edge") {
-                bundleID = "com.microsoft.edgemac"
-            }
-            
-            if let bID = bundleID, let browserURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bID) {
-                let config = NSWorkspace.OpenConfiguration()
-                config.arguments = [urlString]
-                NSWorkspace.shared.openApplication(at: browserURL, configuration: config) { _, error in
-                    let duration = CFAbsoluteTimeGetCurrent() - startTime
-                    if let error = error {
-                        print("[ENGINE] Failed to launch browser natively: \(error.localizedDescription)")
-                    } else {
-                        print("[BENCHMARK] Browser '\(browserName)' launched natively with search URL in \(String(format: "%.2f", duration * 1000))ms")
-                    }
-                }
-                return
-            }
-            
-            // Fallback to process opening with name
-            let process = Process()
-            process.launchPath = "/usr/bin/open"
-            process.arguments = ["-a", browserName, urlString]
-            try? process.run()
-            let duration = CFAbsoluteTimeGetCurrent() - startTime
-            print("[BENCHMARK] Browser '\(browserName)' launched via open fallback in \(String(format: "%.2f", duration * 1000))ms")
-        } else {
-            // Default browser open
-            NSWorkspace.shared.open(url)
-            let duration = CFAbsoluteTimeGetCurrent() - startTime
-            print("[BENCHMARK] Opened search URL in default browser in \(String(format: "%.2f", duration * 1000))ms")
-        }
-    }
-
-    private static func openWebsite(urlStr: String) {
-        var cleanURL = urlStr.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cleanURL.lowercased().hasPrefix("http://") && !cleanURL.lowercased().hasPrefix("https://") {
-            cleanURL = "https://" + cleanURL
-        }
-        if let url = URL(string: cleanURL) {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
-    private static func searchSpotify(query: String) {
-        guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return }
-        guard let url = URL(string: "spotify:search:\(encoded)") else { return }
-
-        let isRunning = NSWorkspace.shared.runningApplications.contains { app in
-            app.bundleIdentifier == "com.spotify.client" || app.localizedName?.lowercased() == "spotify"
-        }
-
-        if isRunning {
-            NSWorkspace.shared.open(url)
-            print("[ENGINE] Spotify is already running. Sent search URL immediately.")
-        } else {
-            print("[ENGINE] Spotify is not running. Launching Spotify first...")
-            if let spotifyURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.spotify.client") {
-                NSWorkspace.shared.openApplication(at: spotifyURL, configuration: NSWorkspace.OpenConfiguration()) { _, error in
-                    if let error = error {
-                        print("[ENGINE] Failed to launch Spotify natively: \(error.localizedDescription)")
-                        NSWorkspace.shared.open(url)
-                    } else {
-                        print("[ENGINE] Spotify launched natively. Waiting 2.0s for Spotify to load before sending search query...")
-                        Task {
-                            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2.0s delay
-                            NSWorkspace.shared.open(url)
-                            print("[ENGINE] Sent search URL to newly launched Spotify.")
+            for dir in appDirs {
+                let url = URL(fileURLWithPath: dir)
+                if let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: nil) {
+                    while let appURL = enumerator.nextObject() as? URL {
+                        if appURL.lastPathComponent.lowercased() == "\(browserName.lowercased()).app" {
+                            browserURL = appURL
+                            break
                         }
                     }
                 }
-            } else {
-                NSWorkspace.shared.open(url)
             }
+            
+            if let appURL = browserURL {
+                let config = NSWorkspace.OpenConfiguration()
+                config.arguments = [urlStr]
+                workspace.openApplication(at: appURL, configuration: config)
+                return
+            }
+        }
+        
+        NSWorkspace.shared.open(url)
+    }
+
+    static func openWebsite(urlStr: String) {
+        var cleanUrl = urlStr.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanUrl.hasPrefix("http://") && !cleanUrl.hasPrefix("https://") {
+            cleanUrl = "https://" + cleanUrl
+        }
+        if let url = URL(string: cleanUrl) {
+            NSWorkspace.shared.open(url)
         }
     }
 
-    private static func runShortcut(named name: String, input: String? = nil) {
-        let process = Process()
-        process.launchPath = "/usr/bin/shortcuts"
-        process.arguments = ["run", name]
-
-        if let input = input {
-            let pipe = Pipe()
-            process.standardInput = pipe
-            try? process.run()
-            if let data = input.data(using: .utf8) {
-                try? pipe.fileHandleForWriting.write(contentsOf: data)
-                try? pipe.fileHandleForWriting.close()
-            }
-        } else {
-            try? process.run()
+    static func searchSpotify(query: String) {
+        guard let escapedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return }
+        let spotifySearchURL = "spotify:search:\(escapedQuery)"
+        if let url = URL(string: spotifySearchURL) {
+            NSWorkspace.shared.open(url)
+            print("[ENGINE] Opened Spotify search for: \(query)")
         }
+    }
+
+    static func runShortcut(named name: String, input: String? = nil) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
+        if let input = input {
+            process.arguments = ["run", name, "--input-text", input]
+        } else {
+            process.arguments = ["run", name]
+        }
+        try? process.run()
     }
 
     static func runShellCommand(_ command: String, currentDirectory: String) -> String {
-        let sottoDataPath = SettingsController.sottoDataURL.path
-        let resolvedCommand = command.replacingOccurrences(of: "sotto-data/", with: sottoDataPath + "/")
-
-        let startTime = CFAbsoluteTimeGetCurrent()
         let process = Process()
-        process.launchPath = "/bin/bash"
-        process.arguments = ["-c", resolvedCommand]
-
-        let expandedPath = (currentDirectory as NSString).expandingTildeInPath
-        process.currentDirectoryPath = expandedPath
-
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = ["-c", command]
+        process.currentDirectoryPath = (currentDirectory as NSString).expandingTildeInPath
+        
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
-
+        
         do {
             try process.run()
             process.waitUntilExit()
-
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let duration = CFAbsoluteTimeGetCurrent() - startTime
-            print("[BENCHMARK] Shell command '\(command)' finished in \(String(format: "%.2f", duration * 1000))ms")
-            
-            if let output = String(data: data, encoding: .utf8) {
-                return output.trimmingCharacters(in: .whitespacesAndNewlines)
-            }
+            return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         } catch {
-            return "Error running command: \(error.localizedDescription)"
+            return "Execution failed: \(error.localizedDescription)"
         }
-        return ""
     }
 
     static func runAppleScriptNative(scriptPath: String, arguments: [String]) -> String {
-        let startTime = CFAbsoluteTimeGetCurrent()
-        let sottoDataPath = SettingsController.sottoDataURL.path
-        let resolvedPath = scriptPath.replacingOccurrences(of: "sotto-data/", with: sottoDataPath + "/")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = [scriptPath] + arguments
         
-        let url = URL(fileURLWithPath: resolvedPath)
-        guard let script = NSAppleScript(contentsOf: url, error: nil) else {
-            return "Failed to load AppleScript at \(url.path)"
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        } catch {
+            return "AppleScript failed: \(error.localizedDescription)"
         }
-        
-        var error: NSDictionary?
-        let result: NSAppleEventDescriptor
-        
-        if arguments.isEmpty {
-            result = script.executeAndReturnError(&error)
-        } else {
-            let parameters = NSAppleEventDescriptor.list()
-            for (index, arg) in arguments.enumerated() {
-                parameters.insert(NSAppleEventDescriptor(string: arg), at: index + 1)
-            }
-            
-            let event = NSAppleEventDescriptor(
-                eventClass: AEEventClass(0x61736372), // 'ascr'
-                eventID: AEEventID(0x70737562),     // 'psub'
-                targetDescriptor: nil,
-                returnID: AEReturnID(kAutoGenerateReturnID),
-                transactionID: AETransactionID(kAnyTransactionID)
-            )
-            
-            event.setParam(NSAppleEventDescriptor(string: "run"), forKeyword: AEKeyword(0x736e616d)) // 'snam'
-            event.setParam(parameters, forKeyword: AEKeyword(0x2d2d2d2d)) // '----'
-            
-            result = script.executeAppleEvent(event, error: &error)
-        }
-        
-        let duration = CFAbsoluteTimeGetCurrent() - startTime
-        print("[BENCHMARK] AppleScript '\(scriptPath)' executed natively in-process in \(String(format: "%.2f", duration * 1000))ms")
-        
-        if let error = error {
-            return "AppleScript Error: \(error)"
-        }
-        return result.stringValue ?? ""
     }
 
     static func runCommandNatively(_ fullCommand: String) -> String {
-        let trimmed = fullCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = fullCommand.split(separator: " ").map(String.init)
+        guard !parts.isEmpty else { return "Empty command" }
         
-        if trimmed.hasPrefix("osascript ") {
-            let scriptPart = String(trimmed.dropFirst(10)).trimmingCharacters(in: .whitespacesAndNewlines)
-            
-            var tokens: [String] = []
-            var currentToken = ""
-            var insideQuotes = false
-            
-            for char in scriptPart {
-                if char == "\"" || char == "'" {
-                    insideQuotes.toggle()
-                } else if char == " " && !insideQuotes {
-                    if !currentToken.isEmpty {
-                        tokens.append(currentToken)
-                        currentToken = ""
-                    }
-                } else {
-                    currentToken.append(char)
-                }
-            }
-            if !currentToken.isEmpty {
-                tokens.append(currentToken)
-            }
-            
-            if let scriptPath = tokens.first {
-                let args = Array(tokens.dropFirst())
-                return runAppleScriptNative(scriptPath: scriptPath, arguments: args)
-            }
+        if parts[0] == "osascript" {
+            let scriptPath = parts[1].replacingOccurrences(of: "\"", with: "")
+            let arguments = Array(parts.dropFirst(2)).map { $0.replacingOccurrences(of: "\"", with: "") }
+            return runAppleScriptNative(scriptPath: scriptPath, arguments: arguments)
+        } else if parts[0] == "bash" {
+            let scriptPath = parts[1].replacingOccurrences(of: "\"", with: "")
+            let rootPath = SettingsController.workspacePath
+            return runShellCommand("bash \"\(scriptPath)\"", currentDirectory: rootPath)
+        } else {
+            let rootPath = SettingsController.workspacePath
+            return runShellCommand(fullCommand, currentDirectory: rootPath)
         }
-        
-        let rootPath = SettingsController.workspacePath
-        return runShellCommand(trimmed, currentDirectory: rootPath)
     }
 
-    private static func captureScreenImage(displayID: CGDirectDisplayID) async -> CGImage? {
+    static func captureScreenImage(displayID: CGDirectDisplayID) async -> CGImage? {
+        let streamConfig = SCStreamConfiguration()
+        streamConfig.width = 1920
+        streamConfig.height = 1080
+        
         do {
-            let availableContent = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            guard let display = availableContent.displays.first(where: { $0.displayID == displayID }) else {
-                print("[SCK] Could not find SCDisplay for displayID \(displayID)")
+            let shareableContent = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            guard let display = shareableContent.displays.first(where: { $0.displayID == displayID }) else {
                 return nil
             }
-            let filter = SCContentFilter(display: display, excludingWindows: [])
-            let config = SCStreamConfiguration()
-            config.showsCursor = false
-            config.width = Int(display.width)
-            config.height = Int(display.height)
             
-            return try await withCheckedThrowingContinuation { continuation in
-                SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) { image, error in
-                    if let error = error {
-                        continuation.resume(throwing: error)
-                    } else if let image = image {
-                        continuation.resume(returning: image)
-                    } else {
-                        continuation.resume(throwing: NSError(domain: "ScreenCaptureKit", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unknown capture error"]))
-                    }
-                }
-            }
+            let filter = SCContentFilter(display: display, excludingWindows: [])
+            let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: streamConfig)
+            return image
         } catch {
-            print("[SCK] Screen capture failed: \(error.localizedDescription)")
+            print("[SCREEN-OCR] Failed to capture screen: \(error.localizedDescription)")
             return nil
         }
     }
 
-    private static func performScreenOCR() async -> String {
-        let startTime = CFAbsoluteTimeGetCurrent()
-        
-        // Check screen capture permission
-        if #available(macOS 10.15, *) {
-            if !CGPreflightScreenCaptureAccess() {
-                print("[VISION] Screen capture permission not granted. Requesting access...")
-                _ = CGRequestScreenCaptureAccess()
-                return "Screen capture permission not granted. Please enable Screen Recording for Sotto in System Settings -> Privacy & Security."
-            }
+    static func performScreenOCR() async -> String {
+        guard let image = await captureScreenImage(displayID: CGMainDisplayID()) else {
+            return "Screen capture failed."
         }
         
-        // Native cursor-aware screen selection: Capture the display containing the mouse cursor
-        let mouseLocation = NSEvent.mouseLocation
-        let screens = NSScreen.screens
-        var targetDisplayID = CGMainDisplayID()
-        
-        for screen in screens {
-            if NSPointInRect(mouseLocation, screen.frame) {
-                if let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID {
-                    targetDisplayID = displayID
-                    break
+        return await withCheckedContinuation { continuation in
+            let request = VNRecognizeTextRequest { request, error in
+                guard error == nil else {
+                    continuation.resume(returning: "OCR Request failed: \(error!.localizedDescription)")
+                    return
                 }
-            }
-        }
-        
-        guard let cgImage = await captureScreenImage(displayID: targetDisplayID) ?? CGDisplayCreateImage(targetDisplayID) else {
-            print("[VISION] Failed to capture screen image for display \(targetDisplayID)")
-            return "Failed to capture screen image"
-        }
-
-        let recognizedText: String = await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let request = VNRecognizeTextRequest { (request, error) in
-                    guard let observations = request.results as? [VNRecognizedTextObservation], error == nil else {
-                        continuation.resume(returning: "")
-                        return
-                    }
-                    let lines = observations.compactMap { $0.topCandidates(1).first?.string }
-                    continuation.resume(returning: lines.joined(separator: "\n"))
+                guard let observations = request.results as? [VNRecognizedTextObservation] else {
+                    continuation.resume(returning: "No text found.")
+                    return
                 }
                 
-                request.recognitionLevel = .accurate
-                request.usesLanguageCorrection = true
-                
-                let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-                do {
-                    try handler.perform([request])
-                } catch {
-                    print("[VISION] Failed to perform text recognition: \(error)")
-                    continuation.resume(returning: "Failed to analyze screen")
+                var recognizedText = ""
+                for observation in observations {
+                    guard let candidate = observation.topCandidates(1).first else { continue }
+                    recognizedText += candidate.string + "\n"
                 }
+                continuation.resume(returning: recognizedText)
+            }
+            
+            request.recognitionLevel = .accurate
+            let handler = VNImageRequestHandler(cgImage: image, options: [:])
+            do {
+                try handler.perform([request])
+            } catch {
+                continuation.resume(returning: "Failed to perform OCR: \(error.localizedDescription)")
             }
         }
-
-        let duration = CFAbsoluteTimeGetCurrent() - startTime
-        print("[BENCHMARK] Screen OCR completed in \(String(format: "%.2f", duration * 1000))ms (display: \(targetDisplayID))")
-        return recognizedText
     }
 
-    @discardableResult
     static func findAndClickText(_ target: String) async -> Bool {
-        if #available(macOS 10.15, *) {
-            if !CGPreflightScreenCaptureAccess() {
-                print("[VISION] Screen capture permission not granted.")
-                _ = CGRequestScreenCaptureAccess()
-                return false
-            }
-        }
-        
-        let mouseLocation = NSEvent.mouseLocation
-        let screens = NSScreen.screens
-        var targetDisplayID = CGMainDisplayID()
-        
-        for screen in screens {
-            if NSPointInRect(mouseLocation, screen.frame) {
-                if let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID {
-                    targetDisplayID = displayID
-                    break
-                }
-            }
-        }
-        
-        guard let cgImage = await captureScreenImage(displayID: targetDisplayID) ?? CGDisplayCreateImage(targetDisplayID) else {
-            print("[VISION] Failed to capture screen image")
+        guard let image = await captureScreenImage(displayID: CGMainDisplayID()) else {
             return false
         }
         
-        let screenWidth = CGFloat(cgImage.width)
-        let screenHeight = CGFloat(cgImage.height)
+        let screenWidth = CGFloat(image.width)
+        let screenHeight = CGFloat(image.height)
         
-        return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let request = VNRecognizeTextRequest { (request, error) in
-                    guard let observations = request.results as? [VNRecognizedTextObservation], error == nil else {
-                        continuation.resume(returning: false)
+        let foundRect: CGRect? = await withCheckedContinuation { continuation in
+            let request = VNRecognizeTextRequest { request, error in
+                guard error == nil, let observations = request.results as? [VNRecognizedTextObservation] else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                
+                for observation in observations {
+                    guard let candidate = observation.topCandidates(1).first else { continue }
+                    if candidate.string.lowercased().contains(target.lowercased()) {
+                        let boundingBox = observation.boundingBox
+                        
+                        let rect = CGRect(
+                            x: boundingBox.origin.x * screenWidth,
+                            y: (1.0 - boundingBox.origin.y - boundingBox.height) * screenHeight,
+                            width: boundingBox.width * screenWidth,
+                            height: boundingBox.height * screenHeight
+                        )
+                        continuation.resume(returning: rect)
                         return
                     }
-                    
-                    var bestObservation: VNRecognizedTextObservation? = nil
-                    var exactMatchFound = false
-                    
-                    for observation in observations {
-                        guard let candidate = observation.topCandidates(1).first else { continue }
-                        let candidateString = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
-                        
-                        if candidateString.caseInsensitiveCompare(target) == .orderedSame {
-                            bestObservation = observation
-                            exactMatchFound = true
-                            break
-                        } else if !exactMatchFound, candidateString.lowercased().contains(target.lowercased()) {
-                            bestObservation = observation
-                        }
-                    }
-                    
-                    if let observation = bestObservation {
-                        let box = observation.boundingBox
-                        let midX = box.midX
-                        let midY = box.midY
-                        
-                        let clickX = screenWidth * midX
-                        let clickY = screenHeight * (1.0 - midY)
-                        
-                        let displayBounds = CGDisplayBounds(targetDisplayID)
-                        let absolutePoint = CGPoint(x: displayBounds.origin.x + clickX, y: displayBounds.origin.y + clickY)
-                        
-                        print("[VISION] Found target '\(target)' (exact: \(exactMatchFound)) at display relative (\(clickX), \(clickY)), absolute \(absolutePoint)")
-                        
-                        DispatchQueue.main.async {
-                            let source = CGEventSource(stateID: .combinedSessionState)
-                            guard let mouseMove = CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: absolutePoint, mouseButton: .left),
-                                  let mouseDown = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: absolutePoint, mouseButton: .left),
-                                  let mouseUp = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: absolutePoint, mouseButton: .left) else {
-                                return
-                            }
-                            
-                            mouseMove.post(tap: .cghidEventTap)
-                            usleep(100_000)
-                            mouseDown.post(tap: .cghidEventTap)
-                            usleep(100_000)
-                            mouseUp.post(tap: .cghidEventTap)
-                            print("[VISION] Click event posted successfully to \(absolutePoint)")
-                        }
-                        continuation.resume(returning: true)
-                    } else {
-                        print("[VISION] Target '\(target)' not found on screen.")
-                        continuation.resume(returning: false)
-                    }
                 }
-                
-                request.recognitionLevel = .accurate
-                request.usesLanguageCorrection = false
-                
-                let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-                do {
-                    try handler.perform([request])
-                } catch {
-                    print("[VISION] Failed to perform text recognition: \(error)")
-                    continuation.resume(returning: false)
-                }
+                continuation.resume(returning: nil)
+            }
+            
+            request.recognitionLevel = .accurate
+            let handler = VNImageRequestHandler(cgImage: image, options: [:])
+            do {
+                try handler.perform([request])
+            } catch {
+                continuation.resume(returning: nil)
             }
         }
+        
+        guard let rect = foundRect else {
+            print("[SCREEN-OCR] Text '\(target)' not found on screen.")
+            return false
+        }
+        
+        let clickX = rect.origin.x + (rect.size.width / 2.0)
+        let clickY = rect.origin.y + (rect.size.height / 2.0)
+        
+        print("[SCREEN-OCR] Found '\(target)' at (\(clickX), \(clickY)). Simulating click...")
+        
+        let source = CGEventSource(stateID: .privateState)
+        let clickPoint = CGPoint(x: clickX, y: clickY)
+        
+        guard let mouseDownEvent = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: clickPoint, mouseButton: .left),
+              let mouseUpEvent = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: clickPoint, mouseButton: .left) else {
+            return false
+        }
+        
+        mouseDownEvent.post(tap: .cghidEventTap)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        mouseUpEvent.post(tap: .cghidEventTap)
+        return true
     }
 
-    private static func extractFolderAndFileName(from text: String) -> (folder: String?, file: String?) {
+    static func extractFolderAndFileName(from text: String) -> (folder: String?, file: String?) {
         let patterns = [
-            // "upload file [file] under/from/in [folder]"
-            (#"\bupload\s+(?:a|the)?\s*file\s+(?:named\s+)?([a-zA-Z0-9_.-]+)\s+(?:under|from\s+under|in|from|inside)\s+(?:folder\s+)?([a-zA-Z0-9_ ./-]{1,50})"#, false),
-            // "in/under folder [folder] find/search file [file]"
-            (#"\b(?:in|under)\s+folder\s+([a-zA-Z0-9_ .-]{1,30})\s+(?:find|search\s+for)\s+file\s+(?:named\s+)?([a-zA-Z0-9_.-]+)"#, true),
-            // "find/search file [file] in/under folder [folder]"
-            (#"\b(?:find|search\s+for)\s+file\s+(?:named\s+)?([a-zA-Z0-9_.-]+)\s+(?:in|under)\s+folder\s+([a-zA-Z0-9_ .-]{1,30})"#, false),
-            // "in/under [folder] find/search file [file]" (shorthand without the word "folder")
-            (#"\b(?:in|under)\s+([a-zA-Z0-9_ .-]{1,30})\s+(?:find|search\s+for)\s+file\s+(?:named\s+)?([a-zA-Z0-9_.-]+)"#, true)
+            ("in\\s+folder\\s+([a-zA-Z0-9_/.-]+)\\s+(?:find|get|open|read|upload)\\s+file\\s+named\\s+([a-zA-Z0-9_.-]+)", false),
+            ("in\\s+folder\\s+([a-zA-Z0-9_/.-]+)\\s+(?:find|get|open|read|upload)\\s+file\\s+([a-zA-Z0-9_.-]+)", false),
+            ("in\\s+folder\\s+([a-zA-Z0-9_/.-]+)\\s+file\\s+([a-zA-Z0-9_.-]+)", false),
+            ("folder\\s+([a-zA-Z0-9_/.-]+)\\s+file\\s+([a-zA-Z0-9_.-]+)", false)
         ]
         
-        for (pattern, folderFirst) in patterns {
+        for (pattern, _) in patterns {
             if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
                 let nsString = text as NSString
                 let results = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
                 if let match = results.first, match.numberOfRanges > 2 {
-                    let val1 = nsString.substring(with: match.range(at: 1))
-                    let val2 = nsString.substring(with: match.range(at: 2))
-                    
-                    let folder = cleanPunctuation(folderFirst ? val1 : val2)
-                    let file = cleanPunctuation(folderFirst ? val2 : val1)
-                    
+                    let folder = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    let file = nsString.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
                     return (folder, file)
                 }
             }
         }
-
-        // Fallback parser for conversational or unstructured speech (e.g. "upload a file under ... you will see a file ...")
-        let lowerText = text.lowercased()
-        if lowerText.contains("upload") || lowerText.contains("file") {
-            let stopWords: Set<String> = [
-                "is", "are", "the", "a", "an", "it", "in", "on", "at", "of", "to", "for", "with", "by",
-                "this", "that", "these", "those", "my", "your", "his", "her", "their", "our", "me", "you",
-                "him", "them", "us", "was", "were", "be", "been", "being", "have", "has", "had", "do",
-                "does", "did", "but", "and", "or", "if", "then", "else", "than", "so", "no", "not",
-                "any", "some", "all", "more", "most", "other", "such", "only", "own", "same", "too",
-                "very", "can", "will", "just", "should", "would", "which", "about", "there", "here",
-                "under", "from", "above", "below", "behind", "next", "over", "out", "up", "down", "through"
-            ]
-            
-            var folder: String? = nil
-            // Find folder hint: look for text following "under", "in", "from", "inside"
-            let folderPatterns = [
-                #"\b(?:under|in|from|inside)\s+folder\s+([a-zA-Z0-9_ ./-]{1,40})"#,
-                #"\b(?:under|in|from|inside)\s+([a-zA-Z0-9_ ./-]{1,40})"#
-            ]
-            for pattern in folderPatterns {
-                if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
-                   let match = regex.firstMatch(in: text, options: [], range: NSRange(location: 0, length: (text as NSString).length)) {
-                    let folderMatch = (text as NSString).substring(with: match.range(at: 1))
-                    let clean = cleanPunctuation(folderMatch)
-                    if !stopWords.contains(clean.lowercased()) {
-                        folder = clean
-                        break
-                    }
+        
+        // Single match check: only folder
+        let folderPatterns = [
+            ("in\\s+folder\\s+([a-zA-Z0-9_/.-]+)", false),
+            ("in\\s+directory\\s+([a-zA-Z0-9_/.-]+)", false),
+            ("under\\s+folder\\s+([a-zA-Z0-9_/.-]+)", false)
+        ]
+        
+        for (pattern, _) in folderPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+                let nsString = text as NSString
+                let results = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
+                if let match = results.first, match.numberOfRanges > 1 {
+                    let folder = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    return (folder, nil)
                 }
-            }
-            
-            var file: String? = nil
-            // Find file hint: look for text following "file named", "file", or "uploaded"
-            let filePatterns = [
-                #"\bfile\s+named\s+([a-zA-Z0-9_.-]+)"#,
-                #"\bfile\s+([a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)"#,
-                #"\bfile\s+([a-zA-Z0-9_.-]+)"#,
-                #"\buploaded\s+([a-zA-Z0-9_.-]+)"#
-            ]
-            for pattern in filePatterns {
-                if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
-                   let match = regex.firstMatch(in: text, options: [], range: NSRange(location: 0, length: (text as NSString).length)) {
-                    let fileMatch = (text as NSString).substring(with: match.range(at: 1))
-                    let clean = cleanPunctuation(fileMatch)
-                    if !stopWords.contains(clean.lowercased()) {
-                        file = clean
-                        break
-                    }
-                }
-            }
-            
-            if folder != nil || file != nil {
-                return (folder, file)
             }
         }
         
         return (nil, nil)
     }
 
-    private static func findDirectory(named name: String, under rootPath: String) -> URL? {
+    static func findDirectory(named name: String, under rootPath: String) -> URL? {
+        let startTime = CFAbsoluteTimeGetCurrent()
         let fileManager = FileManager.default
         let expandedPath = (rootPath as NSString).expandingTildeInPath
         let rootURL = URL(fileURLWithPath: expandedPath)
-        
-        // Check if the root directory itself matches the query (e.g. root is Documents and we query 'document')
-        if isDirectoryMatch(relativeDir: rootURL.lastPathComponent, searchQuery: name) {
-            print("[ENGINE] Workspace root directory itself matches folder query '\(name)': \(rootURL.path)")
+
+        if rootURL.lastPathComponent.lowercased() == name.lowercased() {
             return rootURL
         }
-        
+
         guard let enumerator = fileManager.enumerator(
             at: rootURL,
             includingPropertiesForKeys: [.nameKey, .isDirectoryKey],
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else { return nil }
-        
-        for case let fileURL as URL in enumerator {
-            let path = fileURL.path
-            if path.contains("/node_modules/") || path.contains("/.git/") || path.contains("/.build/") || path.contains("/build/") {
-                enumerator.skipDescendants()
-                continue
+
+        var bestMatch: URL?
+        var foldersScanned = 0
+
+        while let fileURL = enumerator.nextObject() as? URL {
+            var isDir: AnyObject?
+            try? (fileURL as NSURL).getResourceValue(&isDir, forKey: .isDirectoryKey)
+            guard let isDirectory = isDir as? Bool, isDirectory else { continue }
+            
+            foldersScanned += 1
+            let folderName = fileURL.lastPathComponent.lowercased()
+            
+            if isDirectoryMatch(relativeDir: fileURL.path.replacingOccurrences(of: rootURL.path, with: ""), searchQuery: name) {
+                bestMatch = fileURL
+                break
             }
             
-            guard let resourceValues = try? fileURL.resourceValues(forKeys: [.isDirectoryKey]),
-                  let isDir = resourceValues.isDirectory, isDir else {
-                continue
-            }
-            
-            let relativePath = fileURL.path.replacingOccurrences(of: rootURL.path + "/", with: "")
-            
-            if isDirectoryMatch(relativeDir: relativePath, searchQuery: name) {
-                return fileURL
+            if folderName == name.lowercased() {
+                bestMatch = fileURL
             }
         }
-        return nil
+
+        let duration = CFAbsoluteTimeGetCurrent() - startTime
+        print("[BENCHMARK] Folder search for '\(name)' completed in \(String(format: "%.2f", duration * 1000))ms, scanned \(foldersScanned) folders. Found: \(bestMatch?.path ?? "NONE")")
+        return bestMatch
     }
 
-    private static func isDirectoryMatch(relativeDir: String, searchQuery: String) -> Bool {
-        let normRelative = normalizeName(relativeDir)
-        let normSearch = normalizeName(searchQuery)
+    static func isDirectoryMatch(relativeDir: String, searchQuery: String) -> Bool {
+        let cleanRel = relativeDir.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let cleanQuery = searchQuery.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         
-        if normRelative == normSearch { return true }
-        if normRelative.contains(normSearch) || normSearch.contains(normRelative) { return true }
-        
-        let searchWords = searchQuery.lowercased()
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            
-        let relativeWords = relativeDir.lowercased()
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { $0.count >= 2 && $0 != "folder" && $0 != "directory" }
-            
-        guard !relativeWords.isEmpty else { return false }
-        
-        // Match if all path components of the relative directory exist inside the search query
-        return relativeWords.allSatisfy { word in
-            searchWords.contains(word)
+        if cleanRel == cleanQuery { return true }
+        if cleanRel.hasSuffix("/" + cleanQuery) { return true }
+        return false
+    }
+
+    static func normalizeName(_ name: String) -> String {
+        var clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        while clean.hasSuffix(".") || clean.hasSuffix(",") || clean.hasSuffix("?") || clean.hasSuffix("!") {
+            clean.removeLast()
         }
+        return clean.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func normalizeName(_ name: String) -> String {
-        return name.lowercased()
-            .replacingOccurrences(of: " ", with: "")
-            .replacingOccurrences(of: "-", with: "")
-            .replacingOccurrences(of: "_", with: "")
-            .replacingOccurrences(of: "/", with: "")
-            .replacingOccurrences(of: "and", with: "")
-            .replacingOccurrences(of: "folder", with: "")
-            .replacingOccurrences(of: "directory", with: "")
+    static func cleanPunctuation(_ input: String) -> String {
+        let allowedCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_.-"))
+        return String(input.unicodeScalars.filter { allowedCharacters.contains($0) })
     }
 
-    private static func cleanPunctuation(_ input: String) -> String {
-        var str = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        while str.hasSuffix(".") || str.hasSuffix(",") || str.hasSuffix("?") || str.hasSuffix("!") || str.hasSuffix(":") || str.hasSuffix(";") {
-            str.removeLast()
-        }
-        return str.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private static func stripFileCommand(from input: String, fileName: String, folderName: String) -> String {
-        let escapedFile = NSRegularExpression.escapedPattern(for: fileName)
-        let escapedFolder = NSRegularExpression.escapedPattern(for: folderName)
-        
-        var result = input
-        
-        let patterns = [
-            "\\bupload\\s+(?:a|the)?\\s*file\\s+(?:named\\s+)?\(escapedFile)\\s+(?:under|from\\s+under|in|from|inside)\\s+(?:folder\\s+)?\(escapedFolder)",
-            "\\b(?:in|under)\\s+folder\\s+\(escapedFolder)\\s+(?:find|search\\s+for)\\s+file\\s+(?:named\\s+)?\(escapedFile)",
-            "\\b(?:find|search\\s+for)\\s+file\\s+(?:named\\s+)?\(escapedFile)\\s+(?:in|under)\\s+folder\\s+\(escapedFolder)",
-            "\\b(?:in|under)\\s+\(escapedFolder)\\s+(?:find|search\\s+for)\\s+file\\s+(?:named\\s+)?\(escapedFile)"
+    static func stripFileCommand(from input: String, fileName: String, folderName: String) -> String {
+        let phrases = [
+            "in folder \(folderName) find file named \(fileName)",
+            "in folder \(folderName) find file \(fileName)",
+            "in folder \(folderName) file \(fileName)",
+            "folder \(folderName) file \(fileName)",
+            "file named \(fileName) in folder \(folderName)",
+            "file \(fileName) in folder \(folderName)"
         ]
         
-        for pattern in patterns {
+        var cleanText = input
+        for phrase in phrases {
+            let pattern = "\\b\(NSRegularExpression.escapedPattern(for: phrase))\\b"
             if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-                let nsString = result as NSString
-                result = regex.stringByReplacingMatches(in: result, options: [], range: NSRange(location: 0, length: nsString.length), withTemplate: "")
+                cleanText = regex.stringByReplacingMatches(in: cleanText, options: [], range: NSRange(location: 0, length: (cleanText as NSString).length), withTemplate: "")
             }
         }
         
-        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleanText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func stripGlobalFileCommand(from input: String, fileName: String) -> String {
-        let escapedFile = NSRegularExpression.escapedPattern(for: fileName)
-        var result = input
-        
-        let patterns = [
-            "\\bfile\\s+named\\s+\(escapedFile)",
-            "\\bfile\\s+\(escapedFile)"
+    static func stripGlobalFileCommand(from input: String, fileName: String) -> String {
+        let phrases = [
+            "find file named \(fileName)",
+            "find file \(fileName)",
+            "file named \(fileName)",
+            "file \(fileName)"
         ]
         
-        for pattern in patterns {
+        var cleanText = input
+        for phrase in phrases {
+            let pattern = "\\b\(NSRegularExpression.escapedPattern(for: phrase))\\b"
             if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-                let nsString = result as NSString
-                result = regex.stringByReplacingMatches(in: result, options: [], range: NSRange(location: 0, length: nsString.length), withTemplate: "")
+                cleanText = regex.stringByReplacingMatches(in: cleanText, options: [], range: NSRange(location: 0, length: (cleanText as NSString).length), withTemplate: "")
             }
         }
         
-        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleanText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
+
+fileprivate let sendPhrases = [
+    "send it", "send this", "press enter", "hit enter", "submit", "post it"
+]
