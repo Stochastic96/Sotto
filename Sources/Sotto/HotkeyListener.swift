@@ -55,8 +55,7 @@ final class HotkeyListener {
             self?.onJarvisRelease()
         }
 
-        print("[SOTTO] Global hotkey listeners started")
-        NSLog("Sotto: Global hotkey listeners started (waiting for shortcut presses)")
+        print("[SOTTO] Global hotkey listeners started (waiting for shortcut presses)")
     }
 
     func stop() {

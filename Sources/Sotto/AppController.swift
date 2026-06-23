@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import SottoCore
 
 @MainActor final class AppController {
     static private(set) var shared: AppController?
@@ -28,17 +29,23 @@ import AVFoundation
     private var hotkey: HotkeyListener?
     private var qwen: QwenRefiner?
     private var polishEnabled: Bool
+    private let wakeDetector = WakeWordDetector()
     private var visualizerTimer: Timer?
     private var recordingStart: Date?
     private var recentTranscripts: [String] = []
     private var lastActiveApp: NSRunningApplication?
     private var appActivity: NSObjectProtocol?
+    private var coordinator: AnyObject?
 
     enum Mode {
         case dictation
         case jarvis
     }
+    // Default to dictation (Sotto's original behavior). Each hotkey sets its own mode on
+    // press, so dictation and Jarvis stay completely separate.
     private var currentMode: Mode = .dictation
+    // Set while Jarvis is waiting for the answer to a clarifying ("ASK:") question.
+    private var pendingClarification = false
 
     var qwenRefiner: QwenRefiner? {
         return qwen
@@ -53,7 +60,10 @@ import AVFoundation
     }
 
     private(set) var state: State = .loadingModel {
-        didSet { statusBar.update(for: state) }
+        didSet {
+            statusBar.update(for: state)
+            updateWakeDetector()
+        }
     }
 
     init() {
@@ -93,6 +103,29 @@ import AVFoundation
                 }
             }
         }
+
+        // Self-heal the learned vocabulary: drop common words captured in error and
+        // case-insensitive duplicates (keeping the better-cased variant). Sanitizes
+        // lists saved before the stricter learning rules existed.
+        let storedVocab = UserDefaults.standard.stringArray(forKey: "sotto_learned_vocabulary") ?? []
+        if !storedVocab.isEmpty {
+            var byKey: [String: String] = [:]
+            for term in storedVocab where !Self.commonWordStopList.contains(term.lowercased()) {
+                let key = term.lowercased()
+                if let current = byKey[key] {
+                    if term.filter({ $0.isUppercase }).count > current.filter({ $0.isUppercase }).count {
+                        byKey[key] = term
+                    }
+                } else {
+                    byKey[key] = term
+                }
+            }
+            let cleanedVocab = byKey.values.sorted()
+            if cleanedVocab != storedVocab.sorted() {
+                UserDefaults.standard.set(cleanedVocab, forKey: "sotto_learned_vocabulary")
+                print("[INIT] Cleaned learned vocabulary: \(storedVocab.count) → \(cleanedVocab.count) terms.")
+            }
+        }
         Self.shared = self
     }
 
@@ -108,7 +141,10 @@ import AVFoundation
             options: [.userInitiated, .idleSystemSleepDisabled],
             reason: "Sotto needs to remain fully active to respond instantly to global hotkeys and record voice dictation."
         )
-        
+
+        // Cache app context so ContextDetector.currentCached() is zero-cost between app switches.
+        ContextDetector.startObservingAppSwitches()
+
         statusBar.update(for: state)
         requestPermissions()
 
@@ -164,6 +200,21 @@ import AVFoundation
             }
         }
 
+        // Proactive suggestions from the EventBus (e.g. a download arrived → "unzip it?").
+        // EventHandler posts these with a runnable "command"; route it through the same
+        // pipeline so the bus's proactive commands actually execute instead of dead-ending.
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("SottoSuggestion"),
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self, let command = notification.userInfo?["command"] as? String, !command.isEmpty else { return }
+            Task { @MainActor in
+                print("[SUGGESTION] Running proactive command: \(command)")
+                await self.handleIncomingCommandText(command)
+            }
+        }
+
         statusBar.onDictate { [weak self] in
             self?.beginRecording()
         }
@@ -194,11 +245,56 @@ import AVFoundation
             }
         }
 
+        if #available(macOS 26.0, *) {
+            self.coordinator = CoordinatorAgent()
+            // Log the full live tool surface at launch so the log console shows what's available.
+            let tools = JarvisToolbox.all().map { $0.name }.sorted()
+            print("[TOOLS] \(tools.count) available: \(tools.joined(separator: ", "))")
+            print("[TOOLS] MLX sub-agents: \(SettingsController.preferMLX ? "ON" : "OFF (using Apple Intelligence)")")
+        }
+
+        // Setup hands-free wake word detector
+        if #available(macOS 10.15, *) {
+            wakeDetector.onWakeWordDetected = { [weak self] in
+                guard let self = self else { return }
+                Task { @MainActor in
+                    print("[WAKE] Wake word detected! Triggering Jarvis hands-free.")
+                    self.currentMode = .jarvis
+                    self.beginRecording()
+                }
+            }
+        }
+
+        // Resume any bulk background jobs left running from a previous launch.
+        LongTaskEngine.resumePending()
+
         // Warm the on-device Apple Intelligence model so the first dictation/agent call
         // has no cold-start latency.
         JarvisAgent.prewarm()
 
+        // ── Kernel event bus + proactive observers ──────────────────────────
+        // Each observer runs as a sleeping background Task — 0 CPU until an event fires.
+        // Combined RAM overhead: ~0 MB (pure Swift, no models loaded).
+        EventHandler.start()          // routes bus events → HUD + voice
+        ClipboardObserver.start()     // watches NSPasteboard every 1.5 s
+        DownloadsObserver.start()     // FSEvents on ~/Downloads, kernel-level, 0 CPU idle
+        BatteryObserver.start()       // IOKit, checks every 60 s
+        CalendarProximityObserver.start() // EventKit, checks every 2 min
+        NetworkObserver.start()       // NWPathMonitor, kernel callbacks, 0 CPU idle
+
+        // Seed the CapabilityRegistry with all built-in tool descriptors, then bind the
+        // kernel's reflex executors. The kernel uses the registry to route intents to the
+        // cheapest capable path and runs reflex-tier ones directly (0 tokens).
+        Task {
+            await CapabilityRegistry.shared.seedBuiltins()
+            let count = await CapabilityRegistry.shared.count()
+            await Kernel.shared.seedReflexes()
+            print("[KERNEL] CapabilityRegistry ready: \(count) capabilities indexed; reflexes bound.")
+        }
+
         print("[SOTTO-APP] Creating HotkeyListener...")
+        // Intuitive mapping: the dictation hotkey (⌘⇧K) does dictation; the Jarvis hotkey
+        // (⌘⇧J) does Jarvis. Saying "Hey Jarvis …" also reroutes to Jarvis from either.
         let listener = HotkeyListener(
             onPress: { [weak self] in
                 Task { @MainActor in
@@ -235,19 +331,19 @@ import AVFoundation
         // Microphone — triggers the system prompt on first run.
         AVCaptureDevice.requestAccess(for: .audio) { granted in
             if !granted {
-                NSLog("Sotto: microphone access denied — dictation cannot work without it.")
+                print("[SOTTO] Sotto: microphone access denied — dictation cannot work without it.")
             }
         }
         // Accessibility — needed for the global hotkey tap and synthetic ⌘V.
         let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
         if !AXIsProcessTrustedWithOptions(options) {
-            NSLog("Sotto: waiting for Accessibility permission (System Settings → Privacy & Security → Accessibility).")
+            print("[SOTTO] Sotto: waiting for Accessibility permission (System Settings → Privacy & Security → Accessibility).")
         }
         // Screen Recording — needed for Screen OCR.
         if #available(macOS 10.15, *) {
             if !CGPreflightScreenCaptureAccess() {
                 _ = CGRequestScreenCaptureAccess()
-                NSLog("Sotto: waiting for Screen Recording permission (System Settings → Privacy & Security → Screen Recording).")
+                print("[SOTTO] Sotto: waiting for Screen Recording permission (System Settings → Privacy & Security → Screen Recording).")
             }
         }
     }
@@ -405,11 +501,24 @@ import AVFoundation
             do {
                 let raw = try await self.transcriber.transcribe(samples)
                 print("[APP] Raw transcript: '\(raw)' (mode: \(mode))")
+
+                // A pending clarifying question takes this utterance as its answer, as a
+                // follow-up turn — bypassing all normal routing.
+                if self.pendingClarification {
+                    self.pendingClarification = false
+                    await self.continueClarification(answer: raw, samples: samples)
+                    return
+                }
+
+                // The two hotkeys are fully independent — dictation is NEVER intercepted by
+                // Jarvis, so they can't conflict. The "Hey Jarvis" wake prefix is only stripped
+                // (optionally) when you're already in the Jarvis lane.
                 switch mode {
                 case .dictation:
                     await self.runDictationPipeline(raw: raw, samples: samples, context: context)
                 case .jarvis:
-                    await self.runJarvisPipeline(raw: raw, samples: samples, context: context)
+                    let command = Self.jarvisWakeCommand(in: raw) ?? raw
+                    await self.runJarvisPipeline(raw: command, samples: samples, context: context)
                 }
             } catch {
                 NSSound(named: "Basso")?.play()
@@ -434,8 +543,12 @@ import AVFoundation
             return
         }
 
+        // Skip polish for short inputs — saves 2-3 seconds on quick commands
+        let wordCount = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
+        let skipPolish = wordCount < 6 || text.count < 40
+
         // AI polish (Apple Intelligence, warm) with a 15s safety timeout + sanity checks.
-        if polishEnabled, let qwen = self.qwen {
+        if polishEnabled && !skipPolish, let qwen = self.qwen {
             state = .polishing
             hud.show("✨  Polishing…")
             let polishStart = CFAbsoluteTimeGetCurrent()
@@ -474,6 +587,7 @@ import AVFoundation
         statusBar.lastTranscript = text
         recentTranscripts.append(text)
         if recentTranscripts.count > 5 { recentTranscripts.removeFirst() }
+        CommandEngine.lastResult = text
         learnFromDictation(raw: raw, polished: text)
         DatasetLogger.shared.log(mode: "dictation", app: lastActiveApp?.localizedName, rawTranscript: raw, response: text, kind: "polish", samples: samples)
 
@@ -497,6 +611,19 @@ import AVFoundation
         }
         if hasRepetitiveLoops(polished) {
             print("[DICTATION] Polish looped; using raw."); return false
+        }
+        // Content-overlap guard: a weak model can echo a few-shot example or a prior
+        // dictation instead of polishing the current input. Such output passes the
+        // length checks (similar word count) but shares almost no words with the raw
+        // transcript. Require meaningful overlap, else fall back to raw.
+        let origSet = Set(originalWords.map { $0.lowercased() }.filter { $0.count > 3 })
+        let polSet = Set(polishedWords.map { $0.lowercased() }.filter { $0.count > 3 })
+        if originalWords.count >= 5, !origSet.isEmpty {
+            let overlap = Double(origSet.intersection(polSet).count) / Double(origSet.count)
+            if overlap < 0.2 {
+                print("[DICTATION] Polish unrelated to input (overlap \(String(format: "%.0f%%", overlap * 100))); using raw.")
+                return false
+            }
         }
         return true
     }
@@ -528,10 +655,12 @@ import AVFoundation
     ]
     private static let siriVerbs: Set<String> = ["ask", "asks", "tell", "open", "launch", "start", "hey", "type"]
     /// Verbs that, when they follow "open <word> and …", signal a Siri request — they're
-    /// things you ask an assistant, not things you do to an app you just opened.
+    /// question words and direct-address forms that you'd only say to an assistant, never
+    /// to an app. Kept narrow on purpose: "find", "search", "show", "check", "get", "set"
+    /// are all legitimate Jarvis commands and must not be hijacked here.
     private static let siriFollowVerbs: Set<String> = [
-        "ask", "asks", "check", "tell", "what", "whats", "who", "whos", "find",
-        "search", "get", "show", "remind", "when", "how", "why", "where", "play", "set",
+        "ask", "asks", "tell",
+        "what", "whats", "who", "whos", "when", "how", "why", "where",
     ]
 
     /// Detects an explicit "ask/open Siri …" command anywhere in the utterance — robust to
@@ -591,9 +720,128 @@ import AVFoundation
         return trimmed.count <= 70 ? trimmed : String(trimmed.prefix(70))
     }
 
+    /// If the utterance opens with the "Hey Jarvis" wake phrase (robust to the ASR mishearing
+    /// it as one garbled word, e.g. "Hejarvis"), returns the command with the wake words
+    /// stripped; otherwise nil. Lets the user summon Jarvis from any mode.
+    private static func jarvisWakeCommand(in raw: String) -> String? {
+        let words = raw.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: " ").map(String.init)
+        guard !words.isEmpty else { return nil }
+        func isWake(_ w: String) -> Bool {
+            let t = w.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".,!?"))
+            return t == "jarvis" || t.hasSuffix("jarvis")   // also catches "hejarvis"
+        }
+        var dropCount = 0
+        if words[0].lowercased() == "hey", words.count > 1, isWake(words[1]) {
+            dropCount = 2
+        } else if isWake(words[0]) {
+            dropCount = 1
+        }
+        guard dropCount > 0 else { return nil }
+        let rest = words.dropFirst(dropCount).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        return rest.isEmpty ? nil : rest
+    }
+
+    /// Presents a Jarvis reply: when the model asks a clarifying question (the `ASK:`
+    /// convention), speak it and re-open the mic for the answer; otherwise show + speak the
+    /// reply normally. Manages `state`/HUD lifecycle.
+    @MainActor
+    private func presentJarvisReply(_ reply: String, raw: String) {
+        if reply.hasPrefix(kClarificationPrefix) {
+            let question = String(reply.dropFirst(kClarificationPrefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            print("[JARVIS] Clarifying question: \(question)")
+            hud.show("❓ \(question)")
+            speak(question)
+            pendingClarification = true
+            state = .idle
+            // Re-open the mic for the answer once the question has been spoken.
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                guard self.pendingClarification, case .idle = self.state else { return }
+                self.beginRecording()
+            }
+            return
+        }
+        if reply.isEmpty {
+            hud.showResult(Quips.done())
+        } else {
+            // Full reply in the glass card; speak only the one-line headline.
+            CommandEngine.lastResult = reply
+            hud.showResult(reply)
+            speak(shortSpoken(reply))
+        }
+        state = .idle
+        Task { try? await Task.sleep(nanoseconds: 2_000_000_000); self.hud.hide() }
+    }
+
+    /// Continues the Jarvis session with the user's answer to a clarifying question, reusing
+    /// the same multi-turn transcript so prior context is preserved.
+    private func continueClarification(answer: String, samples: [Float]) async {
+        guard #available(macOS 26.0, *), let coord = self.coordinator as? CoordinatorAgent else {
+            state = .idle; hud.hide(); return
+        }
+        state = .polishing
+        hud.show("✨  Jarvis…")
+        do {
+            let reply = Self.sanitizeReply(try await coord.handleTurn(userInput: answer, isFollowUp: true))
+            print("[JARVIS] Clarification reply: '\(reply)'")
+            DatasetLogger.shared.log(mode: "jarvis-clarify", app: lastActiveApp?.localizedName, rawTranscript: answer, response: reply, kind: "agent", samples: samples)
+            TaskJournal.record(command: answer, reply: reply)
+            presentJarvisReply(reply, raw: answer)
+        } catch {
+            print("[JARVIS] Clarification failed: \(error.localizedDescription)")
+            hud.show("⚠️ Jarvis Error")
+            speak("Jarvis is unavailable.")
+            state = .idle
+            Task { try? await Task.sleep(nanoseconds: 3_000_000_000); self.hud.hide() }
+        }
+    }
+
+    /// Entry point for App Intents / Shortcuts / Siri: run a request through the Jarvis brain
+    /// (the Coordinator's fast Apple-Intelligence lane) and return the spoken reply. Stays off
+    /// the mic/HUD recording flow so it's snappy and headless.
+    @MainActor
+    func runJarvisRequest(_ text: String) async -> String {
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return "What would you like me to do?" }
+        print("[INTENT] Jarvis request (App Intents/Shortcuts): '\(clean)'")
+        if #available(macOS 26.0, *), let coord = self.coordinator as? CoordinatorAgent {
+            do {
+                let reply = Self.sanitizeReply(try await coord.handleTurn(userInput: clean))
+                DatasetLogger.shared.log(mode: "jarvis-intent", app: nil, rawTranscript: clean, response: reply, kind: "agent", samples: nil)
+                TaskJournal.record(command: clean, reply: reply)
+                return reply.isEmpty ? "Done." : reply
+            } catch {
+                return "Jarvis couldn't do that: \(error.localizedDescription)"
+            }
+        }
+        return "Jarvis needs Apple Intelligence, which isn't available on this Mac."
+    }
+
     // MARK: - Jarvis pipeline (⌘⇧J) — full OS assistant: skills, native actions, agent, orchestrator.
 
+    /// Records which lane handled a command and how long (transcript-ready → action)
+    /// it took, then logs a one-liner. The latency excludes recording/transcription so
+    /// it isolates the lane's own "thinking" cost — the number to compare against Siri.
+    private func finishLane(_ lane: Lane, start: CFAbsoluteTime, raw: String) {
+        let ms = (CFAbsoluteTimeGetCurrent() - start) * 1000
+        print("[LANE] \(lane.rawValue) \(String(format: "%.0f", ms))ms — '\(raw.prefix(48))'")
+        Task { await LaneStats.shared.record(lane: lane, ms: ms) }
+    }
+
     private func runJarvisPipeline(raw: String, samples: [Float], context: AppContext) async {
+        let laneStart = CFAbsoluteTimeGetCurrent()
+
+        // "lane stats" / "jarvis stats" — show the measured three-lane distribution.
+        let lowerRaw = raw.lowercased()
+        if lowerRaw.contains("lane stats") || lowerRaw.contains("jarvis stats") || lowerRaw.contains("performance stats") {
+            let summary = await LaneStats.shared.summary()
+            explanationController.show(text: summary, title: "Jarvis Lane Stats")
+            hud.show("📊 Lane stats")
+            state = .idle
+            Task { try? await Task.sleep(nanoseconds: 1_500_000_000); hud.hide() }
+            return
+        }
+
         // 0. "ask/open Siri …" wins FIRST — no tool routing, no model, no other scripts.
         // Just open the Siri box and (if there's a prompt) paste it. Fastest possible path.
         if let siriAsk = Self.siriPrompt(in: raw) {
@@ -610,6 +858,7 @@ import AVFoundation
             }
             print("[JARVIS] Siri path (prompt: '\(siriAsk)')")
             TaskJournal.record(command: raw, reply: "Siri: \(siriAsk.isEmpty ? "(opened)" : siriAsk)")
+            finishLane(.reflex, start: laneStart, raw: raw)
             state = .idle
             Task { try? await Task.sleep(nanoseconds: 2_500_000_000); hud.hide() }
             return
@@ -625,6 +874,7 @@ import AVFoundation
                 print("[SKILL] \(result)")
                 speak(result)
                 hud.show("✓ \(result)")
+                finishLane(.reflex, start: laneStart, raw: raw)
                 state = .idle
                 Task { try? await Task.sleep(nanoseconds: 2_000_000_000); hud.hide() }
                 return
@@ -640,6 +890,7 @@ import AVFoundation
         // 3. Zero-latency deterministic shortcuts (native Swift actions, no LLM).
         if let shortcut = CommandEngine.checkZeroLatencyShortcut(for: raw) {
             await runZeroLatencyShortcut(shortcut)
+            finishLane(.reflex, start: laneStart, raw: raw)
             return
         }
 
@@ -653,8 +904,25 @@ import AVFoundation
             hud.showResult("\(summary)\n\(Quips.weatherTail())")   // data on screen, wit underneath
             speak(shortSpoken(summary))
             TaskJournal.record(command: raw, reply: summary)
+            finishLane(.reflex, start: laneStart, raw: raw)
             state = .idle
             Task { try? await Task.sleep(nanoseconds: 2_500_000_000); hud.hide() }
+            return
+        }
+
+        // 3c. Kernel reflex router — the registry picks the cheapest capable path. If
+        // that path is a pure-Swift reflex (e.g. "open xcode", or a compound like
+        // "open finder and open xcode"), execute it here with ZERO tokens instead of
+        // waking the model. Anything above reflex tier returns nil and falls through.
+        if let reflexReply = await Kernel.shared.dispatchCompound(raw) {
+            print("[JARVIS] Kernel reflex: \(reflexReply)")
+            hud.showResult(reflexReply)
+            speak(shortSpoken(reflexReply))
+            TaskJournal.record(command: raw, reply: reflexReply)
+            await ConversationMemory.shared.record(user: raw, assistant: reflexReply)
+            finishLane(.reflex, start: laneStart, raw: raw)
+            state = .idle
+            Task { try? await Task.sleep(nanoseconds: 2_000_000_000); hud.hide() }
             return
         }
 
@@ -665,20 +933,18 @@ import AVFoundation
             state = .polishing
             hud.show("✨  Jarvis…")
             do {
-                let reply = Self.sanitizeReply(try await JarvisAgent.run(raw))
+                let reply: String
+                if let coord = self.coordinator as? CoordinatorAgent {
+                    reply = Self.sanitizeReply(try await coord.handleTurn(userInput: raw))
+                } else {
+                    reply = Self.sanitizeReply(try await JarvisAgent.run(raw))
+                }
                 print("[JARVIS] Agent reply: '\(reply)'")
                 DatasetLogger.shared.log(mode: "jarvis-apple", app: lastActiveApp?.localizedName, rawTranscript: raw, response: reply, kind: "agent", samples: samples)
                 TaskJournal.record(command: raw, reply: reply)
-                if reply.isEmpty {
-                    hud.showResult(Quips.done())
-                } else {
-                    // Show the full reply in the glass card (fast, read it on screen) but
-                    // speak only the one-line headline so Jarvis doesn't read the whole thing.
-                    hud.showResult(reply)
-                    speak(shortSpoken(reply))
-                }
-                state = .idle
-                Task { try? await Task.sleep(nanoseconds: 2_000_000_000); hud.hide() }
+                await ConversationMemory.shared.record(user: raw, assistant: reply)
+                finishLane(.apple, start: laneStart, raw: raw)
+                presentJarvisReply(reply, raw: raw)
                 return
             } catch {
                 agentError = error
@@ -700,6 +966,7 @@ import AVFoundation
             case .sendLastPromptToClaude:
                 await handleSendLastPrompt()
             }
+            finishLane(.reflex, start: laneStart, raw: raw)
             state = .idle
             Task { try? await Task.sleep(nanoseconds: 2_000_000_000); hud.hide() }
             return
@@ -713,6 +980,7 @@ import AVFoundation
         print("[JARVIS] Failed: \(errorMessage)")
         hud.show("⚠️ Jarvis Error")
         speak("Jarvis is unavailable. \(errorMessage)")
+        finishLane(.failed, start: laneStart, raw: raw)
         state = .idle
         Task { try? await Task.sleep(nanoseconds: 3_500_000_000); hud.hide() }
     }
@@ -726,6 +994,14 @@ import AVFoundation
         let output: String
         if shortcut.command.hasPrefix("native:") {
             let action = String(shortcut.command.dropFirst(7))
+            // Parametric reflexes carry their value after a colon: "set_volume:90".
+            if action.hasPrefix("set_volume:"), let pct = Int(action.dropFirst("set_volume:".count)) {
+                _ = SystemControlHelper.setVolume(Float(pct))      // setter takes 0…100
+                output = "Volume \(pct)%"
+            } else if action.hasPrefix("set_brightness:"), let pct = Int(action.dropFirst("set_brightness:".count)) {
+                _ = SystemControlHelper.setBrightness(Float(pct) / 100.0)  // setter takes 0.0…1.0
+                output = "Brightness \(pct)%"
+            } else {
             switch action {
             case "mute": SystemControlHelper.setMuted(true); output = "Muted"
             case "unmute": SystemControlHelper.setMuted(false); output = "Unmuted"
@@ -754,6 +1030,7 @@ import AVFoundation
                 output = report
             default:
                 output = await NativeActions.perform(action)
+            }
             }
         } else {
             output = CommandEngine.runCommandNatively(shortcut.command)
@@ -893,7 +1170,12 @@ import AVFoundation
             self.state = .polishing
             self.hud.show("✨  Jarvis…")
             do {
-                let reply = try await JarvisAgent.run(processedText)
+                let reply: String
+                if let coord = self.coordinator as? CoordinatorAgent {
+                    reply = Self.sanitizeReply(try await coord.handleTurn(userInput: processedText))
+                } else {
+                    reply = Self.sanitizeReply(try await JarvisAgent.run(processedText))
+                }
                 DatasetLogger.shared.log(mode: "jarvis-url", app: self.lastActiveApp?.localizedName, rawTranscript: processedText, response: reply, kind: "agent", samples: nil)
                 TaskJournal.record(command: processedText, reply: reply)
                 if reply.isEmpty {
@@ -957,7 +1239,7 @@ import AVFoundation
         var screenText: String? = nil
         if useCase.needsScreenContext {
             self.hud.show("📸 Reading your screen…")
-            screenText = CommandEngine.ocrScreen()
+            screenText = await CommandEngine.ocrScreen()
         }
 
         let prepped = PromptBuilder.build(useCase, screenText: screenText)
@@ -1033,12 +1315,20 @@ import AVFoundation
         
         // Don't learn style if the polished text still contains obvious filler words, disfluencies, or placeholders
         let lowerPolished = cleanPolished.lowercased()
-        let fillerWords = ["um", "uh", "ah", "umh", "blah", "something like that"]
-        for filler in fillerWords {
-            if lowerPolished.contains(filler) {
-                print("[LEARNING] Skipping learning: Polished text still contains filler '\(filler)'")
+        let fillerCheckWords = lowerPolished.components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        
+        let fillerWords: Set<String> = ["um", "uh", "ah", "umh", "blah"]
+        for word in fillerCheckWords {
+            if fillerWords.contains(word) {
+                print("[LEARNING] Skipping learning: Polished text still contains filler '\(word)'")
                 return
             }
+        }
+        if lowerPolished.contains("something like that") {
+            print("[LEARNING] Skipping learning: Polished text still contains filler 'something like that'")
+            return
         }
         
         // 1. Learn Style Examples (only if they are structurally different, meaning actual word cleaning occurred)
@@ -1086,38 +1376,73 @@ import AVFoundation
         var newJargon: Set<String> = []
         for (idx, word) in words.enumerated() {
             guard word.count >= 3 else { continue }
-            
+
             let isFirstWord = (idx == 0)
-            let firstChar = word.first!
             let hasNumber = word.contains { $0.isNumber }
             let isAllUppercase = word == word.uppercased()
             let hasInternalCapitals = word.dropFirst().contains { $0.isUppercase }
-            let isCapitalized = firstChar.isUppercase
-            
-            if (!isFirstWord && isCapitalized) || isAllUppercase || hasInternalCapitals || hasNumber {
-                let ignoreList: Set<String> = ["AND", "THE", "YOU", "FOR", "NOT", "BUT", "GET", "SET", "OUT", "YES"]
-                if !ignoreList.contains(word.uppercased()) {
+
+            // Only learn genuine jargon: ACRONYMS (CSRD), camelCase / internal caps
+            // (FaceTime), or alphanumeric tokens (HRV2). A plain Capitalized word is
+            // usually just a sentence start or a common word ("Because", "Check"), so
+            // it is learned only when it is NOT a common English word and not first.
+            let looksLikeJargon = isAllUppercase || hasInternalCapitals || hasNumber
+            let isPlainCapitalized = !isFirstWord && (word.first?.isUppercase ?? false)
+                && !Self.commonWordStopList.contains(word.lowercased())
+
+            if looksLikeJargon || isPlainCapitalized {
+                if !Self.commonWordStopList.contains(word.lowercased()) {
                     newJargon.insert(word)
                 }
             }
         }
-        
+
         if !newJargon.isEmpty {
-            var learnedVocab = Set(UserDefaults.standard.stringArray(forKey: "sotto_learned_vocabulary") ?? [])
-            let beforeCount = learnedVocab.count
-            learnedVocab.formUnion(newJargon)
-            
-            if learnedVocab.count > beforeCount {
-                var vocabArray = Array(learnedVocab).sorted()
-                if vocabArray.count > 100 {
-                    vocabArray = Array(vocabArray.prefix(100))
+            let existing = UserDefaults.standard.stringArray(forKey: "sotto_learned_vocabulary") ?? []
+            // Case-insensitive dedup: keep one variant per word, preferring the one with
+            // more uppercase letters (so "CSRD" wins over "Csrd").
+            var byKey: [String: String] = [:]
+            for term in existing + Array(newJargon) {
+                let key = term.lowercased()
+                if let current = byKey[key] {
+                    let curUpper = current.filter { $0.isUppercase }.count
+                    let newUpper = term.filter { $0.isUppercase }.count
+                    if newUpper > curUpper { byKey[key] = term }
+                } else {
+                    byKey[key] = term
                 }
+            }
+            var vocabArray = byKey.values.sorted()
+            if vocabArray.count > 100 { vocabArray = Array(vocabArray.prefix(100)) }
+            if vocabArray != existing.sorted() {
                 UserDefaults.standard.set(vocabArray, forKey: "sotto_learned_vocabulary")
                 print("[LEARNING] Learned new vocabulary terms: \(newJargon)")
             }
         }
     }
 
+    /// Common English words that are NOT jargon even when capitalized (sentence starts,
+    /// fillers, frequent words). Kept lowercased for case-insensitive matching.
+    private static let commonWordStopList: Set<String> = [
+        "and", "the", "you", "for", "not", "but", "get", "set", "out", "yes", "yeah",
+        "yep", "nope", "okay", "this", "that", "these", "those", "what", "when", "where",
+        "why", "who", "which", "then", "there", "here", "now", "just", "also", "with",
+        "from", "into", "about", "over", "under", "after", "before", "some", "any", "all",
+        "have", "has", "had", "will", "would", "could", "should", "can", "may", "might",
+        "must", "want", "need", "please", "well", "actually", "maybe", "really", "very",
+        "too", "let", "lets", "because", "check", "make", "like", "how", "hey", "say",
+        "tell", "ask", "open", "start", "stop", "thanks", "thank", "sure", "fine"
+    ]
+
+    func updateWakeDetector() {
+        if #available(macOS 10.15, *) {
+            if case .idle = state, SettingsController.isHandsFreeEnabled {
+                wakeDetector.start()
+            } else {
+                wakeDetector.stop()
+            }
+        }
+    }
 }
 
 @MainActor final class ExplanationWindowController: NSObject {

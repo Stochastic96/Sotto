@@ -65,7 +65,7 @@ enum ClaudeQuickEntry {
         print("[CLAUDE-QUICK] Starting Vision OCR polling for response...")
         
         for attempt in 1...maxAttempts {
-            let currentOCR = CommandEngine.ocrScreen()
+            let currentOCR = await CommandEngine.ocrScreen()
             
             // Check if ocr text has stopped changing
             if !currentOCR.isEmpty && currentOCR == lastText {

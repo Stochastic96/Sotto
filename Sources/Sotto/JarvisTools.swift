@@ -242,7 +242,7 @@ struct ReadScreenTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        let text = CommandEngine.ocrScreen()
+        let text = await CommandEngine.ocrScreen()
         if text.isEmpty { return "The screen has no readable text right now." }
         // Cap the returned text so a busy page can't blow the ~4k-token context window.
         let capped = text.count > 1500 ? String(text.prefix(1500)) + "…" : text
@@ -630,27 +630,6 @@ struct ClipboardTool: Tool {
     }
 }
 
-/// Native Spotlight file search.
-@available(macOS 26.0, *)
-struct SpotlightSearchTool: Tool {
-    let name = "spotlight_search"
-    let description = "Find files instantly on the Mac using the native Spotlight index (e.g. search for '.pdf' or specific project names)."
-
-    @Generable
-    struct Arguments {
-        @Guide(description: "The search query, e.g. 'resume.pdf' or 'Sotto'.")
-        let query: String
-    }
-
-    func call(arguments: Arguments) async throws -> String {
-        let q = arguments.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        if q.isEmpty { return "Query cannot be empty." }
-        let results = SpotlightSearch.findFiles(matching: q)
-        if results.isEmpty { return "No files found matching '\(q)'." }
-        return "Spotlight results:\n" + results.joined(separator: "\n")
-    }
-}
-
 /// Manage running applications and list visible window titles natively.
 @available(macOS 26.0, *)
 struct AppWindowManagerTool: Tool {
@@ -797,6 +776,10 @@ enum JarvisToolbox {
             AskClaudeTool(), ReminderTool(), CalendarTool(), PowerStateTool(),
             NetworkDiagnosticsTool(), ClipboardTool(), SpotlightSearchTool(),
             AppWindowManagerTool(), KeySimulatorTool(),
+            MorningBriefTool(), FocusSessionTool(), EndWorkdayTool(), WorkspaceSwitchTool(),
+            FileOrganizerTool(), LargeFileFinderTool(),
+            ExplainCodeTool(), GenerateGitCommitTool(), FindBugTool(), ExplainErrorTool(),
+            ComposedWorkflowTool(),
         ]
     }
 
@@ -832,6 +815,24 @@ enum JarvisToolbox {
               make: { [KeySimulatorTool()] }),
         Group(keywords: ["skill", "learn", "routine", "goal", "remember", "recall", "history", "did you do", "have you"],
               make: { [DraftSkillTool(), RunSkillTool(), RecallHistoryTool(), MemoryGoalTool()] }),
+        Group(keywords: ["morning", "brief", "daily", "today", "summary", "wake"],
+              make: { [MorningBriefTool()] }),
+        Group(keywords: ["focus", "session", "dnd", "distract", "work", "start"],
+              make: { [FocusSessionTool()] }),
+        Group(keywords: ["end", "workday", "day", "done", "finish", "wrap"],
+              make: { [EndWorkdayTool()] }),
+        Group(keywords: ["workspace", "switch", "mode", "development", "writing", "presentation"],
+              make: { [WorkspaceSwitchTool()] }),
+        Group(keywords: ["organize", "downloads", "files", "sort", "clean"],
+              make: { [FileOrganizerTool()] }),
+        Group(keywords: ["large", "files", "storage", "space", "finder"],
+              make: { [LargeFileFinderTool()] }),
+        Group(keywords: ["explain", "code", "error", "bug", "find"],
+              make: { [ExplainCodeTool(), FindBugTool(), ExplainErrorTool()] }),
+        Group(keywords: ["git", "commit", "message", "changes"],
+              make: { [GenerateGitCommitTool()] }),
+        Group(keywords: ["compose", "workflow", "plan", "setup", "prepare"],
+              make: { [ComposedWorkflowTool()] }),
     ]
 
     /// Common general-purpose tools used when an utterance matches no group's keywords.

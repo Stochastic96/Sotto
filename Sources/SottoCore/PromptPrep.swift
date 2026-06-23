@@ -2,14 +2,14 @@ import Foundation
 
 /// A task the co-pilot can prepare a Claude-ready prompt for. Value type — the
 /// template logic lives with each case so adding a use case is a one-line change.
-enum PromptUseCase: Equatable {
+public enum PromptUseCase: Equatable {
     case googleAds
     case linkedInPost(topic: String?)
     case explainScreen
     case custom(instruction: String)
 
     /// Short human label shown in the review window / HUD.
-    var label: String {
+    public var label: String {
         switch self {
         case .googleAds:     return "Google Ads help"
         case .linkedInPost:  return "LinkedIn post"
@@ -19,7 +19,7 @@ enum PromptUseCase: Equatable {
     }
 
     /// Whether this use case should capture the current screen (via OCR) as context.
-    var needsScreenContext: Bool {
+    public var needsScreenContext: Bool {
         switch self {
         case .googleAds, .explainScreen: return true
         case .linkedInPost, .custom:     return false
@@ -27,7 +27,7 @@ enum PromptUseCase: Equatable {
     }
 
     /// The instruction Claude receives, before any screen context is appended.
-    var instruction: String {
+    public var instruction: String {
         switch self {
         case .googleAds:
             return "I'm looking at my Google Ads dashboard. Analyse the campaign metrics below "
@@ -48,16 +48,23 @@ enum PromptUseCase: Equatable {
 
 /// An assembled, ready-to-send prompt. `Codable` so it persists across sessions
 /// for batch workflows ("prep it now, send it to Claude later").
-struct PreppedPrompt: Codable, Equatable {
-    let id: UUID
-    let useCaseLabel: String
-    let assembledText: String
-    let createdAt: Date
+public struct PreppedPrompt: Codable, Equatable {
+    public let id: UUID
+    public let useCaseLabel: String
+    public let assembledText: String
+    public let createdAt: Date
+
+    public init(id: UUID, useCaseLabel: String, assembledText: String, createdAt: Date) {
+        self.id = id
+        self.useCaseLabel = useCaseLabel
+        self.assembledText = assembledText
+        self.createdAt = createdAt
+    }
 }
 
 /// Assembles a `PreppedPrompt` from a use case plus optional OCR'd screen text.
-enum PromptBuilder {
-    static func build(_ useCase: PromptUseCase, screenText: String?) -> PreppedPrompt {
+public enum PromptBuilder {
+    public static func build(_ useCase: PromptUseCase, screenText: String?) -> PreppedPrompt {
         var text = useCase.instruction
         if useCase.needsScreenContext,
            let screenText = screenText?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -76,21 +83,21 @@ enum PromptBuilder {
 /// Disk-backed (UserDefaults) store for the most recently prepared prompt — the
 /// lightweight "memory" that lets a later voice command send it to Claude. Costs
 /// no RAM; survives restarts.
-enum PromptStore {
+public enum PromptStore {
     private static let lastKey = "sotto_last_prepped_prompt"
 
-    static func save(_ prompt: PreppedPrompt) {
+    public static func save(_ prompt: PreppedPrompt) {
         guard let data = try? JSONEncoder().encode(prompt) else { return }
         UserDefaults.standard.set(data, forKey: lastKey)
     }
 
-    static func loadLast() -> PreppedPrompt? {
+    public static func loadLast() -> PreppedPrompt? {
         guard let data = UserDefaults.standard.data(forKey: lastKey),
               let prompt = try? JSONDecoder().decode(PreppedPrompt.self, from: data) else { return nil }
         return prompt
     }
 
-    static func clear() {
+    public static func clear() {
         UserDefaults.standard.removeObject(forKey: lastKey)
     }
 }

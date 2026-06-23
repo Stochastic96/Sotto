@@ -14,9 +14,14 @@ let package = Package(
         .package(url: "https://github.com/huggingface/swift-transformers", branch: "main")
     ],
     targets: [
+        .target(
+            name: "SottoCore",
+            path: "Sources/SottoCore"
+        ),
         .executableTarget(
             name: "Sotto",
             dependencies: [
+                "SottoCore",
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
@@ -26,7 +31,18 @@ let package = Package(
                 .product(name: "Tokenizers", package: "swift-transformers")
             ],
             path: "Sources/Sotto",
-            swiftSettings: [.define("SOTTO_MLX")]
+            swiftSettings: {
+                var settings: [SwiftSetting] = [.define("SOTTO_MLX")]
+                #if compiler(>=6.4)
+                settings.append(.define("SOTTO_FM27"))
+                #endif
+                return settings
+            }()
+        ),
+        .testTarget(
+            name: "SottoTests",
+            dependencies: ["SottoCore"],
+            path: "Tests/SottoTests"
         )
     ]
 )

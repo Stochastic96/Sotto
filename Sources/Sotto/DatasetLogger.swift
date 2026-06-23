@@ -13,8 +13,7 @@ final class DatasetLogger {
     private let jsonlURL: URL
 
     private init() {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        baseDir = home.appendingPathComponent("Projects/Sotto/sotto-data/dataset")
+        baseDir = SettingsController.sottoDataURL.appendingPathComponent("dataset")
         audioDir = baseDir.appendingPathComponent("audio")
         jsonlURL = baseDir.appendingPathComponent("interactions.jsonl")
         try? FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)

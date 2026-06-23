@@ -48,6 +48,43 @@ rather than handing the model the whole catalog — sharper choices, lower laten
 The legacy `osascript`/`.scpt` skill files, the `mlx_lm.server`, and the Python Kokoro TTS
 daemon have all been removed and reimplemented in Swift.
 
+## Requirements
+
+- **Apple Silicon Mac** (arm64 — M1 or newer). Tuned for an M1 with 8 GB RAM.
+- **macOS 26+ with Apple Intelligence enabled** — the Jarvis tool-calling agent and dictation-polish fallback use Apple's Foundation Models.
+- **Xcode** (full app, not just Command Line Tools) — `make-app.sh` uses `xcodebuild` to compile MLX's Metal GPU shaders. A bare `swift build` is fine for type-checks but won't ship a runnable app.
+- **Internet on first build/run** — to fetch SwiftPM packages and download the models below once. After that, inference is fully offline.
+
+### What gets downloaded (not stored in the repo)
+
+These are large and machine-specific, so they're **not** in git — each Mac fetches its own:
+
+| Item | Size | When |
+| --- | --- | --- |
+| SwiftPM dependencies | ~hundreds MB | first build (`make-app.sh` / `swift build`) |
+| Qwen MLX model (`Qwen2.5-0.5B-Instruct-4bit` default) | ~0.4–0.9 GB | first heavy Jarvis task |
+| Parakeet TDT v3 speech model (FluidAudio) | ~0.6 GB | first offline-AI transcription |
+
+The repo itself (Swift source + config) is **under ~1 MB**. The ~9 GB you may see in the working
+folder is regenerated build cache (`.build`, `.xcbuild`, `build/`) and local runtime/model data
+(`sotto-data/`) — all gitignored and safe to delete.
+
+## Install on another Mac
+
+```bash
+git clone https://github.com/Stochastic96/Sotto.git
+cd Sotto
+./scripts/make-app.sh      # first build is slow: MLX Metal shader compilation
+open build/Sotto.app
+```
+
+Then grant the [permissions](#permissions-one-time) below. The first heavy Jarvis task and first
+offline transcription each trigger a one-time model download.
+
+> **Note:** a few code paths currently hard-code `~/Projects/Sotto` (i.e.
+> `/Users/prashantsharma/Projects/Sotto`). On a machine with a different username or clone location,
+> those paths need updating.
+
 ## Build & run
 
 ```bash

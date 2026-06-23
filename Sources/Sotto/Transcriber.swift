@@ -38,6 +38,7 @@ final class Transcriber {
                 manager = AsrManager(config: .default, models: models)
             }
         case .appleSpeech:
+            self.manager = nil
             let status = SFSpeechRecognizer.authorizationStatus()
             if status == .notDetermined {
                 let authorized = await withCheckedContinuation { continuation in

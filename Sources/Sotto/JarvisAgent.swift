@@ -50,11 +50,20 @@ enum JarvisAgent {
     }
 
     /// Reduce first-token latency by warming the model at launch (we have the RAM now
-    /// that the MLX server isn't loaded). Safe no-op if Apple Intelligence is off.
+    /// that the MLX server isn't loaded). Retries once after 30 s in case the model
+    /// manager isn't ready at the exact moment of launch. Safe no-op if Apple Intelligence is off.
     static func prewarm() {
         #if canImport(FoundationModels)
-        if #available(macOS 26.0, *), SystemLanguageModel.default.isAvailable {
-            LanguageModelSession().prewarm()
+        if #available(macOS 26.0, *) {
+            Task {
+                guard SystemLanguageModel.default.isAvailable else { return }
+                LanguageModelSession().prewarm()
+                // Retry after 30 s — covers the common case where the model manager cancels
+                // the first prewarm because it hasn't finished initialising at cold launch.
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
+                guard SystemLanguageModel.default.isAvailable else { return }
+                LanguageModelSession().prewarm()
+            }
         }
         #endif
     }
@@ -100,7 +109,8 @@ enum JarvisAgent {
     // Deliberately SHORT (well under the ~4k-token window). Tool schemas are injected
     // automatically, so the catalog is NOT spelled out here. "JARVIS from Iron Man" gives
     // the model a clear, compact persona without a giant prompt.
-    private static let instructions = """
+    // Shared (not private) so `CoordinatorAgent` builds on the same persona + guardrails.
+    static let instructions = """
         You are JARVIS, the calm, hyper-competent AI assistant from Iron Man, running on this Mac.
         Act, don't chat. To do something on the Mac, call the right tool with precise arguments.
         Call exactly ONE tool unless the task genuinely needs several steps. Never ask the user to
@@ -113,6 +123,9 @@ enum JarvisAgent {
         CRITICAL: Report only what actually happened. NEVER write fake tool transcripts, NEVER print
         "read_screen:" / "click_element:" lines, and NEVER claim success a tool did not return. If a
         tool returns an error or permission message, relay THAT, do not pretend it worked.
+        BROWSERS: web_search and open_website accept a browser argument — pass the browser name
+        there directly. NEVER call open_app to open a browser before web_search or open_website;
+        that opens two browsers. One call does the job.
         """
 
     /// Runs the tool-calling agent on a spoken command. Returns a short spoken reply.

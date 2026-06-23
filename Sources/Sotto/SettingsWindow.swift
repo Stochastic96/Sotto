@@ -23,6 +23,7 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
     
     // UserDefaults keys
     static let pttKey = "sotto_pushToTalk"
+    static let handsFreeKey = "sotto_handsFree"
     static let directInsertKey = "sotto_directInsert"
     static let systemPromptKey = "sotto_systemPrompt"
     static let vocabularyKey = "sotto_vocabulary"
@@ -39,12 +40,79 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
     /// Kept as a constant so existing call sites keep working without a provider picker.
     static let apiProvider = "apple"
 
+    static var sottoDataURL: URL {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+        
+        // 1. Check if we're running from local git checkout by tracing up from the app bundle/executable.
+        var currentURL = Bundle.main.bundleURL
+        for _ in 0..<5 {
+            let dataURL = currentURL.appendingPathComponent("sotto-data")
+            if fm.fileExists(atPath: dataURL.path) {
+                return dataURL
+            }
+            currentURL = currentURL.deletingLastPathComponent()
+        }
+        
+        // 2. Fallback to ~/Projects/Sotto/sotto-data
+        let projectsDir = home.appendingPathComponent("Projects/Sotto/sotto-data")
+        if fm.fileExists(atPath: projectsDir.path) {
+            return projectsDir
+        }
+        
+        // 3. Application Support fallback for packaged app run
+        let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("Sotto/sotto-data")
+        try? fm.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        return appSupport
+    }
+
+    static var sottoLogURL: URL {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+        
+        // 1. Check if we're running from local git checkout by tracing up from the app bundle/executable.
+        var currentURL = Bundle.main.bundleURL
+        for _ in 0..<5 {
+            let logURL = currentURL.appendingPathComponent("sotto.log")
+            let packageURL = currentURL.appendingPathComponent("Package.swift")
+            if fm.fileExists(atPath: packageURL.path) {
+                return logURL
+            }
+            currentURL = currentURL.deletingLastPathComponent()
+        }
+        
+        // 2. Fallback to ~/Projects/Sotto/sotto.log
+        let projectsDir = home.appendingPathComponent("Projects/Sotto")
+        if fm.fileExists(atPath: projectsDir.path) {
+            return projectsDir.appendingPathComponent("sotto.log")
+        }
+        
+        // 3. Application Support fallback
+        let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("Sotto")
+        try? fm.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        return appSupport.appendingPathComponent("sotto.log")
+    }
+
     static var isPushToTalk: Bool {
         UserDefaults.standard.object(forKey: pttKey) as? Bool ?? true
+    }
+
+    static var isHandsFreeEnabled: Bool {
+        UserDefaults.standard.object(forKey: handsFreeKey) as? Bool ?? false
     }
     
     static var isDirectInsert: Bool {
         UserDefaults.standard.bool(forKey: directInsertKey)
+    }
+
+    /// Whether the escalation sub-agents may use the in-process MLX Qwen model. Default OFF:
+    /// on an 8 GB Mac the small Qwen is both weak and a memory-pressure risk, so by default
+    /// every lane rides the fast, warm Apple Intelligence model. Opt in for code/instruction
+    /// tuning on machines with RAM to spare.
+    static var preferMLX: Bool {
+        UserDefaults.standard.bool(forKey: "sotto_prefer_mlx")
     }
     
     static var customSystemPrompt: String {
@@ -60,8 +128,8 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
     }
     
     static var transcriptionEngine: TranscriptionEngine {
-        let raw = UserDefaults.standard.string(forKey: engineKey) ?? TranscriptionEngine.offlineAI.rawValue
-        return TranscriptionEngine(rawValue: raw) ?? .offlineAI
+        let raw = UserDefaults.standard.string(forKey: engineKey) ?? TranscriptionEngine.appleSpeech.rawValue
+        return TranscriptionEngine(rawValue: raw) ?? .appleSpeech
     }
     
     static var isAgentMode: Bool {
@@ -192,6 +260,14 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         
         let pttDesc = createDescriptionLabel("Hold the hotkey down to dictate, release to stop recording. Uncheck for standard click-to-start, click-to-stop toggle.")
         hotkeyStack.addArrangedSubview(pttDesc)
+
+        let handsFreeCheckbox = NSButton(checkboxWithTitle: "Hands-Free Wake Word Mode", target: self, action: #selector(toggleHandsFree(_:)))
+        handsFreeCheckbox.state = Self.isHandsFreeEnabled ? .on : .off
+        handsFreeCheckbox.font = .systemFont(ofSize: 12, weight: .medium)
+        hotkeyStack.addArrangedSubview(handsFreeCheckbox)
+
+        let handsFreeDesc = createDescriptionLabel("Continuously listen in the background for 'Hey Jarvis' or 'Jarvis' wake phrases to trigger voice capture.")
+        hotkeyStack.addArrangedSubview(handsFreeDesc)
         
         let hotkeyDivider = NSBox()
         hotkeyDivider.boxType = .separator
@@ -282,7 +358,25 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         
         let agentCard = createCard(title: "AI Agent System Control", iconName: "bolt.fill", subview: agentStack)
         stack.addArrangedSubview(agentCard)
-        
+
+        // --- 1c2. MLX Qwen Card ---
+        let mlxStack = NSStackView()
+        mlxStack.orientation = .vertical
+        mlxStack.alignment = .leading
+        mlxStack.spacing = 10
+        mlxStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let mlxCheckbox = NSButton(checkboxWithTitle: "Use MLX Qwen for sub-agents", target: self, action: #selector(toggleMLX(_:)))
+        mlxCheckbox.state = Self.preferMLX ? .on : .off
+        mlxCheckbox.font = .systemFont(ofSize: 12, weight: .medium)
+        mlxStack.addArrangedSubview(mlxCheckbox)
+
+        let mlxDesc = createDescriptionLabel("Off by default. When on, the Web Researcher and Scripting Executor sub-agents use the in-process MLX Qwen model (code/instruction-tuned) instead of Apple Intelligence. Slower and uses more RAM — leave off on an 8 GB Mac for snappy, native responses.")
+        mlxStack.addArrangedSubview(mlxDesc)
+
+        let mlxCard = createCard(title: "MLX Qwen Model", iconName: "cpu", subview: mlxStack)
+        stack.addArrangedSubview(mlxCard)
+
         // --- 1d. Jarvis Voice Card ---
         let voiceStack = NSStackView()
         voiceStack.orientation = .vertical
@@ -577,6 +671,12 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         UserDefaults.standard.set(enabled, forKey: Self.agentModeKey)
         print("[SETTINGS] AI Agent Mode toggled: \(enabled)")
     }
+
+    @objc private func toggleMLX(_ sender: NSButton) {
+        let enabled = sender.state == .on
+        UserDefaults.standard.set(enabled, forKey: "sotto_prefer_mlx")
+        print("[SETTINGS] Prefer MLX Qwen sub-agents: \(enabled)")
+    }
     
     @objc private func modelChanged(_ sender: NSTextField) {
         UserDefaults.standard.set(sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Self.modelIdentifierKey)
@@ -639,6 +739,15 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         let enabled = sender.state == .on
         UserDefaults.standard.set(enabled, forKey: Self.pttKey)
         print("[SETTINGS] Push-To-Talk toggled: \(enabled)")
+    }
+
+    @MainActor @objc private func toggleHandsFree(_ sender: NSButton) {
+        let enabled = sender.state == .on
+        UserDefaults.standard.set(enabled, forKey: Self.handsFreeKey)
+        print("[SETTINGS] Hands-Free toggled: \(enabled)")
+        if let shared = AppController.shared {
+            shared.updateWakeDetector()
+        }
     }
     
     @objc private func toggleLaunchAtLogin(_ sender: NSButton) {

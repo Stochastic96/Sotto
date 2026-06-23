@@ -1,12 +1,12 @@
 import AppKit
 
-struct AppContext {
-    let bundleID: String
-    let appName: String
-    let style: FormattingStyle
+public struct AppContext {
+    public let bundleID: String
+    public let appName: String
+    public let style: FormattingStyle
 }
 
-enum FormattingStyle {
+public enum FormattingStyle {
     /// Code editors and terminals — inject exactly what was said, no cleanup.
     case verbatim
     /// Chat apps — drop the trailing period, keep it casual.
@@ -14,7 +14,7 @@ enum FormattingStyle {
     /// Everything else — trust the model's punctuation as-is.
     case prose
 
-    func apply(to text: String) -> String {
+    public func apply(to text: String) -> String {
         switch self {
         case .verbatim, .prose:
             return text
@@ -28,7 +28,7 @@ enum FormattingStyle {
     }
 }
 
-enum ContextDetector {
+public enum ContextDetector {
     private static let codeApps: Set<String> = [
         "com.microsoft.VSCode",
         "com.apple.dt.Xcode",
@@ -50,7 +50,32 @@ enum ContextDetector {
         "com.facebook.archon", // Messenger
     ]
 
-    static func current() -> AppContext {
+    // Cache invalidated whenever the frontmost app changes.
+    // nonisolated(unsafe) is safe here: always written/read on Main.
+    nonisolated(unsafe) private static var _cached: AppContext?
+
+    /// Subscribe to app-switch notifications so `currentCached()` is always fresh.
+    /// Call once at app startup (e.g. in AppController.start()).
+    public static func startObservingAppSwitches() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            _cached = nil
+        }
+    }
+
+    /// Like `current()` but returns a cached result if the frontmost app hasn't changed,
+    /// avoiding a redundant NSWorkspace query on every keystroke/dictation call.
+    public static func currentCached() -> AppContext {
+        if let c = _cached { return c }
+        let fresh = current()
+        _cached = fresh
+        return fresh
+    }
+
+    public static func current() -> AppContext {
         let app = NSWorkspace.shared.frontmostApplication
         let bundleID = app?.bundleIdentifier ?? ""
         let name = app?.localizedName ?? "Unknown"

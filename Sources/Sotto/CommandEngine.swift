@@ -1,6 +1,8 @@
 import Foundation
 import AppKit
 import Vision
+import SottoCore
+import ScreenCaptureKit
 
 enum SearchShortcutType: String {
     case find // Cmd+F
@@ -51,7 +53,25 @@ enum CommandEngine {
             cleanT.removeLast()
         }
         cleanT = cleanT.trimmingCharacters(in: .whitespacesAndNewlines)
-        
+
+        // Parametric reflex: "set volume to 90 percent" / "brightness to 60%" — parsed
+        // deterministically and executed natively, so it's Siri-fast instead of taking
+        // a Foundation Models round-trip. The percent rides in the native command.
+        if let cmd = SystemCommandParser.parse(cleanT) {
+            switch cmd {
+            case .setVolume(let pct):
+                return ZeroLatencyShortcut(
+                    command: "native:set_volume:\(pct)",
+                    voiceFeedback: "Volume \(pct) percent पे सेट कर दिया मिस्टर लॉर्ड।",
+                    hudMessage: "Volume \(pct)%")
+            case .setBrightness(let pct):
+                return ZeroLatencyShortcut(
+                    command: "native:set_brightness:\(pct)",
+                    voiceFeedback: "Brightness \(pct) percent पे सेट कर दी मिस्टर लॉर्ड।",
+                    hudMessage: "Brightness \(pct)%")
+            }
+        }
+
         switch cleanT {
         // --- 1. WINDOW CONTROLS ---
         case "maximize", "maximize window", "full screen", "full screen window", "make window full screen":
@@ -370,15 +390,47 @@ enum CommandEngine {
     }
 
     /// Public wrapper exposing on-device Vision OCR of the screen under the cursor.
-    static func ocrScreen() -> String { performScreenOCR() }
+    static func ocrScreen() async -> String { await performScreenOCR() }
+
+    /// Last non-empty text result from any pipeline run — exposed so "copy that" can put
+    /// it on the clipboard without needing access to HUDOverlay.
+    nonisolated(unsafe) static var lastResult: String = ""
 
     static func process(_ raw: String, context: AppContext, selection: String? = nil) async -> CommandOutput {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        
+
+        // Apply vocabulary corrections before any other processing.
+        text = VocabCorrector.apply(to: text)
+
         // Preprocess speech artifacts ("dot", "file name/called" etc.)
         text = preprocessSpeechArtifacts(text)
 
         let lowerText = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // --- "Remember that X" / "note that X" → save to personal memory directly ---
+        let rememberPrefixes = ["remember that ", "remember this: ", "remember, ", "note that ", "note this: ", "save this: "]
+        for prefix in rememberPrefixes where lowerText.hasPrefix(prefix) {
+            let fact = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+            if !fact.isEmpty {
+                let key = "note_\(Int(Date().timeIntervalSince1970))"
+                UserProfile.remember(key: key, fact: fact)
+                print("[ENGINE] Memory saved: \(fact)")
+                return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
+            }
+        }
+
+        // --- "Copy that" → copy last result to clipboard ---
+        let copyThatPhrases = ["copy that", "copy the result", "copy last result", "copy that result"]
+        if copyThatPhrases.contains(lowerText) {
+            let last = CommandEngine.lastResult
+            if !last.isEmpty {
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setString(last, forType: .string)
+                print("[ENGINE] Copied last result to clipboard.")
+            }
+            return CommandOutput(text: "", pressReturnAfter: false, fileURL: nil)
+        }
 
         // --- 0.4. Zero-Latency Direct Integrations (Wikipedia, Maps, LinkedIn, Google Ads) ---
         
@@ -511,17 +563,17 @@ enum CommandEngine {
 
         // 0.6. Screen-OCR Triggers
         if lowerText.hasPrefix("ask chatgpt about this screen") {
-            let screenText = performScreenOCR()
+            let screenText = await performScreenOCR()
             let prompt = "Please explain/summarize this screen content:\n\(screenText)"
             openWebsite(urlStr: "https://chatgpt.com")
             return CommandOutput(text: prompt, pressReturnAfter: true, fileURL: nil, delayBeforeInject: 2.0)
         } else if lowerText.hasPrefix("ask claude about this screen") || lowerText.hasPrefix("explain this screen on claude") {
-            let screenText = performScreenOCR()
+            let screenText = await performScreenOCR()
             let prompt = "Please explain/summarize this screen content:\n\(screenText)"
             let response = await ClaudeQuickEntry.sendAndReadResponse(prompt)
             return CommandOutput(text: response, pressReturnAfter: false, fileURL: nil)
         } else if lowerText.hasPrefix("explain this screen") || lowerText.hasPrefix("summarize this screen") {
-            let screenText = performScreenOCR()
+            let screenText = await performScreenOCR()
             let prompt = "Summarize the text captured from my screen. Provide a clear, structured explanation of the key content:\n\n\(screenText)"
             return CommandOutput(
                 text: prompt,
@@ -1112,7 +1164,15 @@ enum CommandEngine {
         return result
     }
 
-    private static func launchApp(named name: String) {
+    /// Public reflex entry point: launch an app by name. Returns true when a real
+    /// app bundle was resolved (so the kernel can escalate to the model if not).
+    @discardableResult
+    static func openApp(named name: String) -> Bool {
+        launchApp(named: name)
+    }
+
+    @discardableResult
+    private static func launchApp(named name: String) -> Bool {
         let startTime = CFAbsoluteTimeGetCurrent()
         
         var targetURL: URL? = nil
@@ -1150,13 +1210,17 @@ enum CommandEngine {
                     print("[BENCHMARK] Application '\(name)' launched natively in \(String(format: "%.2f", duration * 1000))ms")
                 }
             }
+            return true
         } else {
+            // No real app bundle resolved. Try /usr/bin/open as a best-effort fallback,
+            // but report failure so the kernel can escalate the utterance to the model.
             let process = Process()
             process.launchPath = "/usr/bin/open"
             process.arguments = ["-a", name]
             try? process.run()
             let duration = CFAbsoluteTimeGetCurrent() - startTime
             print("[BENCHMARK] Application '\(name)' launched via /usr/bin/open fallback in \(String(format: "%.2f", duration * 1000))ms")
+            return false
         }
     }
 
@@ -1286,8 +1350,7 @@ enum CommandEngine {
     }
 
     static func runShellCommand(_ command: String, currentDirectory: String) -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let sottoDataPath = home.appendingPathComponent("Projects/Sotto/sotto-data").path
+        let sottoDataPath = SettingsController.sottoDataURL.path
         let resolvedCommand = command.replacingOccurrences(of: "sotto-data/", with: sottoDataPath + "/")
 
         let startTime = CFAbsoluteTimeGetCurrent()
@@ -1321,8 +1384,7 @@ enum CommandEngine {
 
     static func runAppleScriptNative(scriptPath: String, arguments: [String]) -> String {
         let startTime = CFAbsoluteTimeGetCurrent()
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let sottoDataPath = home.appendingPathComponent("Projects/Sotto/sotto-data").path
+        let sottoDataPath = SettingsController.sottoDataURL.path
         let resolvedPath = scriptPath.replacingOccurrences(of: "sotto-data/", with: sottoDataPath + "/")
         
         let url = URL(fileURLWithPath: resolvedPath)
@@ -1400,7 +1462,37 @@ enum CommandEngine {
         return runShellCommand(trimmed, currentDirectory: rootPath)
     }
 
-    private static func performScreenOCR() -> String {
+    private static func captureScreenImage(displayID: CGDirectDisplayID) async -> CGImage? {
+        do {
+            let availableContent = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            guard let display = availableContent.displays.first(where: { $0.displayID == displayID }) else {
+                print("[SCK] Could not find SCDisplay for displayID \(displayID)")
+                return nil
+            }
+            let filter = SCContentFilter(display: display, excludingWindows: [])
+            let config = SCStreamConfiguration()
+            config.showsCursor = false
+            config.width = Int(display.width)
+            config.height = Int(display.height)
+            
+            return try await withCheckedThrowingContinuation { continuation in
+                SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) { image, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else if let image = image {
+                        continuation.resume(returning: image)
+                    } else {
+                        continuation.resume(throwing: NSError(domain: "ScreenCaptureKit", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unknown capture error"]))
+                    }
+                }
+            }
+        } catch {
+            print("[SCK] Screen capture failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private static func performScreenOCR() async -> String {
         let startTime = CFAbsoluteTimeGetCurrent()
         
         // Check screen capture permission
@@ -1426,35 +1518,35 @@ enum CommandEngine {
             }
         }
         
-        guard let cgImage = CGDisplayCreateImage(targetDisplayID) else {
+        guard let cgImage = await captureScreenImage(displayID: targetDisplayID) ?? CGDisplayCreateImage(targetDisplayID) else {
             print("[VISION] Failed to capture screen image for display \(targetDisplayID)")
             return "Failed to capture screen image"
         }
 
-        var recognizedText = ""
-        let semaphore = DispatchSemaphore(value: 0)
-
-        let request = VNRecognizeTextRequest { (request, error) in
-            defer { semaphore.signal() }
-            guard let observations = request.results as? [VNRecognizedTextObservation], error == nil else {
-                return
+        let recognizedText: String = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let request = VNRecognizeTextRequest { (request, error) in
+                    guard let observations = request.results as? [VNRecognizedTextObservation], error == nil else {
+                        continuation.resume(returning: "")
+                        return
+                    }
+                    let lines = observations.compactMap { $0.topCandidates(1).first?.string }
+                    continuation.resume(returning: lines.joined(separator: "\n"))
+                }
+                
+                request.recognitionLevel = .accurate
+                request.usesLanguageCorrection = true
+                
+                let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+                do {
+                    try handler.perform([request])
+                } catch {
+                    print("[VISION] Failed to perform text recognition: \(error)")
+                    continuation.resume(returning: "Failed to analyze screen")
+                }
             }
-            let lines = observations.compactMap { $0.topCandidates(1).first?.string }
-            recognizedText = lines.joined(separator: "\n")
         }
 
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
-
-        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-        do {
-            try handler.perform([request])
-        } catch {
-            print("[VISION] Failed to perform text recognition: \(error)")
-            return "Failed to analyze screen"
-        }
-
-        _ = semaphore.wait(timeout: .now() + 2.0)
         let duration = CFAbsoluteTimeGetCurrent() - startTime
         print("[BENCHMARK] Screen OCR completed in \(String(format: "%.2f", duration * 1000))ms (display: \(targetDisplayID))")
         return recognizedText
@@ -1483,7 +1575,7 @@ enum CommandEngine {
             }
         }
         
-        guard let cgImage = CGDisplayCreateImage(targetDisplayID) else {
+        guard let cgImage = await captureScreenImage(displayID: targetDisplayID) ?? CGDisplayCreateImage(targetDisplayID) else {
             print("[VISION] Failed to capture screen image")
             return false
         }

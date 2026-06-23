@@ -137,7 +137,7 @@ enum NativeWindow {
 
     /// Visible work area in AX/global top-left coordinates (menu bar + Dock excluded).
     private static func workArea() -> CGRect {
-        guard let screen = NSScreen.main else { return CGRect(x: 0, y: 0, width: 1440, height: 900) }
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return CGRect(x: 0, y: 0, width: 1440, height: 900) }
         let full = screen.frame
         let vis = screen.visibleFrame
         // Cocoa visibleFrame is bottom-left origin; AX wants top-left origin.

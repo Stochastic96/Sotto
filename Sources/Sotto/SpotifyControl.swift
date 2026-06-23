@@ -98,7 +98,7 @@ enum SpotifyControl {
         guard let url = URL(string: "https://api.spotify.com/v1/search?q=\(q)&type=track&limit=1") else { return nil }
         var req = URLRequest(url: url)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        guard let (data, _) = try? await URLSession.shared.data(for: req),
+        guard let data = try? await ResilientNetworkClient.fetchData(for: req),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let tracks = json["tracks"] as? [String: Any],
               let items = tracks["items"] as? [[String: Any]],
@@ -117,7 +117,7 @@ enum SpotifyControl {
         req.setValue("Basic \(basic)", forHTTPHeaderField: "Authorization")
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         req.httpBody = Data("grant_type=client_credentials".utf8)
-        guard let (data, _) = try? await URLSession.shared.data(for: req),
+        guard let data = try? await ResilientNetworkClient.fetchData(for: req),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let token = json["access_token"] as? String else { return nil }
         return token

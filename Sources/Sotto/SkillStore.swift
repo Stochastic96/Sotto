@@ -1,4 +1,5 @@
 import Foundation
+import CoreSpotlight
 
 /// A skill Jarvis drafted for itself. Drafts are saved DISABLED — generation is
 /// autonomous, but execution waits until the user says "enable skill <name>".
@@ -24,8 +25,7 @@ enum SkillStore {
     private static let lock = NSLock()
 
     private static var baseDir: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Projects/Sotto/sotto-data/skills/jarvis")
+        SettingsController.sottoDataURL.appendingPathComponent("skills/jarvis")
     }
     private static var manifestURL: URL { baseDir.appendingPathComponent("skills.json") }
     private static var scriptsDir: URL { baseDir.appendingPathComponent("scripts") }
@@ -74,6 +74,7 @@ enum SkillStore {
         skills.removeAll { $0.name == skill.name }   // overwrite a prior draft of same name
         skills.append(skill)
         save(skills)
+        indexInSpotlight(skill: skill)
         return "Drafted skill '\(skill.name)' (\(lang)), disabled. Say \"enable skill \(skill.name)\" to activate it."
     }
 
@@ -103,11 +104,15 @@ enum SkillStore {
         }
         skills[idx].enabled = true
         save(skills)
+        
+        let skill = skills[idx]
+        indexInSpotlight(skill: skill)
+        
         // Materialize the script on disk for transparency / inspection.
         ensureDirs()
-        let ext = skills[idx].language == "applescript" ? "applescript" : "sh"
+        let ext = skill.language == "applescript" ? "applescript" : "sh"
         let fileURL = scriptsDir.appendingPathComponent("\(target).\(ext)")
-        try? skills[idx].body.write(to: fileURL, atomically: true, encoding: .utf8)
+        try? skill.body.write(to: fileURL, atomically: true, encoding: .utf8)
         return "Enabled skill '\(target)'. Jarvis can now run it."
     }
 
@@ -138,5 +143,23 @@ enum SkillStore {
             ? "osascript \"\(fileURL.path)\""
             : "bash \"\(fileURL.path)\""
         return CommandEngine.runCommandNatively(command)
+    }
+
+    private static func indexInSpotlight(skill: DraftedSkill) {
+        let attributeSet = CSSearchableItemAttributeSet(contentType: .text)
+        attributeSet.title = "Jarvis Skill: \(skill.name)"
+        let status = skill.enabled ? "Enabled" : "Pending Approval"
+        attributeSet.contentDescription = "Trigger: \"\(skill.trigger)\" (\(status)) - \(skill.description)"
+        
+        let item = CSSearchableItem(
+            uniqueIdentifier: "sotto:skill:\(skill.name)",
+            domainIdentifier: "sotto.skills",
+            attributeSet: attributeSet
+        )
+        CSSearchableIndex.default().indexSearchableItems([item]) { error in
+            if let error = error {
+                print("[SKILLS] CoreSpotlight index error: \(error.localizedDescription)")
+            }
+        }
     }
 }

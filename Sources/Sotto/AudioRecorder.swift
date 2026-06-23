@@ -11,8 +11,12 @@ final class AudioRecorder {
     private var silenceAccumulator: Double = 0.0
     private let silenceThreshold: Float = 0.015 // RMS threshold for silence (~ -36 dB)
     private let maxSilenceDuration: Double = 3.5 // 3.5 seconds of silence to trigger auto-stop
-    
-    private(set) var currentRMS: Float = 0.0
+    private var _currentRMS: Float = 0.0
+    var currentRMS: Float {
+        lock.lock()
+        defer { lock.unlock() }
+        return _currentRMS
+    }
 
     private let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
@@ -28,7 +32,8 @@ final class AudioRecorder {
     func start() throws {
         lock.lock()
         samples.removeAll(keepingCapacity: true)
-        currentRMS = 0.0
+        _currentRMS = 0.0
+        silenceAccumulator = 0.0
         lock.unlock()
 
         let input = engine.inputNode
@@ -53,7 +58,7 @@ final class AudioRecorder {
         engine.stop()
         lock.lock()
         defer { lock.unlock() }
-        currentRMS = 0.0
+        _currentRMS = 0.0
         return samples
     }
 
@@ -85,7 +90,9 @@ final class AudioRecorder {
                 sum += sample * sample
             }
             let rms = sqrt(sum / Float(count))
-            self.currentRMS = rms
+            lock.lock()
+            self._currentRMS = rms
+            lock.unlock()
             
             if !SettingsController.isPushToTalk {
                 if rms < silenceThreshold {

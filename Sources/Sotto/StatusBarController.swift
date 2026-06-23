@@ -44,7 +44,9 @@ import AppKit
         dictateMenuItem = NSMenuItem(title: "🎤 Start Dictation", action: #selector(startDictate), keyEquivalent: "d")
         super.init()
 
-        item.button?.image = NSImage(systemSymbolName: "mic", accessibilityDescription: "Sotto")
+        // A distinct, filled symbol so the icon is easy to spot in a crowded menu bar.
+        item.button?.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Sotto / Jarvis")
+        item.button?.image?.isTemplate = true
 
         let menu = NSMenu()
         menu.delegate = self
@@ -81,6 +83,10 @@ import AppKit
         settingsMenuItem.target = self
         menu.addItem(settingsMenuItem)
 
+        let consoleMenuItem = NSMenuItem(title: "Show Console", action: #selector(showConsole), keyEquivalent: "l")
+        consoleMenuItem.target = self
+        menu.addItem(consoleMenuItem)
+
         let logMenuItem = NSMenuItem(title: "Open Log File", action: #selector(openLogFile), keyEquivalent: "")
         logMenuItem.target = self
         menu.addItem(logMenuItem)
@@ -116,9 +122,14 @@ import AppKit
         settingsHandler?()
     }
 
+    private let console = LogConsoleWindowController()
+
+    @objc private func showConsole(_ sender: NSMenuItem) {
+        console.show()
+    }
+
     @objc private func openLogFile(_ sender: NSMenuItem) {
-        let logPath = "/Users/prashantsharma/Projects/Sotto/sotto.log"
-        let url = URL(fileURLWithPath: logPath)
+        let url = SettingsController.sottoLogURL
         NSWorkspace.shared.open(url)
     }
 
@@ -141,6 +152,7 @@ import AppKit
 
     private func set(icon: String, text: String) {
         let image = NSImage(systemSymbolName: icon, accessibilityDescription: "Sotto")
+        image?.isTemplate = true
         item.button?.image = image
         statusMenuItem.title = text
 

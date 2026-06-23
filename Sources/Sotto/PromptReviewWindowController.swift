@@ -1,4 +1,5 @@
 import AppKit
+import SottoCore
 
 /// Shows a prepared prompt in an editable window so the user can fix OCR mistakes
 /// before it reaches Claude, then either copy it (paste manually) or hand it to

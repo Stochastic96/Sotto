@@ -4,9 +4,7 @@ import AppKit
 struct JarvisSwiftExecutor {
     
     static func writeResearchReport(name: String, content: String) -> String {
-        let home = NSHomeDirectory()
-        let projectDir = home + "/Projects/Sotto"
-        let researchDir = URL(fileURLWithPath: projectDir + "/sotto-data/research")
+        let researchDir = SettingsController.sottoDataURL.appendingPathComponent("research")
         try? FileManager.default.createDirectory(at: researchDir, withIntermediateDirectories: true)
         
         let safeName = name.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "_")

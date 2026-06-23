@@ -84,5 +84,24 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
 </plist>
 EOF
 
-codesign --force --deep --sign - "$APP"
+# Sign with a STABLE identity so macOS keeps the Accessibility/Microphone grants across
+# rebuilds (ad-hoc "-" changes the code identity every build, dropping the permissions).
+# Preference order: a self-signed "Sotto Local Signing" cert → any Apple Development cert →
+# ad-hoc as a last resort. Override with SOTTO_SIGN_IDENTITY if you want a specific one.
+SIGN_IDENTITY="${SOTTO_SIGN_IDENTITY:-}"
+if [ -z "$SIGN_IDENTITY" ]; then
+    if security find-identity -v -p codesigning 2>/dev/null | grep -q "Sotto Local Signing"; then
+        SIGN_IDENTITY="Sotto Local Signing"
+    elif security find-identity -v -p codesigning 2>/dev/null | grep -q "Apple Development"; then
+        SIGN_IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null | grep "Apple Development" | head -1 | sed -E 's/.*"(.*)"/\1/')
+    fi
+fi
+
+if [ -n "$SIGN_IDENTITY" ]; then
+    echo "Signing with stable identity: $SIGN_IDENTITY"
+    codesign --force --deep --sign "$SIGN_IDENTITY" "$APP"
+else
+    echo "No stable signing identity found — falling back to ad-hoc (permissions reset each rebuild)."
+    codesign --force --deep --sign - "$APP"
+fi
 echo "Built $APP — move it to /Applications if you like, then open it."

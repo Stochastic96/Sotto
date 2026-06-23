@@ -7,12 +7,14 @@ enum TaskJournal {
     private static let io = DispatchQueue(label: "sotto.task.journal")
 
     private static var fileURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Projects/Sotto/sotto-data/journal.jsonl")
+        SettingsController.sottoDataURL.appendingPathComponent("journal.jsonl")
     }
 
     /// Record one completed action. Fire-and-forget.
     static func record(command: String, reply: String) {
+        // Also feed semantic memory so Jarvis can recall past interactions by meaning.
+        let shortReply = reply.count > 160 ? String(reply.prefix(160)) + "…" : reply
+        SemanticMemory.remember("\(command) → \(shortReply)", kind: "journal")
         io.async {
             let record: [String: Any] = [
                 "ts": ISO8601DateFormatter().string(from: Date()),
