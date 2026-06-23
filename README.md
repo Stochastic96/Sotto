@@ -1,138 +1,145 @@
-# Sotto — Fully Native, On-Device AI Dictation & Assistant for macOS (Apple Silicon)
+# Sotto — On-Device AI Voice Assistant for macOS
 
-Privacy-first speech-to-text **and** a JARVIS-style voice assistant for Apple Silicon Macs.
-Everything runs on-device in Swift: **no Python, no local servers, no network at inference time.**
+**"Hey Jarvis"** — say it and your Mac acts. Sotto is a privacy-first, fully on-device voice assistant for Apple Silicon Macs. No cloud, no Python, no servers. Everything runs in Swift, on your hardware.
 
-**Two interaction modes (push-to-talk):**
-- **Dictation** — speak → transcript is polished and typed into the focused app.
-- **Jarvis** — speak a command → the on-device agent acts on your Mac and talks back.
+Two modes, one hotkey (or your voice):
 
-## The brain: two native on-device engines
+- **Dictation** — speak → polished text types itself into whatever app you're using.
+- **Jarvis** — speak a command → Sotto understands it and acts on your Mac.
 
-Sotto uses **two brains, chosen per task** — the right tool for each job on 8 GB:
+---
+
+## What Jarvis can do
+
+Out of the box, Jarvis handles 27 categories of native Mac actions:
+
+| Category | Example commands |
+|---|---|
+| **System control** | "volume up", "mute", "set brightness to 50", "lock screen", "sleep", "empty trash" |
+| **Window management** | "maximize this window", "move to left half", "tile to top right" |
+| **App & web** | "open Xcode", "open github.com", "switch to Safari" |
+| **Spotify** | "play", "pause", "skip", "play Bohemian Rhapsody on Spotify" |
+| **Weather** | "weather in Berlin", "what's the forecast for Tokyo" |
+| **Search & research** | "search Google for Swift actors", "look up SwiftUI on Wikipedia" |
+| **Notes & reminders** | "create a note: buy milk", "remind me to call Priya at 5pm" |
+| **Calendar** | "what's on my calendar today", "add meeting at 3pm" |
+| **Screen reading (OCR)** | "read the screen", "what does this error say" |
+| **Clipboard** | "copy this to clipboard", "what's in my clipboard" |
+| **Morning brief** | "morning brief", "daily summary" |
+| **Focus sessions** | "start a focus session", "end workday" |
+| **Code assistant** | "explain this code", "generate a git commit message", "find the bug" |
+| **File management** | "organize my downloads", "find large files" |
+| **System status** | "ram usage", "battery level", "wifi status" |
+| **Location** | "where is Trier", "geocode this address" |
+
+Everything above runs **100% on-device, zero network**.
+
+---
+
+## Wake word
+
+Say **"Hey Jarvis"** (or just **"Jarvis"**) to activate hands-free. The wake word detector runs continuously on the Apple Neural Engine using `SFSpeechRecognizer` with `requiresOnDeviceRecognition` — no audio ever leaves your Mac.
+
+Push-to-talk hotkeys also available (configurable in Settings).
+
+---
+
+## The two on-device brains
 
 | Engine | Used for | Notes |
-| --- | --- | --- |
-| **Qwen via MLX-Swift** (0.5B-Instruct) | **Dictation polish** + heavier / long-form generation | Runs **in-process on the GPU** (MLX), loaded once and kept resident. Tiny enough to stay warm on an M1/8 GB, so polish is fast (~1.5–2.5 s) and the **same latency every time** — no Apple-Intelligence model eviction stalls. No `mlx_lm.server`, no Python. |
-| **Apple Intelligence** (Foundation Models) | The **Jarvis tool-calling agent** + dictation-polish fallback | Native tool-calling (`@Generable` + `Tool`) is reliable in a way small models aren't, so the agent stays here. Kept **warm** via a prewarmed `LanguageModelSession`. Requires macOS 26+ with Apple Intelligence enabled. |
+|---|---|---|
+| **Parakeet TDT v3** (FluidAudio / ANE) | Speech-to-text | Offline Whisper-class model, Neural Engine |
+| **Qwen 0.5B via MLX-Swift** | Dictation polish | Tiny, stays resident on 8 GB RAM |
+| **Apple Foundation Models** | Jarvis tool-calling agent | Requires macOS 26 + Apple Intelligence |
 
-Why split: on 8 GB every model uses RAM; the win is a *small resident model* for the
-speed-critical dictation path, while the agent keeps Apple's stronger tool-calling. Polish
-falls back to Apple Intelligence if MLX isn't built in or the model can't load.
+Why split: dictation polish needs speed (1–2 s every time), the agent needs reliable tool-calling. Each brain does what it's best at.
 
-## Speech-to-text
-
-- **Offline AI:** Parakeet TDT v3 on the Apple Neural Engine via [FluidAudio](https://github.com/FluidInference/FluidAudio).
-- **Apple Speech:** `SFSpeechRecognizer` (Siri engine), on-device.
-
-Choose the engine in Settings.
-
-## Everything else is native too
-
-- **System control** — volume (CoreAudio), brightness (DisplayServices), mute, sleep/lock/empty-trash.
-- **Window management** — maximize / halves / quadrants / center / minimize / close via the **Accessibility (AX) API** (no AppleScript files).
-- **Spotify control** — play/pause/skip and **search-and-play a specific song**, addressed to Spotify *by name* via AppleScript (never hijacks Apple Music). Song search uses the keyless Spotify Web API when credentials are set.
-- **Weather** — current conditions + today's high/low for any city via the free, keyless [Open-Meteo](https://open-meteo.com) API.
-- **Browser nav** — reload/back/forward/new-tab/close via synthetic keystrokes.
-- **Voice feedback** — `AVSpeechSynthesizer` (native; the old Python Kokoro daemon is gone).
-- **Screen OCR / on-screen reading** — Vision framework.
-- **Text injection** — pasteboard + synthetic ⌘V, delivered with `CGEvent.postToPid` to the target app. Direct AX insertion is opt-in and gated on `AXUIElementIsAttributeSettable` so it can't silently no-op in Terminal/Electron apps.
-
-### Jarvis tool calling & routing
-
-The agent exposes **27 native Swift tools** (each a Foundation Models `Tool` with `@Generable`
-arguments). Because tool-selection accuracy plateaus around 8 tools and drops beyond, each
-utterance is **routed to only the ≤8 most relevant tools** by keyword group (`JarvisToolbox.routed`)
-rather than handing the model the whole catalog — sharper choices, lower latency.
-
-The legacy `osascript`/`.scpt` skill files, the `mlx_lm.server`, and the Python Kokoro TTS
-daemon have all been removed and reimplemented in Swift.
+---
 
 ## Requirements
 
-- **Apple Silicon Mac** (arm64 — M1 or newer). Tuned for an M1 with 8 GB RAM.
-- **macOS 26+ with Apple Intelligence enabled** — the Jarvis tool-calling agent and dictation-polish fallback use Apple's Foundation Models.
-- **Xcode** (full app, not just Command Line Tools) — `make-app.sh` uses `xcodebuild` to compile MLX's Metal GPU shaders. A bare `swift build` is fine for type-checks but won't ship a runnable app.
-- **Internet on first build/run** — to fetch SwiftPM packages and download the models below once. After that, inference is fully offline.
+- **Apple Silicon Mac** — M1 or newer. Tuned for M1 / 8 GB.
+- **macOS 26 with Apple Intelligence enabled** — required for the Jarvis agent.
+- **Xcode or Command Line Tools** — to build (compiles MLX Metal shaders).
+- **Internet on first run only** — to fetch Swift packages and download models. After that, fully offline.
 
-### What gets downloaded (not stored in the repo)
-
-These are large and machine-specific, so they're **not** in git — each Mac fetches its own:
+### First-run downloads (not in the repo)
 
 | Item | Size | When |
-| --- | --- | --- |
-| SwiftPM dependencies | ~hundreds MB | first build (`make-app.sh` / `swift build`) |
-| Qwen MLX model (`Qwen2.5-0.5B-Instruct-4bit` default) | ~0.4–0.9 GB | first heavy Jarvis task |
-| Parakeet TDT v3 speech model (FluidAudio) | ~0.6 GB | first offline-AI transcription |
+|---|---|---|
+| Swift package dependencies | ~hundreds MB | `swift build` |
+| Qwen MLX model (default: `Qwen2.5-0.5B-Instruct-4bit`) | ~0.4–0.9 GB | first Jarvis command |
+| Parakeet speech model (FluidAudio) | ~0.6 GB | first offline transcription |
 
-The repo itself (Swift source + config) is **under ~1 MB**. The ~9 GB you may see in the working
-folder is regenerated build cache (`.build`, `.xcbuild`, `build/`) and local runtime/model data
-(`sotto-data/`) — all gitignored and safe to delete.
+---
 
-## Install on another Mac
+## Install
 
 ```bash
 git clone https://github.com/Stochastic96/Sotto.git
 cd Sotto
-./scripts/make-app.sh      # first build is slow: MLX Metal shader compilation
-open build/Sotto.app
+swift build -c release
+./.build/release/Sotto
 ```
 
-Then grant the [permissions](#permissions-one-time) below. The first heavy Jarvis task and first
-offline transcription each trigger a one-time model download.
+Grant permissions when prompted (one-time):
 
-> **Note:** a few code paths currently hard-code `~/Projects/Sotto` (i.e.
-> `/Users/prashantsharma/Projects/Sotto`). On a machine with a different username or clone location,
-> those paths need updating.
+1. **Microphone** — voice input
+2. **Accessibility** — hotkeys, window management, text injection
+3. **Screen Recording** — OCR / on-screen reading
+4. **Automation** — dark mode toggle, Notes, sleep (prompted on first use of each)
 
-## Build & run
+> **Note:** a few code paths hard-code `~/Projects/Sotto`. On a different machine, update those paths after cloning.
 
-```bash
-./scripts/make-app.sh      # release build via xcodebuild → build/Sotto.app
-open build/Sotto.app
-```
+---
 
-- `make-app.sh` uses **xcodebuild** (needed to compile MLX's Metal GPU shaders) and bundles the
-  SwiftPM `.bundle` resources into the app.
-- `swift build` works for fast compile/type-checks.
-- **First MLX build is heavy** (Metal shader compilation). **First Jarvis "heavy" task downloads the
-  Qwen model** (~0.9 GB for `Qwen2.5-1.5B-Instruct-4bit`) once, then runs fully offline.
+## Why not the App Store
 
-### MLX on/off
+Apple Guideline 2.4.5 rejects apps that inject text via synthetic key events. Sotto requires text injection to work in every app, so it's distributed as a Developer ID build only.
 
-The in-process MLX engine is gated by the `SOTTO_MLX` compile flag (defined in `Package.swift`).
-With it off, `MLXEngine` is a no-op and **all** generation uses Apple Intelligence — the app still
-builds and works without the MLX packages.
+---
 
-## Model choice (8 GB Macs)
+## Optional: Spotify song search
 
-Default MLX model: **`mlx-community/Qwen2.5-0.5B-Instruct-4bit`** — tiny enough to stay resident
-alongside Apple Intelligence on an M1/8 GB, giving fast, consistent dictation polish. Change it in
-Settings ▸ On-Device Brain. Larger models (e.g. `Qwen3-1.7B-4bit`) give sharper polish if you have
-RAM headroom.
-
-### Optional: Spotify song search
-
-To let "play <song> on Spotify" auto-play (not just open search), add free [Spotify Developer](https://developer.spotify.com/dashboard)
-app credentials — no user login needed (Client Credentials flow):
+To enable "play \<song\> on Spotify" (auto-plays instead of opening search), add free [Spotify Developer](https://developer.spotify.com/dashboard) credentials — no user login needed:
 
 ```bash
 defaults write local.sotto.app sotto_spotify_client_id "<your-client-id>"
 defaults write local.sotto.app sotto_spotify_client_secret "<your-client-secret>"
 ```
 
-## Permissions (one-time)
+---
 
-1. **Microphone** — dictation.
-2. **Accessibility** — global hotkey, window management, and synthetic ⌘V.
-3. **Screen Recording** — Screen OCR / on-screen reading.
-4. **Automation (System Events / Notes)** — dark-mode toggle, sleep, note creation (prompted on first use).
+## Architecture in brief
 
-## Why not the App Store
+```
+Voice → Parakeet (ANE) → transcript
+                              ↓
+              CommandEngine (zero-latency shortcuts)
+                              ↓
+              Kernel reflex router (open app / compound commands)
+                              ↓
+              JarvisAgent (Foundation Models, ≤8 routed tools)
+                              ↓
+              MLX fallback (Qwen via mlx-swift)
+```
 
-Apple rejects apps that inject text via synthetic key events (Guideline 2.4.5). Sotto requires text
-injection, so it's built for Developer ID distribution.
+Dictation polish runs on a separate fast path: `QwenRefiner` → Qwen 0.5B → polished text → `TextInjector` → ⌘V.
 
 ---
 
-**Location:** `~/Projects/Sotto` · **License:** Open source
+## Project layout
+
+```
+Sources/
+  Sotto/         — executable: AppKit menu bar, audio, agent, all platform code
+  SottoCore/     — pure Swift (no AppKit): testable logic, vocab correction, context detection
+Tests/
+  SottoTests/    — unit tests for SottoCore
+```
+
+---
+
+## License
+
+Open source. Free to use, modify, and distribute.
