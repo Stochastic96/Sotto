@@ -114,6 +114,10 @@ enum EventHandler {
         // ─── Conversation turns (consumed by ConversationMemory, not the HUD) ──
         case .conversationTurn:
             break
+
+        // ─── New trigger/engine/output events (handled by SottoTrigger/Engine/Output) ──
+        default:
+            break
         }
     }
 
