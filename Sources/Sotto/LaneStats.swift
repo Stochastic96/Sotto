@@ -2,18 +2,15 @@ import Foundation
 
 // MARK: - LaneStats
 //
-// Measures the three-lane distribution the architecture is built around: what
-// fraction of Jarvis commands are handled by a 0-token reflex vs. the on-device
-// Apple Intelligence agent vs. the heavier MLX/cloud paths, and how long each took.
+// Measures the lane distribution: what fraction of Jarvis commands hit a 0-token
+// reflex vs. the Apple Intelligence agent, and how long each took.
 //
-// The goal (per the design): ~80–90% reflex, ~8–15% apple, ~1–5% mlx/cloud. Without
-// numbers that target is a guess — this turns it into a measurement. Counts persist
-// across launches so the distribution reflects real usage, not one session.
+// Target: ~80–90% reflex, ~10–20% apple. Counts persist across launches.
 
 enum Lane: String, Sendable, CaseIterable {
     case reflex   // pure Swift, 0 tokens (zero-latency shortcut, kernel reflex, weather, Siri)
     case apple    // Apple Intelligence Foundation Models agent
-    case mlx      // on-device Qwen sub-agent
+    case mlx      // retained for historical stats only — no longer actively used
     case cloud    // Claude CLI / external
     case failed   // nothing handled it
 }

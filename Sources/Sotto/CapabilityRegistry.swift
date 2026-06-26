@@ -155,7 +155,7 @@ extension CapabilityRegistry {
             .init(name: "media_prev",        keywords: ["previous","back","song","track"],                  latencyMs: 5,   tier: .reflex),
             .init(name: "mute",             keywords: ["mute","silence","volume"],                         latencyMs: 5,   tier: .reflex),
             .init(name: "volume_up",         keywords: ["volume","louder","up"],                            latencyMs: 5,   tier: .reflex),
-            .init(name: "volume_down",       keywords: ["volume","softer","down","quiet"],                  latencyMs: 5,   tier: .reflex),
+            .init(name: "volume_down",       keywords: ["volume","softer","lower","quieter"],               latencyMs: 5,   tier: .reflex),
             .init(name: "brightness_up",     keywords: ["brightness","bright","screen"],                   latencyMs: 5,   tier: .reflex),
             .init(name: "brightness_down",   keywords: ["brightness","dim","dark","screen"],               latencyMs: 5,   tier: .reflex),
             .init(name: "dark_mode_toggle",  keywords: ["dark","light","mode","appearance"],               latencyMs: 10,  tier: .reflex),
@@ -195,6 +195,7 @@ extension CapabilityRegistry {
             .init(name: "run_skill",         keywords: ["run","execute","skill"],                           latencyMs: 200, tier: .foundationModel),
             .init(name: "ask_claude",        keywords: ["claude","ask","research","question"],              latencyMs: 2000, tier: .foundationModel, requiresNetwork: true),
             .init(name: "start_long_task",   keywords: ["all","bulk","every","inbox","email","clean"],      latencyMs: 1000, tier: .foundationModel, isResumable: true),
+            .init(name: "manage_tasks",      keywords: ["task","queue","enqueue","background","microtask","schedule"], latencyMs: 200, tier: .foundationModel),
 
             // ── New tools (P1/P2 pipelines) ──────────────────────────────────
             .init(name: "morning_brief",       description: "Morning briefing",                          keywords: ["morning","brief","daily","today","wake","summary"],               latencyMs: 1500, tier: .foundationModel),
@@ -218,6 +219,7 @@ extension CapabilityRegistry {
             .init(name: "manage_clipboard",    description: "Read or write the clipboard",                           keywords: ["clipboard","copy","paste","copied","pasteboard"],         latencyMs: 20,  tier: .reflex),
             .init(name: "manage_apps_windows", description: "Switch, activate, list, or arrange app windows",        keywords: ["window","switch","activate","foreground","minimize","focus","tile"], latencyMs: 50, tier: .reflex),
             .init(name: "simulate_keystroke",  description: "Send a keyboard shortcut or keystroke",                 keywords: ["keystroke","press","hotkey","key","shortcut"],            latencyMs: 30,  tier: .reflex),
+            .init(name: "ask_siri",            description: "Open Siri and ask a question, compose messages, control closed Apple apps, or query real-time info", keywords: ["siri","ask","message","send","text","email","mail","imessage"], latencyMs: 1500, tier: .foundationModel),
 
             // ── MLX tier (on-device Qwen, no network needed) ─────────────────
             .init(name: "scripting_executor", keywords: ["script","code","generate","swift","compute"],    latencyMs: 3000, ramMB: 1500, tier: .mlx),

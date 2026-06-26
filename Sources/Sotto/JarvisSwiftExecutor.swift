@@ -115,7 +115,7 @@ struct JarvisSwiftExecutor {
             """
             let system = "You are an expert LinkedIn content creator and ghostwriter. Output only the post copy."
             
-            guard let refiner = AppController.shared?.qwenRefiner else {
+            guard let refiner = AppController.shared?.intelligenceEngine else {
                 AppController.shared?.showHUD("⚠️ Local AI offline")
                 AppController.shared?.speak("ओए भाई, local model loaded नहीं है, post नहीं बन पाया।")
                 return
@@ -173,7 +173,7 @@ struct JarvisSwiftExecutor {
             """
             let system = "You are a professional Google Ads copywriter. Output clear headlines and descriptions."
             
-            guard let refiner = AppController.shared?.qwenRefiner else {
+            guard let refiner = AppController.shared?.intelligenceEngine else {
                 AppController.shared?.showHUD("⚠️ Local AI offline")
                 AppController.shared?.speak("ओए भाई, local model loaded नहीं है।")
                 return
@@ -202,7 +202,7 @@ struct JarvisSwiftExecutor {
             """
             let system = "You are a senior Google Ads specialist. Give short, punchy, expert advice."
             
-            guard let refiner = AppController.shared?.qwenRefiner else {
+            guard let refiner = AppController.shared?.intelligenceEngine else {
                 AppController.shared?.showHUD("⚠️ Local AI offline")
                 AppController.shared?.speak("ओए भाई, local model loaded नहीं है।")
                 return

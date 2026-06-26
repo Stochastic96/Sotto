@@ -39,6 +39,38 @@ enum NativeActions {
         case "dark_mode_toggle": Appearance.toggleDarkMode(); return ""
         case "show_desktop":     Appearance.showDesktop();    return ""
 
+        // Siri Integration
+        case "open_siri":
+            await SiriBridge.openOnly()
+            return "Siri opened."
+
+        case let a where a.hasPrefix("ask_siri:"):
+            let query = String(a.dropFirst("ask_siri:".count))
+            await SiriBridge.send(query)
+            return "Sent query '\(query)' to Siri."
+
+        // Parametric volume/brightness controls
+        case let a where a.hasPrefix("set_volume:"):
+            if let pct = Int(a.dropFirst("set_volume:".count)) {
+                _ = SystemControlHelper.setVolume(Float(pct))
+                return "Volume \(pct)%"
+            }
+            return ""
+
+        case let a where a.hasPrefix("set_brightness:"):
+            if let pct = Int(a.dropFirst("set_brightness:".count)) {
+                _ = SystemControlHelper.setBrightness(Float(pct) / 100.0)
+                return "Brightness \(pct)%"
+            }
+            return ""
+
+        case "mute":            _ = SystemControlHelper.setMuted(true); return "Muted"
+        case "unmute":          _ = SystemControlHelper.setMuted(false); return "Unmuted"
+        case "volume_up":       _ = SystemControlHelper.setVolume(SystemControlHelper.getVolume() + 10.0); return "Volume Set"
+        case "volume_down":     _ = SystemControlHelper.setVolume(SystemControlHelper.getVolume() - 10.0); return "Volume Set"
+        case "brightness_up":   _ = SystemControlHelper.setBrightness(SystemControlHelper.getBrightness() + 0.1); return "Brightness Set"
+        case "brightness_down": _ = SystemControlHelper.setBrightness(SystemControlHelper.getBrightness() - 0.1); return "Brightness Set"
+
         default:
             print("[NATIVE] Unknown native action: \(action)")
             return ""

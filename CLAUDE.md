@@ -11,17 +11,15 @@ Sotto is a privacy-first, **fully on-device** voice assistant for Apple Silicon 
 ## Build, run & test
 
 ```bash
-./scripts/make-app.sh      # release build via xcodebuild → build/Sotto.app (stably codesigned)
-open build/Sotto.app
-pkill -f Sotto.app         # stop a running instance
-swift build                # fast compile / type-check (does NOT ship a runnable app)
+swift build                # build the app for debugging
+swift run Sotto            # run the app directly
 swift test                 # run the SottoCore test suite
 swift test --filter PromptBudgetTests          # one test class
 swift test --filter QuipsTests/testSomeCase    # one test case
 ```
 
-- **Use `make-app.sh`, not a bare `swift build`, to ship a runnable app.** It uses `xcodebuild` (required to compile MLX's Metal shaders) and copies SwiftPM `.bundle` resources into the app. The first build is slow (Metal shader compilation).
-- `make-app.sh` signs with a **stable** identity (a `Sotto Local Signing` self-signed cert, else any Apple Development cert, else ad-hoc) so macOS keeps the Accessibility/Microphone grants across rebuilds. Override with `SOTTO_SIGN_IDENTITY`. Ad-hoc (`-`) resets permissions every build.
+- **Build and run via Swift PM**: You can build and run Sotto directly using standard Swift Package Manager commands (`swift build` / `swift run`). 
+- **Xcode support**: You can open `Package.swift` in Xcode directly to edit, build, and debug the project in a graphical environment.
 - **Tests run against `SottoCore` only** — the testable, pure-Swift target (`Tests/SottoTests` depends on `SottoCore`, not the `Sotto` executable). Anything you want covered must live in `SottoCore`.
 - Runtime logs: stdout is redirected to `./sotto.log` in `main.swift` (`freopen`). Tail it to debug.
 - **First heavy Jarvis task downloads the Qwen MLX model** (~0.4–0.9 GB) once; first offline transcription downloads the Parakeet model (~0.6 GB). Both then run fully offline. Neither is in git.

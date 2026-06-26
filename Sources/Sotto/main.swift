@@ -1,18 +1,40 @@
- import AppKit
+import AppKit
 import Foundation
 
-if CommandLine.arguments.contains("--run-tests") {
-    let semaphore = DispatchSemaphore(value: 0)
-    var testSuccess = false
-    Task {
-        testSuccess = await runSottoIntegrationTests()
-        semaphore.signal()
-    }
-    semaphore.wait()
-    exit(testSuccess ? 0 : 1)
-}
-
 private var globalCleanup: (() -> Void)?
+
+@main
+struct SottoApp {
+    private static var delegate: AppDelegate?
+    
+    static func main() async {
+        if CommandLine.arguments.contains("--run-tests") || CommandLine.arguments.contains("--evaluate") || CommandLine.arguments.contains("--run-evaluation") {
+            setvbuf(stdout, nil, _IONBF, 0)
+            setvbuf(stderr, nil, _IONBF, 0)
+        }
+
+        if CommandLine.arguments.contains("--run-tests") {
+            let testSuccess = await runSottoIntegrationTests()
+            exit(testSuccess ? 0 : 1)
+        }
+
+        if CommandLine.arguments.contains("--evaluate") || CommandLine.arguments.contains("--run-evaluation") {
+            let forceMock = CommandLine.arguments.contains("--mock")
+            let success = await JarvisEvaluation.run(forceMock: forceMock)
+            exit(success ? 0 : 1)
+        }
+
+        // AppKit app loop runs on MainActor
+        await MainActor.run {
+            let app = NSApplication.shared
+            app.setActivationPolicy(.accessory)
+            let del = AppDelegate()
+            self.delegate = del
+            app.delegate = del
+            app.run()
+        }
+    }
+}
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: AppController?
@@ -70,9 +92,3 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 }
-
-let app = NSApplication.shared
-app.setActivationPolicy(.accessory)
-let delegate = AppDelegate()
-app.delegate = delegate
-app.run()

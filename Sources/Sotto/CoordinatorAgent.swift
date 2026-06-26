@@ -119,17 +119,34 @@ public let kClarificationPrefix = "ASK:"
 /// loop itself) plus escalation tools that hand off to the MLX sub-agents only when a task
 /// genuinely needs running code, deep screen-driving, or compound OS work. Large repetitive
 /// jobs are kicked off as background `start_long_task`s.
+/// Actor isolation ensures the mutable `session` state is never raced — a second Jarvis
+/// command arriving before the first completes cannot corrupt the in-flight session.
 @available(macOS 26.0, *)
-public class CoordinatorAgent {
+public actor CoordinatorAgent {
     public static var isMockMode = false
 
     #if canImport(FoundationModels)
     // Retained across a clarification round-trip so the follow-up answer lands in the same
-    // multi-turn transcript.
+    // multi-turn transcript. Actor isolation replaces the need for explicit locking.
     private var session: LanguageModelSession?
     #endif
 
     public init() {}
+
+    /// Warm a session at launch so the first Jarvis command has no cold-start penalty.
+    /// Mirrors JarvisAgent.prewarm() — one prewarm per session-type is sufficient.
+    public static func prewarm() {
+        #if canImport(FoundationModels)
+        Task {
+            guard SystemLanguageModel.default.isAvailable else { return }
+            LanguageModelSession().prewarm()
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            guard SystemLanguageModel.default.isAvailable else { return }
+            LanguageModelSession().prewarm()
+            print("[COORDINATOR] Prewarmed Apple Intelligence session.")
+        }
+        #endif
+    }
 
     /// Persona + guardrails (shared with `JarvisAgent`) plus the lane guidance, the learned
     /// user profile, and the memories most relevant to THIS utterance. Rebuilt per turn so a
@@ -194,19 +211,51 @@ public class CoordinatorAgent {
 
         let conversation = await ConversationMemory.shared.digest()
         let instructions = buildInstructions(for: userInput, conversation: conversation)
-        let routed = Array(JarvisToolbox.routed(for: userInput).prefix(8))
+        let routed = Array(JarvisToolbox.routed(for: userInput).prefix(5))
 
-        // macOS 27+ (with the Swift 6.4 toolchain): drive the session with a native
-        // DynamicProfile so the lane controls the tools, temperature, and tool-calling mode
-        // (chat forbids tools; big-job requires start_long_task). Gated by SOTTO_FM27 — see
-        // JarvisProfile.swift for why.
+        // macOS 27+: drive the session with a native DynamicProfile.
+        // Gated by SOTTO_FM27 (requires Swift 6.4+). Wrapped in a 30-second timeout
+        // because the DynamicProfile tool-calling loop has no built-in cycle limit —
+        // without maximumResponseTokens AND a timeout, a model with no city for
+        // get_weather can loop asking for clarification indefinitely.
         #if SOTTO_FM27
         if #available(macOS 27.0, *) {
             let mode = JarvisProfile.classify(userInput)
             print("[COORDINATOR] DynamicProfile lane: \(mode.rawValue)  (routed: \(routed.map { $0.name }.joined(separator: ", ")))")
-            let session = LanguageModelSession(profile: JarvisProfile(mode: mode, instructions: instructions, routedTools: routed))
-            self.session = session
-            return try await session.respond(to: userInput).content
+            do {
+                let session = LanguageModelSession(profile: JarvisProfile(mode: mode, instructions: instructions, routedTools: routed))
+                self.session = session
+                // 30-second hard timeout: if DynamicProfile doesn't return, fall through
+                // to the stable macOS 26 hand-built path rather than hanging forever.
+                let opts = GenerationOptions(temperature: 0.3, maximumResponseTokens: 512)
+                let reply: String = try await withThrowingTaskGroup(of: String.self) { group in
+                    group.addTask {
+                        try await session.respond(to: userInput, options: opts).content
+                    }
+                    group.addTask {
+                        try await Task.sleep(for: .seconds(30))
+                        throw NSError(domain: "JarvisDP", code: -1,
+                                      userInfo: [NSLocalizedDescriptionKey: "DynamicProfile timed out after 30s"])
+                    }
+                    guard let result = try await group.next() else {
+                        throw NSError(domain: "JarvisDP", code: -2,
+                                      userInfo: [NSLocalizedDescriptionKey: "No result from DynamicProfile"])
+                    }
+                    group.cancelAll()
+                    return result
+                }
+                return reply
+            } catch {
+                print("[COORDINATOR] DynamicProfile failed (\(error.localizedDescription)); falling back to macOS 26 path.")
+                // Log feedback for DynamicProfile failures so Apple can improve model stability
+                JarvisDiagnostics.record(
+                    session: self.session,
+                    error: error,
+                    input: userInput,
+                    description: "DynamicProfile session failed or timed out",
+                    category: .toolCallLoop
+                )
+            }
         }
         #endif
 
@@ -276,160 +325,29 @@ public class OSControlAgent {
 public class WebResearcherAgent {
     public static func run(task: String) async -> String {
         #if canImport(FoundationModels)
-        if !SettingsController.preferMLX {
-            print("[WEB_RESEARCHER] Running native tool-calling WebResearcherAgent via Apple Intelligence...")
-            let tools: [any Tool] = [
-                WikipediaLookupTool(),
-                ReadScreenTreeTool(),
-                ClickScreenElementTool(),
-                SetScreenElementValueTool()
-            ]
-            let instructions = """
-                You are the Web Researcher Agent. Your task is to perform web search, screen parsing, and clicking using the provided tools.
-                1. Read the screen first using read_screen_tree to get elements and their integer IDs.
-                2. Click or set values on elements using their integer IDs.
-                3. Search Wikipedia or the web if you need external information.
-                4. When you have successfully completed the task or cannot proceed further, report your final answer directly.
-                """
-            let session = LanguageModelSession(tools: tools, instructions: instructions)
-            do {
-                let response = try await session.respond(to: task, options: GenerationOptions(temperature: 0.2))
-                print("[WEB_RESEARCHER] Native agent succeeded with response: \(response.content)")
-                return response.content
-            } catch {
-                print("[WEB_RESEARCHER] Native agent failed: \(error.localizedDescription). Falling back to MLX/manual loop...")
-            }
-        }
-        #endif
-
-        let systemPrompt = """
-            You are the Web Researcher Agent. Your task is to perform web search, screen parsing, and clicking.
-            You must choose ONE action per turn. Available actions:
-            1. Action: search(query: "...") - Search Wikipedia/web for info. Returns a text summary.
-            2. Action: read_screen - Read the UI tree of the active window. Returns numbered element IDs.
-            3. Action: click(id: 42) - Click element by its INTEGER id from read_screen output. IDs are numbers only.
-            4. Action: set_value(id: 42, value: "...") - Set text on element by INTEGER id.
-            5. Action: finish(answer: "...") - Return the final answer to the user.
-
-            RULES:
-            - ONE action per turn. Stop after each Action line and wait for the Observation.
-            - click() and set_value() require INTEGER ids from read_screen. Never pass text labels as ids.
-            - If read_screen returns no content or a permission error, call finish() immediately with what you know.
-            - If the same action produces the same (empty/failed) result twice in a row, call finish() with your best answer.
-
-            Output format must be exactly:
-            Thought: [reasoning]
-            Action: [action_name]([arguments])
+        let tools: [any Tool] = [
+            WikipediaLookupTool(),
+            ReadScreenTreeTool(),
+            ClickScreenElementTool(),
+            SetScreenElementValueTool()
+        ]
+        let instructions = """
+            You are the Web Researcher Agent. Perform web search, screen parsing, and clicking using the provided tools.
+            1. Read the screen using read_screen_tree to get element IDs.
+            2. Click or set values using those integer IDs.
+            3. Search Wikipedia for external information.
+            4. Report your final answer directly when done or when you cannot proceed further.
             """
-
-        var conversationHistory = "Task: \(task)\n"
-        var turnCount = 0
-        let maxTurns = 6
-        var lastActionLine = ""
-        var repeatedActionCount = 0
-
-        while turnCount < maxTurns {
-            turnCount += 1
-            let response: String
-            do {
-                if SettingsController.preferMLX, await MLXEngine.shared.prepareIfNeeded() {
-                    // Cap tokens tightly so the model doesn't write a multi-action essay.
-                    response = try await MLXEngine.shared.generate(systemPrompt: systemPrompt, userPrompt: conversationHistory, temperature: 0.2, maxTokens: 256)
-                } else {
-                    #if canImport(FoundationModels)
-                    let session = LanguageModelSession(instructions: systemPrompt)
-                    let res = try await session.respond(to: conversationHistory, options: GenerationOptions(temperature: 0.2))
-                    response = res.content
-                    #else
-                    return "Web Researcher Agent failed: MLX and Apple Intelligence both unavailable."
-                    #endif
-                }
-            } catch {
-                return "Web Researcher Agent generation failed: \(error.localizedDescription)"
-            }
-
-            // Only take the FIRST Action: line — ignore any extras the model hallucinated.
-            let firstLine = response.components(separatedBy: "\n")
-                .first(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("Action:") }) ?? ""
-            let actionLine = firstLine
-                .replacingOccurrences(of: "Action:", with: "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-
-            // Truncate response to just Thought + first Action line before appending to history,
-            // so the model doesn't see the hallucinated loop on the next turn.
-            let cleanedResponse: String
-            if let thoughtRange = response.range(of: "Thought:"),
-               let actionIdx = response.range(of: "Action:") {
-                let afterAction = response[actionIdx.lowerBound...]
-                let firstActionEnd = afterAction.firstIndex(of: "\n") ?? afterAction.endIndex
-                cleanedResponse = String(response[thoughtRange.lowerBound..<firstActionEnd])
-            } else {
-                cleanedResponse = response
-            }
-            print("[WEB_RESEARCHER] Turn \(turnCount) action: \(actionLine)")
-            conversationHistory += cleanedResponse + "\n"
-
-            // Bail out if the same action repeats — means the model is stuck.
-            if actionLine == lastActionLine {
-                repeatedActionCount += 1
-                if repeatedActionCount >= 2 {
-                    return "Could not complete the task — the agent got stuck repeating '\(actionLine)'. Try rephrasing."
-                }
-            } else {
-                repeatedActionCount = 0
-            }
-            lastActionLine = actionLine
-
-            if actionLine.hasPrefix("finish") {
-                return parseArg(line: actionLine, prefix: "finish")
-            } else if actionLine.hasPrefix("read_screen") {
-                let screenMarkup = ScreenParser.captureActiveWindowTree()
-                if screenMarkup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    conversationHistory += "Observation: Screen capture unavailable — Screen Recording permission not granted in System Settings, or no window is active. Call finish() with your best answer based on search results.\n"
-                } else {
-                    conversationHistory += "Observation: Screen content (element ids are integers):\n\(screenMarkup)\n"
-                }
-            } else if actionLine.hasPrefix("search") {
-                let query = parseArg(line: actionLine, prefix: "search")
-                #if canImport(FoundationModels)
-                let searchTool = WikipediaLookupTool()
-                let result = (try? await searchTool.call(arguments: WikipediaLookupTool.Arguments(query: query))) ?? "Search failed."
-                #else
-                let result = "Search unavailable."
-                #endif
-                conversationHistory += "Observation: Search result:\n\(result)\n"
-            } else if actionLine.hasPrefix("click") {
-                let idStr = parseArg(line: actionLine, prefix: "click")
-                if let id = Int(idStr.trimmingCharacters(in: .whitespaces)) {
-                    let ok = ScreenParser.performClick(id: id)
-                    conversationHistory += "Observation: Click on element [\(id)] \(ok ? "succeeded" : "failed — element not found").\n"
-                } else {
-                    conversationHistory += "Observation: click() requires an INTEGER id from read_screen output (e.g. click(42)), not a text label. Read the screen first to get element ids.\n"
-                }
-            } else if actionLine.hasPrefix("set_value") {
-                let argsStr = parseArg(line: actionLine, prefix: "set_value")
-                let parts = argsStr.components(separatedBy: ",")
-                if let first = parts.first, let id = Int(first.trimmingCharacters(in: .whitespaces)), parts.count > 1 {
-                    let val = parts[1...].joined(separator: ",").trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "\"", with: "")
-                    let ok = ScreenParser.performSetValue(id: id, value: val)
-                    conversationHistory += "Observation: Setting value on [\(id)] \(ok ? "succeeded" : "failed").\n"
-                } else {
-                    conversationHistory += "Observation: set_value() requires an INTEGER id and a value, e.g. set_value(42, \"hello\").\n"
-                }
-            } else {
-                conversationHistory += "Observation: Unrecognized action. Use: search, read_screen, click(INTEGER_ID), set_value, finish.\n"
-            }
+        let session = LanguageModelSession(tools: tools, instructions: instructions)
+        do {
+            let response = try await session.respond(to: task, options: GenerationOptions(temperature: 0.2))
+            return response.content
+        } catch {
+            return "Web research failed: \(error.localizedDescription)"
         }
-
-        return "Web Researcher Agent reached max turns without finishing."
-    }
-    
-    private static func parseArg(line: String, prefix: String) -> String {
-        guard let start = line.range(of: prefix + "("),
-              let end = line.range(of: ")", options: .backwards, range: start.upperBound..<line.endIndex) else {
-            return ""
-        }
-        return String(line[start.upperBound..<end.lowerBound]).trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "\"", with: "")
+        #else
+        return "Web Researcher Agent requires Foundation Models (macOS 26+)."
+        #endif
     }
 }
 
@@ -462,17 +380,13 @@ public class ScriptingExecutorAgent {
             """
         } else {
             do {
-                if SettingsController.preferMLX, await MLXEngine.shared.prepareIfNeeded() {
-                    response = try await MLXEngine.shared.generate(systemPrompt: systemPrompt, userPrompt: task, temperature: 0.1, maxTokens: 1024)
-                } else {
-                    #if canImport(FoundationModels)
-                    let session = LanguageModelSession(instructions: systemPrompt)
-                    let res = try await session.respond(to: task, options: GenerationOptions(temperature: 0.1))
-                    response = res.content
-                    #else
-                    return "Scripting Executor Agent failed: MLX and Apple Intelligence both unavailable."
-                    #endif
-                }
+                #if canImport(FoundationModels)
+                let session = LanguageModelSession(instructions: systemPrompt)
+                let res = try await session.respond(to: task, options: GenerationOptions(temperature: 0.1))
+                response = res.content
+                #else
+                return "Scripting Executor Agent requires Foundation Models (macOS 26+)."
+                #endif
             } catch {
                 return "Scripting Executor Agent generation failed: \(error.localizedDescription)"
             }
@@ -495,12 +409,18 @@ public class ScriptingExecutorAgent {
         }
         cleanedScript = cleanedScript.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        // Run SwiftScriptRunner
-        let result = await SwiftScriptRunner.run(scriptCode: cleanedScript)
-        if result.success {
-            return "Script executed successfully. Output:\n\(result.stdout)"
-        } else {
-            return "Script execution failed with exit code \(result.exitCode).\nStderr:\n\(result.stderr)\nStdout:\n\(result.stdout)"
-        }
+        // SECURITY: Never auto-execute LLM-generated code. Draft it as a DISABLED skill
+        // so the user must explicitly say "enable skill <name>" before it runs.
+        // This preserves the SkillStore approval gate for all agent-generated scripts.
+        let skillName = "script_\(abs(task.hashValue) % 99999)"
+        let draftResult = SkillStore.draft(
+            name: skillName,
+            description: "Generated for: \(task.prefix(80))",
+            trigger: task,
+            language: "swift",
+            body: cleanedScript
+        )
+        return "I drafted a Swift script for '\(task.prefix(60))'. " +
+               "Say 'enable skill \(skillName)' to approve and run it, or ask to show its code first.\n\(draftResult)"
     }
 }

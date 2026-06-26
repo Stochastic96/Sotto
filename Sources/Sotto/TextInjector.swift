@@ -4,7 +4,7 @@ import CoreGraphics
 /// Injects text and files into the focused app: stash the pasteboard, write the
 /// content, post a synthetic ⌘V, wait for paste completion, then restore the original pasteboard.
 /// This uses the hidSystemState and cghidEventTap to ensure maximum compatibility.
-final class TextInjector {
+final class TextInjector: Sendable {
     private static let vKeyCode: CGKeyCode = 9
     private static let returnKeyCode: CGKeyCode = 36
 

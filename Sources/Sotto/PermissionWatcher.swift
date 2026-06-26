@@ -46,7 +46,7 @@ final class PermissionWatcher {
         if ax && !lastAX {
             print("[WATCH] Accessibility just granted — restarting Sotto to activate")
             AppController.shared?.showHUD("✅ Accessibility granted — restarting…")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { Self.relaunch() }
+            Task { try? await Task.sleep(for: .milliseconds(1500)); Self.relaunch() }
         }
 
         // Accessibility revoked while running → warn
@@ -59,7 +59,7 @@ final class PermissionWatcher {
         if mic && !lastMic {
             print("[WATCH] Microphone just granted")
             AppController.shared?.showHUD("✅ Microphone granted — ready to record")
-            Task { try? await Task.sleep(nanoseconds: 2_000_000_000); AppController.shared?.hideHUD() }
+            Task { try? await Task.sleep(for: .seconds(2)); AppController.shared?.hideHUD() }
         }
 
         lastAX  = ax

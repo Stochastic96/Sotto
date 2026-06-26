@@ -1,6 +1,6 @@
 import Foundation
 import FluidAudio
-import Speech
+@preconcurrency import Speech
 import AVFoundation
 
 /// Wraps speech recognition engines. Supports both:
@@ -99,20 +99,57 @@ final class Transcriber {
             
             request.append(buffer)
             request.endAudio()
-            
+
+            // SFSpeechRecognizer's on-device recognizer can — under memory pressure on
+            // an 8 GB M1 — deliver partial results and then NEVER deliver `isFinal` and
+            // NEVER an error. The old code resumed the continuation only on `.isFinal`
+            // or error, so that case hung this `await` forever and wedged the whole app
+            // at `.transcribing` (every later hotkey press → "Still transcribing…").
+            // Fix: keep the latest partial, add an 8s safety timeout, and resume with
+            // the best partial we have. A genuine "no speech" outcome resolves to "" so
+            // the pipeline just returns to idle instead of throwing a scary error.
+            // `SFSpeechRecognitionTask` is not Sendable; box it so the timeout closure
+            // can cancel it without tripping concurrency warnings.
+            final class TaskBox: @unchecked Sendable { var task: SFSpeechRecognitionTask? }
+            let box = TaskBox()
+            let lock = NSLock()
+            var finished = false
+            var latestPartial = ""
             return try await withCheckedThrowingContinuation { continuation in
-                var finished = false
-                recognizer.recognitionTask(with: request) { result, error in
-                    if finished { return }
-                    if let error = error {
-                        finished = true
-                        continuation.resume(throwing: error)
-                    } else if let result = result {
+                box.task = recognizer.recognitionTask(with: request) { result, error in
+                    lock.lock()
+                    if finished { lock.unlock(); return }
+                    if let result = result {
+                        latestPartial = result.bestTranscription.formattedString
                         if result.isFinal {
                             finished = true
+                            lock.unlock()
                             continuation.resume(returning: result.bestTranscription.formattedString)
+                            return
                         }
                     }
+                    if let error = error {
+                        finished = true
+                        let partial = latestPartial
+                        lock.unlock()
+                        // Prefer any partial we captured; otherwise treat "no speech
+                        // detected" as an empty (silent) result, not a hard failure.
+                        continuation.resume(returning: partial)
+                        _ = error
+                        return
+                    }
+                    lock.unlock()
+                }
+
+                DispatchQueue.global().asyncAfter(deadline: .now() + 8.0) {
+                    lock.lock()
+                    if finished { lock.unlock(); return }
+                    finished = true
+                    let partial = latestPartial
+                    lock.unlock()
+                    box.task?.cancel()
+                    print("[TRANSCRIBER] Apple Speech timed out after 8s; returning best partial (\(partial.count) chars).")
+                    continuation.resume(returning: partial)
                 }
             }
         }

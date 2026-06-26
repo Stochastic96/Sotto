@@ -74,7 +74,7 @@ public func runCoordinatorAgentIntegrationTest() async -> Bool {
     do {
         let result = try await agent.handleTurn(userInput: "read the screen, write a swift script to compute total disk space, and tell me the result")
         print("[TEST] CoordinatorAgent result:\n\(result)")
-        if result.contains("Total disk space:") {
+        if result.contains("drafted a Swift script") {
             print("✅ CoordinatorAgent integration test: PASSED")
             return true
         } else {
@@ -128,6 +128,10 @@ public func runSottoIntegrationTests() async -> Bool {
     if #available(macOS 26.0, *) {
         success = await runCoordinatorAgentIntegrationTest()
         if success { success = await runCapabilityConsistencyCheck() }
+        if success {
+            print("[TEST] Verifying JarvisEvaluation runner (forceMock)...")
+            success = await JarvisEvaluation.run(forceMock: true)
+        }
     } else {
         success = await runFallbackIntegrationTest()
     }

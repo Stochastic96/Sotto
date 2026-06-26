@@ -34,9 +34,7 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
     static let voiceIdentifierKey = "sotto_voiceIdentifier"
     static let speechRateKey = "sotto_speechRate"
     static let speechPitchKey = "sotto_speechPitch"
-    static let modelIdentifierKey = "sotto_modelIdentifier"
-
-    /// Sotto's brain is always on-device Apple Intelligence (+ in-process MLX Qwen).
+    /// Sotto's brain is Apple Foundation Models (on-device, no network).
     /// Kept as a constant so existing call sites keep working without a provider picker.
     static let apiProvider = "apple"
 
@@ -107,16 +105,12 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         UserDefaults.standard.bool(forKey: directInsertKey)
     }
 
-    /// Whether the escalation sub-agents may use the in-process MLX Qwen model. Default OFF:
-    /// on an 8 GB Mac the small Qwen is both weak and a memory-pressure risk, so by default
-    /// every lane rides the fast, warm Apple Intelligence model. Opt in for code/instruction
-    /// tuning on machines with RAM to spare.
-    static var preferMLX: Bool {
-        UserDefaults.standard.bool(forKey: "sotto_prefer_mlx")
-    }
-    
     static var customSystemPrompt: String {
         UserDefaults.standard.string(forKey: systemPromptKey) ?? ""
+    }
+    
+    static var modelIdentifier: String {
+        UserDefaults.standard.string(forKey: "sotto_mlx_model_identifier") ?? "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
     }
     
     static var customVocabulary: String {
@@ -161,12 +155,6 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         UserDefaults.standard.object(forKey: speechPitchKey) as? Float ?? 1.0
     }
     
-    /// The in-process MLX Qwen model used for dictation polish and heavier generation.
-    /// A 0.5B 4-bit default: tiny enough to stay resident on an 8 GB Mac alongside
-    /// Apple Intelligence, so dictation polish is fast and identical every time.
-    static var modelIdentifier: String {
-        UserDefaults.standard.string(forKey: modelIdentifierKey) ?? "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
-    }
 
     func showSettings() {
         if let window {
@@ -322,20 +310,7 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         llmStack.spacing = 10
         llmStack.translatesAutoresizingMaskIntoConstraints = false
         
-        let modelLabel = NSTextField(labelWithString: "MLX Qwen Model ID (heavy / long-form tasks)")
-        modelLabel.font = .systemFont(ofSize: 11, weight: .bold)
-        modelLabel.textColor = NSColor.secondaryLabelColor
-        llmStack.addArrangedSubview(modelLabel)
-
-        let modelField = createTextField(placeholder: "mlx-community/Qwen2.5-0.5B-Instruct-4bit", value: Self.modelIdentifier)
-        modelField.delegate = self
-        modelField.target = self
-        modelField.action = #selector(modelChanged(_:))
-        llmStack.addArrangedSubview(modelField)
-        modelField.leadingAnchor.constraint(equalTo: llmStack.leadingAnchor).isActive = true
-        modelField.trailingAnchor.constraint(equalTo: llmStack.trailingAnchor).isActive = true
-
-        let llmDesc = createDescriptionLabel("Sotto's brain is fully on-device and native. The in-process MLX Qwen model above handles dictation polish (kept warm for fast, consistent latency) and heavier/long-form generation; Apple Intelligence (Foundation Models) runs the Jarvis agent's tool-calling and is the polish fallback. No Python, no servers, no network. On 8 GB Macs keep a small 4-bit model (e.g. Qwen2.5-0.5B-Instruct-4bit).")
+        let llmDesc = createDescriptionLabel("Sotto's brain runs entirely on Apple Foundation Models — no Python, no servers, no network at inference time. Dictation polish uses a dedicated prewarmed session. Jarvis tool-calling runs through the same on-device model.")
         llmStack.addArrangedSubview(llmDesc)
 
         let llmCard = createCard(title: "On-Device Brain", iconName: "cpu", subview: llmStack)
@@ -358,24 +333,6 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         
         let agentCard = createCard(title: "AI Agent System Control", iconName: "bolt.fill", subview: agentStack)
         stack.addArrangedSubview(agentCard)
-
-        // --- 1c2. MLX Qwen Card ---
-        let mlxStack = NSStackView()
-        mlxStack.orientation = .vertical
-        mlxStack.alignment = .leading
-        mlxStack.spacing = 10
-        mlxStack.translatesAutoresizingMaskIntoConstraints = false
-
-        let mlxCheckbox = NSButton(checkboxWithTitle: "Use MLX Qwen for sub-agents", target: self, action: #selector(toggleMLX(_:)))
-        mlxCheckbox.state = Self.preferMLX ? .on : .off
-        mlxCheckbox.font = .systemFont(ofSize: 12, weight: .medium)
-        mlxStack.addArrangedSubview(mlxCheckbox)
-
-        let mlxDesc = createDescriptionLabel("Off by default. When on, the Web Researcher and Scripting Executor sub-agents use the in-process MLX Qwen model (code/instruction-tuned) instead of Apple Intelligence. Slower and uses more RAM — leave off on an 8 GB Mac for snappy, native responses.")
-        mlxStack.addArrangedSubview(mlxDesc)
-
-        let mlxCard = createCard(title: "MLX Qwen Model", iconName: "cpu", subview: mlxStack)
-        stack.addArrangedSubview(mlxCard)
 
         // --- 1d. Jarvis Voice Card ---
         let voiceStack = NSStackView()
@@ -517,7 +474,7 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         promptField.leadingAnchor.constraint(equalTo: promptStack.leadingAnchor).isActive = true
         promptField.trailingAnchor.constraint(equalTo: promptStack.trailingAnchor).isActive = true
         
-        let promptDesc = createDescriptionLabel("Optional instructions sent to Qwen AI to polish/rewrite your voice dictation (leave empty for default transcription cleaning).")
+        let promptDesc = createDescriptionLabel("Optional instructions sent to Apple Intelligence to polish your voice dictation (leave empty for the default behaviour).")
         promptStack.addArrangedSubview(promptDesc)
         
         let promptCard = createCard(title: "AI Polish Refiner Prompt", iconName: "sparkles", subview: promptStack)
@@ -672,18 +629,6 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         print("[SETTINGS] AI Agent Mode toggled: \(enabled)")
     }
 
-    @objc private func toggleMLX(_ sender: NSButton) {
-        let enabled = sender.state == .on
-        UserDefaults.standard.set(enabled, forKey: "sotto_prefer_mlx")
-        print("[SETTINGS] Prefer MLX Qwen sub-agents: \(enabled)")
-    }
-    
-    @objc private func modelChanged(_ sender: NSTextField) {
-        UserDefaults.standard.set(sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Self.modelIdentifierKey)
-        print("[SETTINGS] MLX Qwen model identifier updated: \(sender.stringValue)")
-        onEngineChanged?()
-    }
-
     @objc private func toggleVoiceFeedback(_ sender: NSButton) {
         let enabled = sender.state == .on
         UserDefaults.standard.set(enabled, forKey: Self.voiceFeedbackEnabledKey)
@@ -814,8 +759,6 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
             UserDefaults.standard.set(textField.stringValue, forKey: Self.systemPromptKey)
         } else if textField.placeholderString?.contains("projects") == true {
             UserDefaults.standard.set(textField.stringValue, forKey: Self.workspacePathKey)
-        } else if textField.placeholderString?.contains("Qwen") == true || textField.placeholderString?.contains("mlx-community") == true {
-            UserDefaults.standard.set(textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Self.modelIdentifierKey)
         } else {
             UserDefaults.standard.set(textField.stringValue, forKey: Self.vocabularyKey)
         }

@@ -166,7 +166,7 @@ struct LargeFileFinderTool: Tool {
         let maxDepth = 3
         let rootComponents = rootURL.pathComponents.count
 
-        for case let fileURL as URL in enumerator {
+        while let fileURL = enumerator.nextObject() as? URL {
             // Enforce depth cap
             let depth = fileURL.pathComponents.count - rootComponents
             if depth > maxDepth {

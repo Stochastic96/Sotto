@@ -53,6 +53,48 @@ enum CommandEngine {
         }
         cleanT = cleanT.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        // Siri triggers (bypasses agent pipelines for instant zero-latency delegation)
+        if ["open siri", "launch siri", "start siri", "activate siri", "ask siri", "tell siri", "siri"].contains(cleanT) {
+            return ZeroLatencyShortcut(
+                command: "native:open_siri",
+                voiceFeedback: "Siri opening.",
+                hudMessage: "Open Siri"
+            )
+        }
+
+        for prefix in ["ask siri to ", "ask siri ", "tell siri to ", "tell siri ", "siri, ", "siri "] {
+            if cleanT.hasPrefix(prefix) {
+                let query = String(raw.dropFirst(prefix.count)).trimmingCharacters(in: CharacterSet(charactersIn: " .,!?"))
+                if !query.isEmpty {
+                    return ZeroLatencyShortcut(
+                        command: "native:ask_siri:\(query)",
+                        voiceFeedback: "Delegating query to Siri.",
+                        hudMessage: "Siri: \(query)"
+                    )
+                }
+            }
+        }
+
+        if isSiriNativeCommand(cleanT) {
+            if cleanT.contains("weather") || cleanT.contains("temperature") || cleanT.contains("forecast") {
+                Task {
+                    await CooperativeWorkflowManager.shared.setPending(.weatherGoOutside)
+                    // Wait until Siri window is dismissed / loses focus instead of assuming timings
+                    await SiriBridge.waitForSiriDismiss()
+                    await MainActor.run {
+                        AppController.shared?.hud.show("🌤️ Going outside?")
+                        AppController.shared?.speak("Are you planning to go outside?")
+                    }
+                }
+            }
+
+            return ZeroLatencyShortcut(
+                command: "native:ask_siri:\(raw)",
+                voiceFeedback: "Delegating query to Siri.",
+                hudMessage: "Siri: \(raw)"
+            )
+        }
+
         // Parametric reflex: "set volume to 90 percent" / "brightness to 60%"
         if let cmd = SystemCommandParser.parse(cleanT) {
             switch cmd {
@@ -69,10 +111,8 @@ enum CommandEngine {
             }
         }
 
-        // Delegate to split command categories
-        if let shortcut = checkWindowShortcut(for: cleanT) { return shortcut }
-        if let shortcut = checkBrowserShortcut(for: cleanT) { return shortcut }
-        if let shortcut = checkMediaShortcut(for: cleanT) { return shortcut }
+        // Delegate to registered CommandMatcher chain (WindowMatcher → BrowserMatcher → MediaMatcher)
+        if let shortcut = shortcutMatchers.lazy.compactMap({ $0.match(cleanT) }).first { return shortcut }
 
         // System controls and other reflexes
         switch cleanT {
@@ -820,7 +860,7 @@ enum CommandEngine {
         return await withCheckedContinuation { continuation in
             let request = VNRecognizeTextRequest { request, error in
                 guard error == nil else {
-                    continuation.resume(returning: "OCR Request failed: \(error!.localizedDescription)")
+                    continuation.resume(returning: "OCR Request failed: \(error?.localizedDescription ?? "unknown error")")
                     return
                 }
                 guard let observations = request.results as? [VNRecognizedTextObservation] else {
@@ -1055,6 +1095,53 @@ enum CommandEngine {
         }
         
         return cleanText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func isSiriNativeCommand(_ text: String) -> Bool {
+        let t = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return false }
+        
+        let developerKeywords = ["code", "script", "git", "terminal", "cli", "shell", "run command", "compiler", "swift file", "scratch", "develop", "bug", "refactor"]
+        for kw in developerKeywords {
+            if t.contains(kw) { return false }
+        }
+
+        // 1. Weather
+        if t.contains("weather") || t.contains("temperature") || t.contains("forecast") || t.contains("outside today") {
+            return true
+        }
+
+        // 2. Reminders & Tasks
+        if t.contains("remind me to") || t.contains("create a reminder") || t.contains("add a reminder") || t.contains("new reminder") ||
+            t.hasPrefix("create task") || t.hasPrefix("new task") || t.hasPrefix("add task") {
+            return true
+        }
+
+        // 3. Calendar & Meetings
+        if t.contains("schedule a meeting") || t.contains("create a calendar event") || t.contains("add to my calendar") ||
+            t.contains("schedule meeting") || t.hasPrefix("new meeting") || t.hasPrefix("add event") {
+            return true
+        }
+
+        // 4. Alarms & Timers
+        if t.contains("set alarm") || t.contains("set a timer") || t.contains("start a timer") || t.contains("wake me up at") {
+            return true
+        }
+
+        // 5. Messages & Mail
+        if t.hasPrefix("send a message") || t.hasPrefix("send a text") || t.hasPrefix("message ") || t.hasPrefix("text ") ||
+            t.hasPrefix("email ") || t.hasPrefix("send an email") {
+            return true
+        }
+
+        // 6. Sports / Stocks / Factual lookup
+        if t.contains("stock price of") || t.contains("sports score") || t.contains("who won the game") ||
+            t.hasPrefix("what is the capital of") || t.hasPrefix("how high is") || t.hasPrefix("who is the president of") ||
+            t.hasPrefix("what's the capital of") {
+            return true
+        }
+
+        return false
     }
 }
 

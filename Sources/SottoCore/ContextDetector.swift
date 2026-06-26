@@ -1,12 +1,12 @@
 import AppKit
 
-public struct AppContext {
+public struct AppContext: Sendable {
     public let bundleID: String
     public let appName: String
     public let style: FormattingStyle
 }
 
-public enum FormattingStyle {
+public enum FormattingStyle: Sendable {
     /// Code editors and terminals — inject exactly what was said, no cleanup.
     case verbatim
     /// Chat apps — drop the trailing period, keep it casual.

@@ -7,6 +7,11 @@ extension AppController {
     // MARK: - Jarvis pipeline (⌘⇧J) — full OS assistant: skills, native actions, agent, orchestrator.
     
     func runJarvisPipeline(raw: String, samples: [Float], context: AppContext) async {
+        if await CooperativeWorkflowManager.shared.handleResponse(raw) {
+            state = .idle
+            return
+        }
+
         let laneStart = CFAbsoluteTimeGetCurrent()
         
         // "lane stats" / "jarvis stats" — show the measured three-lane distribution.
@@ -235,43 +240,28 @@ extension AppController {
         let output: String
         if shortcut.command.hasPrefix("native:") {
             let action = String(shortcut.command.dropFirst(7))
-            // Parametric reflexes carry their value after a colon: "set_volume:90".
-            if action.hasPrefix("set_volume:"), let pct = Int(action.dropFirst("set_volume:".count)) {
-                _ = SystemControlHelper.setVolume(Float(pct))      // setter takes 0…100
-                output = "Volume \(pct)%"
-            } else if action.hasPrefix("set_brightness:"), let pct = Int(action.dropFirst("set_brightness:".count)) {
-                _ = SystemControlHelper.setBrightness(Float(pct) / 100.0)  // setter takes 0.0…1.0
-                output = "Brightness \(pct)%"
-            } else {
-                switch action {
-                case "mute": SystemControlHelper.setMuted(true); output = "Muted"
-                case "unmute": SystemControlHelper.setMuted(false); output = "Unmuted"
-                case "volume_up": SystemControlHelper.setVolume(SystemControlHelper.getVolume() + 10.0); output = "Volume Set"
-                case "volume_down": SystemControlHelper.setVolume(SystemControlHelper.getVolume() - 10.0); output = "Volume Set"
-                case "brightness_up": SystemControlHelper.setBrightness(SystemControlHelper.getBrightness() + 0.1); output = "Brightness Set"
-                case "brightness_down": SystemControlHelper.setBrightness(SystemControlHelper.getBrightness() - 0.1); output = "Brightness Set"
-                case "system_info":
-                    let battery = SystemDiagnostics.getBatteryPercentage()
-                    let wifi = SystemDiagnostics.getWifiSSID()
-                    let disk = SystemDiagnostics.getFreeDiskSpace()
-                    output = "# System Status Report\n\n- **Battery**: \(battery)\n- **Wi-Fi SSID**: \(wifi)\n- **Free Disk Space**: \(disk)\n"
-                    speak("मिस्टर लॉर्ड, battery \(battery) पर है, Wi-Fi network '\(wifi)' से connected है, और disk पर \(disk) space खाली है। दिल्ली से हूँ भाई, सब चकाचक चल रहा है।")
-                case "ram_info":
-                    let ram = SystemDiagnostics.getRAMUsage()
-                    let hogs = SystemDiagnostics.getTopMemoryProcesses()
-                    var report = "# 🧠 RAM Memory Status\n\n"
-                    report += "- **Total RAM**: \(String(format: "%.2f", ram.totalGB)) GB\n"
-                    report += "- **Used RAM**: \(String(format: "%.2f", ram.totalGB - ram.freeGB)) GB (\(String(format: "%.1f", ram.usedPercent))%)\n"
-                    report += "- **Free RAM**: \(String(format: "%.2f", ram.freeGB)) GB\n"
-                    report += "- **Wired (System)**: \(String(format: "%.2f", ram.wiredGB)) GB\n"
-                    report += "- **Active (App)**: \(String(format: "%.2f", ram.activeGB)) GB\n"
-                    report += "- **Compressed**: \(String(format: "%.2f", ram.compressedGB)) GB\n\n"
-                    report += "## 🏆 Top Memory Consumers\n\n| Process Name | Memory Usage |\n| :--- | :--- |\n"
-                    report += hogs
-                    output = report
-                default:
-                    output = await NativeActions.perform(action)
-                }
+            switch action {
+            case "system_info":
+                let battery = SystemDiagnostics.getBatteryPercentage()
+                let wifi = SystemDiagnostics.getWifiSSID()
+                let disk = SystemDiagnostics.getFreeDiskSpace()
+                output = "# System Status Report\n\n- **Battery**: \(battery)\n- **Wi-Fi SSID**: \(wifi)\n- **Free Disk Space**: \(disk)\n"
+                speak("मिस्टर लॉर्ड, battery \(battery) पर है, Wi-Fi network '\(wifi)' से connected है, और disk पर \(disk) space खाली है। दिल्ली से हूँ भाई, सब चकाचक चल रहा है।")
+            case "ram_info":
+                let ram = SystemDiagnostics.getRAMUsage()
+                let hogs = SystemDiagnostics.getTopMemoryProcesses()
+                var report = "# 🧠 RAM Memory Status\n\n"
+                report += "- **Total RAM**: \(String(format: "%.2f", ram.totalGB)) GB\n"
+                report += "- **Used RAM**: \(String(format: "%.2f", ram.totalGB - ram.freeGB)) GB (\(String(format: "%.1f", ram.usedPercent))%)\n"
+                report += "- **Free RAM**: \(String(format: "%.2f", ram.freeGB)) GB\n"
+                report += "- **Wired (System)**: \(String(format: "%.2f", ram.wiredGB)) GB\n"
+                report += "- **Active (App)**: \(String(format: "%.2f", ram.activeGB)) GB\n"
+                report += "- **Compressed**: \(String(format: "%.2f", ram.compressedGB)) GB\n\n"
+                report += "## 🏆 Top Memory Consumers\n\n| Process Name | Memory Usage |\n| :--- | :--- |\n"
+                report += hogs
+                output = report
+            default:
+                output = await NativeActions.perform(action)
             }
         } else {
             output = CommandEngine.runCommandNatively(shortcut.command)

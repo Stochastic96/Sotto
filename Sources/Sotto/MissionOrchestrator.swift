@@ -183,8 +183,8 @@ actor MissionOrchestrator {
     }
 
     #if canImport(FoundationModels)
+    // @available(macOS 26.0,*) is inherited from the actor — no guard needed.
     private func planWithIntelligence(_ goal: String) async -> [Mission.Step]? {
-        guard #available(macOS 26.0, *) else { return nil }
 
         let availableSkills = MissionSkill.registry.keys.sorted().joined(separator: ", ")
         let prompt = """
@@ -254,20 +254,19 @@ actor MissionOrchestrator {
 
     // MARK: - Execution helpers
 
+    // The actor itself is @available(macOS 26.0,*) so no redundant availability check needed.
     private func runViaAgent(_ prompt: String, context: String) async -> String {
-        guard #available(macOS 26.0, *) else { return "Apple Intelligence unavailable." }
         let full = context.isEmpty ? prompt : "\(prompt)\n\nContext: \(context)"
         return (try? await JarvisAgent.run(full)) ?? "Agent unavailable."
     }
 
     private func runIntelligence(_ prompt: String) async -> String {
         #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
-            let session = LanguageModelSession()
-            return (try? await session.respond(to: prompt).content) ?? "No response."
-        }
-        #endif
+        let session = LanguageModelSession()
+        return (try? await session.respond(to: prompt).content) ?? "No response."
+        #else
         return await runViaAgent(prompt, context: "")
+        #endif
     }
 
     // MARK: - Summary (Apple Intelligence condenses all results into one spoken line)

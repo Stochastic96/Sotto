@@ -20,13 +20,52 @@ private func shellEscape(_ s: String) -> String {
      .replacingOccurrences(of: "\"", with: "\\\"")
 }
 
-/// What to do with Spotify. A constrained `@Generable` enum means guided generation can
-/// ONLY return one of these cases — the model can't invent "resume"/"skip"/"back" and
-/// fall through to a wrong branch, which is how the old single-String action misfired.
+// MARK: - Constrained action enums
+// All action fields use @Generable enums so guided generation can ONLY produce
+// a valid case — free-form String args were the #1 cause of silent tool failures
+// (the model would return "100%" instead of "100", "lock_screen" instead of "lock").
+
+/// What to do with Spotify.
 @available(macOS 26.0, *)
 @Generable
 enum SpotifyAction {
     case play, pause, next, previous, playSong
+}
+
+@available(macOS 26.0, *)
+@Generable
+enum VolumeAction {
+    case setLevel, mute, unmute
+}
+
+@available(macOS 26.0, *)
+@Generable
+enum BrightnessDirection {
+    case up, down
+}
+
+@available(macOS 26.0, *)
+@Generable
+enum PowerStateAction {
+    case lock, emptyTrash
+}
+
+@available(macOS 26.0, *)
+@Generable
+enum ClipboardAction {
+    case read, write
+}
+
+@available(macOS 26.0, *)
+@Generable
+enum AppWindowAction {
+    case listApps, listWindows, activateApp
+}
+
+@available(macOS 26.0, *)
+@Generable
+enum MemoryAction {
+    case set, get, list
 }
 
 /// Control Spotify specifically (never Apple Music): play, pause, skip, or play a song.
@@ -67,23 +106,22 @@ struct VolumeTool: Tool {
 
     @Generable
     struct Arguments {
-        @Guide(description: "A volume percentage from 0 to 100, or the word 'mute' or 'unmute'.")
-        let level: String
+        @Guide(description: "The action to perform on the volume.")
+        let action: VolumeAction
+        @Guide(description: "Volume percentage 0–100. Required only when action is setLevel.", .range(0...100))
+        let level: Int?
     }
 
     func call(arguments: Arguments) async throws -> String {
-        let v = arguments.level.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        switch v {
-        case "mute":
-            _ = SystemControlHelper.setMuted(true);  return "Muted."
-        case "unmute":
+        switch arguments.action {
+        case .mute:
+            _ = SystemControlHelper.setMuted(true); return "Muted."
+        case .unmute:
             _ = SystemControlHelper.setMuted(false); return "Unmuted."
-        default:
-            if let pct = Float(v.replacingOccurrences(of: "%", with: "")) {
-                _ = SystemControlHelper.setVolume(max(0, min(100, pct)))
-                return "Volume set to \(Int(pct))%."
-            }
-            return "Could not parse volume '\(arguments.level)'."
+        case .setLevel:
+            let pct = Float(max(0, min(100, arguments.level ?? 50)))
+            _ = SystemControlHelper.setVolume(pct)
+            return "Volume set to \(Int(pct))%."
         }
     }
 }
@@ -96,15 +134,20 @@ struct BrightnessTool: Tool {
 
     @Generable
     struct Arguments {
-        @Guide(description: "Either 'up' or 'down'.")
-        let direction: String
+        @Guide(description: "The direction to adjust brightness.")
+        let direction: BrightnessDirection
     }
 
     func call(arguments: Arguments) async throws -> String {
         let current = SystemControlHelper.getBrightness()
-        let up = arguments.direction.lowercased().contains("up")
-        _ = SystemControlHelper.setBrightness(max(0, min(1, current + (up ? 0.15 : -0.15))))
-        return up ? "Brightness up." : "Brightness down."
+        switch arguments.direction {
+        case .up:
+            _ = SystemControlHelper.setBrightness(min(1, current + 0.15))
+            return "Brightness up."
+        case .down:
+            _ = SystemControlHelper.setBrightness(max(0, current - 0.15))
+            return "Brightness down."
+        }
     }
 }
 
@@ -130,9 +173,9 @@ struct OpenWebsiteTool: Tool {
     }
 }
 
-/// Launch a macOS application by name.
+/// Launch a macOS application by name. Falls back to Siri on launch failure.
 @available(macOS 26.0, *)
-struct OpenAppTool: Tool {
+struct OpenAppTool: SiriDelegatable {
     let name = "open_app"
     let description = "Launch a macOS application by name (e.g. Notes, Spotify, Safari)."
 
@@ -142,46 +185,53 @@ struct OpenAppTool: Tool {
         let appName: String
     }
 
+    func siriQuery(for arguments: Arguments) -> String {
+        "open \(arguments.appName)"
+    }
+
+    @MainActor
     func call(arguments: Arguments) async throws -> String {
-        let appName = arguments.appName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let path = "/Applications/\(appName).app"
-        let sysPath = "/System/Applications/\(appName).app"
-        let utilPath = "/System/Applications/Utilities/\(appName).app"
-        
-        var targetURL: URL? = nil
-        for p in [path, sysPath, utilPath] {
-            if FileManager.default.fileExists(atPath: p) {
-                targetURL = URL(fileURLWithPath: p)
-                break
-            }
-        }
-        
-        if targetURL == nil {
-            let commonIDs = ["com.apple.\(appName.lowercased())", "com.google.\(appName)", "com.apple.Utilities.\(appName)"]
-            for bid in commonIDs {
-                if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bid) {
-                    targetURL = url
+        try await siriDelegatedCall(tool: self, arguments: arguments) {
+            let appName = arguments.appName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let path = "/Applications/\(appName).app"
+            let sysPath = "/System/Applications/\(appName).app"
+            let utilPath = "/System/Applications/Utilities/\(appName).app"
+
+            var targetURL: URL? = nil
+            for p in [path, sysPath, utilPath] {
+                if FileManager.default.fileExists(atPath: p) {
+                    targetURL = URL(fileURLWithPath: p)
                     break
                 }
             }
-        }
-        
-        if let appURL = targetURL {
-            do {
-                try await NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration())
-                return "Opened \(appName)."
-            } catch {
-                return "Failed to open \(appName) natively: \(error.localizedDescription)"
+
+            if targetURL == nil {
+                let commonIDs = ["com.apple.\(appName.lowercased())", "com.google.\(appName)", "com.apple.Utilities.\(appName)"]
+                for bid in commonIDs {
+                    if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bid) {
+                        targetURL = url
+                        break
+                    }
+                }
             }
-        } else {
-            let process = Process()
-            process.launchPath = "/usr/bin/open"
-            process.arguments = ["-a", appName]
-            do {
-                try process.run()
-                return "Opened \(appName) via open fallback."
-            } catch {
-                return "Failed to open \(appName) via fallback: \(error.localizedDescription)"
+
+            if let appURL = targetURL {
+                do {
+                    try await NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration())
+                    return "Opened \(appName)."
+                } catch {
+                    return "Failed to open \(appName) natively: \(error.localizedDescription)"
+                }
+            } else {
+                let process = Process()
+                process.launchPath = "/usr/bin/open"
+                process.arguments = ["-a", appName]
+                do {
+                    try process.run()
+                    return "Opened \(appName) via open fallback."
+                } catch {
+                    return "Failed to open \(appName) via fallback: \(error.localizedDescription)"
+                }
             }
         }
     }
@@ -237,16 +287,26 @@ struct ReadScreenTool: Tool {
 
     @Generable
     struct Arguments {
-        @Guide(description: "What you are looking for on screen, e.g. 'first search result' or 'login button'. Used only as a hint.")
+        @Guide(description: "What you are looking for on screen, e.g. 'first search result' or 'login button'. Used to prioritize relevant lines.")
         let lookingFor: String
     }
 
     func call(arguments: Arguments) async throws -> String {
         let text = await CommandEngine.ocrScreen()
         if text.isEmpty { return "The screen has no readable text right now." }
-        // Cap the returned text so a busy page can't blow the ~4k-token context window.
-        let capped = text.count > 1500 ? String(text.prefix(1500)) + "…" : text
-        return "Screen text (looking for \(arguments.lookingFor)):\n\(capped)"
+        // Keyword-biased truncation: lines containing the target float to the top so the
+        // relevant element is always within the ~1500-char context budget, even on dense pages.
+        let lines = text.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let target = arguments.lookingFor.lowercased()
+        let scored: [(score: Int, line: String)] = lines.enumerated().map { idx, line in
+            (line.lowercased().contains(target) ? 1000 - idx : -idx, line)
+        }.sorted { $0.score > $1.score }
+        var result = ""
+        for entry in scored {
+            guard (result + entry.line).count < 1500 else { break }
+            result += entry.line + "\n"
+        }
+        return "Screen text (looking for \(arguments.lookingFor)):\n\(result)"
     }
 }
 
@@ -384,9 +444,9 @@ struct LocationGeocoderTool: Tool {
         if cleanPlace.isEmpty { return "Place name cannot be empty." }
         
         if let result = await SystemDiagnostics.geocodeLocation(placeName: cleanPlace) {
-            let mapsUrl = "https://www.google.com/maps/place/\(cleanPlace.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
-            _ = await MainActor.run {
-                NSWorkspace.shared.open(URL(string: mapsUrl)!)
+            if let encoded = cleanPlace.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+               let mapsUrl = URL(string: "https://www.google.com/maps/search/?q=\(encoded)") {
+                _ = await MainActor.run { NSWorkspace.shared.open(mapsUrl) }
             }
             return "Address: \(result.display_name). Coordinates: \(result.lat), \(result.lon). Opened in Google Maps."
         } else {
@@ -433,37 +493,30 @@ struct MemoryGoalTool: Tool {
 
     @Generable
     struct Arguments {
-        @Guide(description: "Action: one of 'set', 'get', 'list'")
-        let action: String
-        @Guide(description: "The key to access, e.g., 'current_task'")
+        @Guide(description: "The memory operation to perform.")
+        let action: MemoryAction
+        @Guide(description: "The key to access, e.g., 'current_task'.")
         let key: String
-        @Guide(description: "The value to set (required for set action)")
+        @Guide(description: "The value to store (required for set).")
         let value: String?
-        @Guide(description: "The category to filter by (optional, e.g., 'active_task')")
+        @Guide(description: "Category to filter by (optional), e.g., 'active_task'.")
         let category: String?
     }
 
     func call(arguments: Arguments) async throws -> String {
-        let act = arguments.action.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        switch act {
-        case "set":
-            guard let val = arguments.value else { return "Value is required for 'set' action." }
+        switch arguments.action {
+        case .set:
+            guard let val = arguments.value else { return "Value is required for set." }
             let cat = arguments.category ?? "general"
             SystemMemoryStore.set(key: arguments.key, value: val, category: cat)
-            return "Set \(arguments.key) = \(val) in category \(cat)."
-        case "get":
-            if let val = SystemMemoryStore.get(key: arguments.key) {
-                return "Value: \(val)"
-            } else {
-                return "Key \(arguments.key) not found."
-            }
-        case "list":
+            return "Set \(arguments.key) = \(val) in \(cat)."
+        case .get:
+            guard let val = SystemMemoryStore.get(key: arguments.key) else { return "Key \(arguments.key) not found." }
+            return "Value: \(val)"
+        case .list:
             let cat = arguments.category ?? "active_task"
             let list = SystemMemoryStore.list(category: cat)
-            if list.isEmpty { return "No items found in category \(cat)." }
-            return list.map { "\($0.key): \($0.value)" }.joined(separator: "\n")
-        default:
-            return "Invalid memory action: \(arguments.action)."
+            return list.isEmpty ? "No items in \(cat)." : list.map { "\($0.key): \($0.value)" }.joined(separator: "\n")
         }
     }
 }
@@ -489,9 +542,30 @@ struct AskClaudeTool: Tool {
     }
 }
 
-/// Create a reminder natively using EventKit.
+/// Ask Siri / Apple Intelligence a question. Uses keyboard simulation to type to Siri.
 @available(macOS 26.0, *)
-struct ReminderTool: Tool {
+struct AskSiriTool: Tool {
+    let name = "ask_siri"
+    let description = "Open Siri and ask a question, compose messages, control closed Apple apps, or query real-time info."
+
+    @Generable
+    struct Arguments {
+        @Guide(description: "The prompt or command to send to Siri (e.g., 'What is the capital of France?' or 'Send a message to John saying I will be late').")
+        let query: String
+    }
+
+    @MainActor
+    func call(arguments: Arguments) async throws -> String {
+        let q = arguments.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return "Query was empty." }
+        await SiriBridge.send(q)
+        return "Handing query '\(q)' to Siri."
+    }
+}
+
+/// Create a reminder natively via EventKit. Falls back to Siri when permission is denied.
+@available(macOS 26.0, *)
+struct ReminderTool: SiriDelegatable {
     let name = "create_reminder"
     let description = "Create a reminder in the macOS Reminders app natively. Supports optional due date."
 
@@ -503,28 +577,35 @@ struct ReminderTool: Tool {
         let dueDate: String?
     }
 
+    func siriQuery(for arguments: Arguments) -> String {
+        var q = "remind me to \(arguments.title)"
+        if let due = arguments.dueDate, !due.isEmpty { q += " at \(due)" }
+        return q
+    }
+
+    @MainActor
     func call(arguments: Arguments) async throws -> String {
-        let title = arguments.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if title.isEmpty { return "Reminder title cannot be empty." }
-        
-        var date: Date? = nil
-        if let dueStr = arguments.dueDate, !dueStr.isEmpty {
-            let formatter = ISO8601DateFormatter()
-            date = formatter.date(from: dueStr)
-        }
-        
-        let success = await EventKitOrchestrator.createReminder(title: title, dueDate: date)
-        if success {
-            return "Reminder '\(title)' successfully created."
-        } else {
-            return "Failed to create reminder '\(title)'. Ensure permission is granted."
+        try await siriDelegatedCall(tool: self, arguments: arguments) {
+            let title = arguments.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if title.isEmpty { return "Reminder title cannot be empty." }
+
+            var date: Date? = nil
+            if let dueStr = arguments.dueDate, !dueStr.isEmpty {
+                let formatter = ISO8601DateFormatter()
+                date = formatter.date(from: dueStr)
+            }
+
+            let success = await EventKitOrchestrator.createReminder(title: title, dueDate: date)
+            return success
+                ? "Reminder '\(title)' successfully created."
+                : "Failed to create reminder '\(title)'. Ensure permission is granted."
         }
     }
 }
 
-/// Create a calendar event natively using EventKit.
+/// Create a calendar event natively via EventKit. Falls back to Siri when permission is denied.
 @available(macOS 26.0, *)
-struct CalendarTool: Tool {
+struct CalendarTool: SiriDelegatable {
     let name = "create_calendar_event"
     let description = "Create an event/appointment in the default macOS calendar natively."
 
@@ -538,21 +619,26 @@ struct CalendarTool: Tool {
         let endDate: String
     }
 
+    func siriQuery(for arguments: Arguments) -> String {
+        "schedule \(arguments.title) from \(arguments.startDate) to \(arguments.endDate)"
+    }
+
+    @MainActor
     func call(arguments: Arguments) async throws -> String {
-        let title = arguments.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if title.isEmpty { return "Calendar event title cannot be empty." }
-        
-        let formatter = ISO8601DateFormatter()
-        guard let start = formatter.date(from: arguments.startDate),
-              let end = formatter.date(from: arguments.endDate) else {
-            return "Failed to parse start or end date. Must be in ISO8601 format."
-        }
-        
-        let success = await EventKitOrchestrator.createCalendarEvent(title: title, startDate: start, endDate: end)
-        if success {
-            return "Calendar event '\(title)' created from \(arguments.startDate) to \(arguments.endDate)."
-        } else {
-            return "Failed to create calendar event. Ensure permission is granted."
+        try await siriDelegatedCall(tool: self, arguments: arguments) {
+            let title = arguments.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if title.isEmpty { return "Calendar event title cannot be empty." }
+
+            let formatter = ISO8601DateFormatter()
+            guard let start = formatter.date(from: arguments.startDate),
+                  let end = formatter.date(from: arguments.endDate) else {
+                return "Failed to parse start or end date. Must be in ISO8601 format."
+            }
+
+            let success = await EventKitOrchestrator.createCalendarEvent(title: title, startDate: start, endDate: end)
+            return success
+                ? "Calendar event '\(title)' created from \(arguments.startDate) to \(arguments.endDate)."
+                : "Failed to create calendar event. Ensure permission is granted."
         }
     }
 }
@@ -565,21 +651,18 @@ struct PowerStateTool: Tool {
 
     @Generable
     struct Arguments {
-        @Guide(description: "Action to perform: 'lock' or 'empty_trash'.")
-        let action: String
+        @Guide(description: "The power/state action to perform.")
+        let action: PowerStateAction
     }
 
     func call(arguments: Arguments) async throws -> String {
-        let act = arguments.action.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        switch act {
-        case "lock":
+        switch arguments.action {
+        case .lock:
             NativeSystemOrchestrator.lockScreen()
             return "Locking screen."
-        case "empty_trash":
+        case .emptyTrash:
             NativeSystemOrchestrator.emptyTrash()
             return "Emptying trash."
-        default:
-            return "Unsupported system action: \(arguments.action)."
         }
     }
 }
@@ -608,24 +691,21 @@ struct ClipboardTool: Tool {
 
     @Generable
     struct Arguments {
-        @Guide(description: "One of 'read' or 'write'.")
-        let action: String
-        @Guide(description: "The text content to write (required only for 'write').")
+        @Guide(description: "Whether to read from or write to the clipboard.")
+        let action: ClipboardAction
+        @Guide(description: "The text content to write (required only for write).")
         let content: String?
     }
 
     func call(arguments: Arguments) async throws -> String {
-        let action = arguments.action.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        if action == "write" {
-            guard let val = arguments.content else { return "Content is required for 'write' action." }
+        switch arguments.action {
+        case .write:
+            guard let val = arguments.content else { return "Content is required for write." }
             NativeClipboard.set(val)
-            return "Successfully copied text to clipboard."
-        } else if action == "read" {
+            return "Copied text to clipboard."
+        case .read:
             let val = NativeClipboard.get()
-            if val.isEmpty { return "Clipboard is currently empty." }
-            return "Clipboard text: \(val)"
-        } else {
-            return "Invalid clipboard action. Must be 'read' or 'write'."
+            return val.isEmpty ? "Clipboard is currently empty." : "Clipboard text: \(val)"
         }
     }
 }
@@ -638,28 +718,24 @@ struct AppWindowManagerTool: Tool {
 
     @Generable
     struct Arguments {
-        @Guide(description: "Action to perform: 'list_apps', 'list_windows', or 'activate_app'.")
-        let action: String
-        @Guide(description: "The process ID (PID) of the app to bring to foreground (required only for 'activate_app').")
+        @Guide(description: "The action to perform on apps/windows.")
+        let action: AppWindowAction
+        @Guide(description: "The process ID (PID) of the app to bring to foreground (required only for activateApp).")
         let targetPID: Int?
     }
 
     func call(arguments: Arguments) async throws -> String {
-        let action = arguments.action.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        switch action {
-        case "list_apps":
+        switch arguments.action {
+        case .listApps:
             let apps = WindowManager.getRunningApps()
             return "Running Applications:\n" + apps.joined(separator: "\n")
-        case "list_windows":
+        case .listWindows:
             let windows = WindowManager.getWindowList()
-            if windows.isEmpty { return "No visible windows found on screen." }
-            return "Visible Windows:\n" + windows.joined(separator: "\n")
-        case "activate_app":
+            return windows.isEmpty ? "No visible windows found on screen." : "Visible Windows:\n" + windows.joined(separator: "\n")
+        case .activateApp:
             guard let pid = arguments.targetPID else { return "targetPID is required to activate an app." }
             let success = WindowManager.activateApp(pid: Int32(pid))
-            return success ? "Successfully activated app with PID \(pid)." : "Failed to activate app with PID \(pid)."
-        default:
-            return "Unsupported action: \(arguments.action). Use 'list_apps', 'list_windows', or 'activate_app'."
+            return success ? "Activated app with PID \(pid)." : "Failed to activate app with PID \(pid)."
         }
     }
 }
@@ -735,6 +811,53 @@ struct WeatherTool: Tool {
     }
 }
 
+/// Enqueue a background task to run when Sotto is free, or list pending/done tasks.
+@available(macOS 26.0, *)
+struct MicrotaskTool: Tool {
+    let name = "manage_tasks"
+    let description = "Enqueue a background task to run when Sotto is idle, or list/clear queued tasks. Use for things that don't need to happen right now — e.g. 'when you're free, check git status'."
+
+    @Generable
+    struct Arguments {
+        @Guide(description: "Action: 'enqueue' to add a task, 'list' to see queue, 'clear_done' to remove completed tasks.")
+        let action: String
+        @Guide(description: "Short human-readable task name (e.g. 'Check git status').")
+        let name: String?
+        @Guide(description: "Full goal description passed to Jarvis when task runs.")
+        let goal: String?
+        @Guide(description: "Priority 0–10 (higher runs first). Default 0.")
+        let priority: Int?
+    }
+
+    func call(arguments: Arguments) async throws -> String {
+        switch arguments.action.lowercased() {
+        case "enqueue":
+            guard let goal = arguments.goal, !goal.isEmpty else {
+                return "Please provide a goal for the task."
+            }
+            let taskName = arguments.name ?? String(goal.prefix(40))
+            await MicrotaskQueue.shared.enqueue(name: taskName, goal: goal,
+                                                priority: arguments.priority ?? 0)
+            return "Queued '\(taskName)' — I'll run it next time I'm free."
+
+        case "list":
+            let tasks = await MicrotaskQueue.shared.allTasks()
+            if tasks.isEmpty { return "No tasks in the queue." }
+            let lines = tasks.map { t in
+                "[\(t.status.rawValue.uppercased())] \(t.name) (priority \(t.priority))"
+            }.joined(separator: "\n")
+            return "Task queue:\n\(lines)"
+
+        case "clear_done":
+            await MicrotaskQueue.shared.clearDone()
+            return "Cleared completed tasks from the queue."
+
+        default:
+            return "Unknown action '\(arguments.action)'. Use 'enqueue', 'list', or 'clear_done'."
+        }
+    }
+}
+
 /// The tools the Jarvis agent exposes to the on-device model.
 ///
 /// Apple's guidance / tool-learning research: tool-selection accuracy plateaus around 8
@@ -751,13 +874,13 @@ enum JarvisToolbox {
             ReadScreenTool(), ClickElementTool(), DraftSkillTool(), RunSkillTool(),
             RecallHistoryTool(), SystemStatusTool(), RAMMemoryStatusTool(),
             LocationGeocoderTool(), WikipediaLookupTool(), MemoryGoalTool(),
-            AskClaudeTool(), ReminderTool(), CalendarTool(), PowerStateTool(),
+            AskClaudeTool(), AskSiriTool(), ReminderTool(), CalendarTool(), PowerStateTool(),
             NetworkDiagnosticsTool(), ClipboardTool(), SpotlightSearchTool(),
             AppWindowManagerTool(), KeySimulatorTool(),
             MorningBriefTool(), FocusSessionTool(), EndWorkdayTool(), WorkspaceSwitchTool(),
             FileOrganizerTool(), LargeFileFinderTool(),
             ExplainCodeTool(), GenerateGitCommitTool(), FindBugTool(), ExplainErrorTool(),
-            ComposedWorkflowTool(),
+            ComposedWorkflowTool(), MicrotaskTool(),
         ]
     }
 
@@ -791,8 +914,10 @@ enum JarvisToolbox {
               make: { [LocationGeocoderTool()] }),
         Group(keywords: ["keystroke", "press", "shortcut", "hotkey", "type"],
               make: { [KeySimulatorTool()] }),
-        Group(keywords: ["skill", "learn", "routine", "goal", "remember", "recall", "history", "did you do", "have you"],
-              make: { [DraftSkillTool(), RunSkillTool(), RecallHistoryTool(), MemoryGoalTool()] }),
+        Group(keywords: ["skill", "learn", "routine", "goal", "remember", "recall", "history", "did you do", "have you",
+                         "list", "scripts", "macros", "capabilities", "all my", "what can",
+                         "task", "queue", "later", "when free", "background", "enqueue", "pending"],
+              make: { [DraftSkillTool(), RunSkillTool(), RecallHistoryTool(), MemoryGoalTool(), MicrotaskTool()] }),
         Group(keywords: ["morning", "brief", "daily", "today", "summary", "wake"],
               make: { [MorningBriefTool()] }),
         Group(keywords: ["focus", "session", "dnd", "distract", "work", "start"],
@@ -807,10 +932,12 @@ enum JarvisToolbox {
               make: { [LargeFileFinderTool()] }),
         Group(keywords: ["explain", "code", "error", "bug", "find"],
               make: { [ExplainCodeTool(), FindBugTool(), ExplainErrorTool()] }),
-        Group(keywords: ["git", "commit", "message", "changes"],
+        Group(keywords: ["git", "commit", "message", "changes", "push", "pull", "branch", "merge", "conflict", "status"],
               make: { [GenerateGitCommitTool()] }),
         Group(keywords: ["compose", "workflow", "plan", "setup", "prepare"],
               make: { [ComposedWorkflowTool()] }),
+        Group(keywords: ["siri", "ask siri", "tell siri", "message", "send message", "text", "email", "mail", "imessage"],
+              make: { [AskSiriTool()] }),
     ]
 
     /// Common general-purpose tools used when an utterance matches no group's keywords.
@@ -830,12 +957,14 @@ enum JarvisToolbox {
 
         if scored.isEmpty { return defaultSet() }
 
+        // Apple's Tool docs: "Limit the number of tools you use to three to five."
+        // Cap at 5 — selection accuracy drops beyond that with the on-device model.
         var picked: [any Tool] = []
         for entry in scored {
-            for tool in entry.group.make() where picked.count < 8 && !picked.contains(where: { $0.name == tool.name }) {
+            for tool in entry.group.make() where picked.count < 5 && !picked.contains(where: { $0.name == tool.name }) {
                 picked.append(tool)
             }
-            if picked.count >= 8 { break }
+            if picked.count >= 5 { break }
         }
         return picked
     }

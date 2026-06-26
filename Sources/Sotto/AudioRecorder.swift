@@ -1,11 +1,14 @@
 import AVFoundation
+import CoreAudio
+import AudioToolbox
+import os
 
 /// Captures microphone audio while the hotkey is held and converts it to
 /// 16 kHz mono Float32 — the format FluidAudio/Parakeet expects.
-final class AudioRecorder {
+final class AudioRecorder: @unchecked Sendable {
     private let engine = AVAudioEngine()
     private var samples: [Float] = []
-    private let lock = NSLock()
+    private let lock = OSAllocatedUnfairLock<Void>()
 
     private var silenceDetectedHandler: (() -> Void)?
     private var silenceAccumulator: Double = 0.0
@@ -13,9 +16,7 @@ final class AudioRecorder {
     private let maxSilenceDuration: Double = 3.5 // 3.5 seconds of silence to trigger auto-stop
     private var _currentRMS: Float = 0.0
     var currentRMS: Float {
-        lock.lock()
-        defer { lock.unlock() }
-        return _currentRMS
+        lock.withLock { _currentRMS }
     }
 
     private let targetFormat = AVAudioFormat(
@@ -30,13 +31,26 @@ final class AudioRecorder {
     }
 
     func start() throws {
-        lock.lock()
-        samples.removeAll(keepingCapacity: true)
-        _currentRMS = 0.0
-        silenceAccumulator = 0.0
-        lock.unlock()
+        lock.withLock {
+            samples.removeAll(keepingCapacity: true)
+            _currentRMS = 0.0
+            silenceAccumulator = 0.0
+        }
 
         let input = engine.inputNode
+        
+        // Force the input device to be the built-in microphone if available
+        if let builtInMicID = findBuiltInMicrophoneDeviceID() {
+            print("[AUDIO] Forcing built-in microphone input device ID: \(builtInMicID)")
+            do {
+                try setInputDevice(engine: engine, deviceID: builtInMicID)
+            } catch {
+                print("[AUDIO] Failed to set input device to built-in microphone: \(error.localizedDescription). Using default input.")
+            }
+        } else {
+            print("[AUDIO] Built-in microphone not found. Using default input.")
+        }
+
         let hwFormat = input.outputFormat(forBus: 0)
         guard hwFormat.sampleRate > 0 else {
             throw NSError(domain: "AudioRecorder", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid hardware sample rate (0)"])
@@ -45,9 +59,12 @@ final class AudioRecorder {
             throw NSError(domain: "AudioRecorder", code: -2, userInfo: [NSLocalizedDescriptionKey: "Failed to create audio converter from \(hwFormat.sampleRate)Hz to 16000Hz"])
         }
 
+        // Strong capture: the tap is always removed in stop() before AudioRecorder can
+        // deinit, so there is no retain cycle. A [weak self] capture here produces a
+        // Sendable warning in Swift 6 because Optional<AudioRecorder> isn't Sendable.
         input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 4096, format: hwFormat) { [weak self] buffer, _ in
-            self?.append(buffer, using: converter)
+        input.installTap(onBus: 0, bufferSize: 4096, format: hwFormat) { [self] buffer, _ in
+            append(buffer, using: converter)
         }
         engine.prepare()
         try engine.start()
@@ -56,10 +73,10 @@ final class AudioRecorder {
     func stop() -> [Float] {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        lock.lock()
-        defer { lock.unlock() }
-        _currentRMS = 0.0
-        return samples
+        return lock.withLock {
+            _currentRMS = 0.0
+            return samples
+        }
     }
 
     private func append(_ buffer: AVAudioPCMBuffer, using converter: AVAudioConverter) {
@@ -90,9 +107,7 @@ final class AudioRecorder {
                 sum += sample * sample
             }
             let rms = sqrt(sum / Float(count))
-            lock.lock()
-            self._currentRMS = rms
-            lock.unlock()
+            lock.withLock { self._currentRMS = rms }
             
             if !SettingsController.isPushToTalk {
                 if rms < silenceThreshold {
@@ -108,8 +123,105 @@ final class AudioRecorder {
             }
         }
 
-        lock.lock()
-        samples.append(contentsOf: UnsafeBufferPointer(start: channel[0], count: count))
-        lock.unlock()
+        // Convert to [Float] (Sendable) BEFORE entering the lock — crossing the lock
+        // boundary with UnsafePointer<UnsafeMutablePointer<Float>?> triggers a Swift 6
+        // Sendable diagnostic because UnsafePointer is not Sendable.
+        let newSamples = [Float](UnsafeBufferPointer(start: channel[0], count: count))
+        lock.withLock { samples.append(contentsOf: newSamples) }
+    }
+
+    private func findBuiltInMicrophoneDeviceID() -> AudioDeviceID? {
+        if let builtInMic = AVCaptureDevice.default(.microphone, for: .audio, position: .unspecified) {
+            return getAudioDeviceID(from: builtInMic.uniqueID)
+        }
+        return nil
+    }
+
+    private func getAudioDeviceID(from uid: String) -> AudioDeviceID? {
+        let devices = getAllDevices()
+        for dev in devices {
+            if getDeviceUID(deviceID: dev) == uid {
+                return dev
+            }
+        }
+        return nil
+    }
+
+    private func getAllDevices() -> [AudioDeviceID] {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        
+        var dataSize: UInt32 = 0
+        let status = AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject),
+            &propertyAddress,
+            0,
+            nil,
+            &dataSize
+        )
+        guard status == noErr else { return [] }
+        
+        let deviceCount = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
+        var deviceIDs = [AudioDeviceID](repeating: 0, count: deviceCount)
+        
+        let retrieveStatus = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &propertyAddress,
+            0,
+            nil,
+            &dataSize,
+            &deviceIDs
+        )
+        return retrieveStatus == noErr ? deviceIDs : []
+    }
+
+    private func getDeviceUID(deviceID: AudioDeviceID) -> String? {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        
+        var deviceUID: Unmanaged<CFString>? = nil
+        var dataSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        
+        let status = AudioObjectGetPropertyData(
+            deviceID,
+            &propertyAddress,
+            0,
+            nil,
+            &dataSize,
+            &deviceUID
+        )
+        
+        if status == noErr, let uid = deviceUID?.takeRetainedValue() {
+            return uid as String
+        }
+        return nil
+    }
+
+    private func setInputDevice(engine: AVAudioEngine, deviceID: AudioDeviceID) throws {
+        let inputNode = engine.inputNode
+        guard let audioUnit = inputNode.audioUnit else {
+            throw NSError(domain: "AudioRecorder", code: -3, userInfo: [NSLocalizedDescriptionKey: "Input node audio unit is nil"])
+        }
+        
+        var mDeviceID = deviceID
+        let size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioUnitSetProperty(
+            audioUnit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &mDeviceID,
+            size
+        )
+        
+        if status != noErr {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: [NSLocalizedDescriptionKey: "AudioUnitSetProperty CurrentDevice failed with status \(status)"])
+        }
     }
 }

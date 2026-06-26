@@ -58,11 +58,13 @@ enum JarvisAgent {
             Task {
                 guard SystemLanguageModel.default.isAvailable else { return }
                 LanguageModelSession().prewarm()
+                classifierSession.prewarm()
                 // Retry after 30 s — covers the common case where the model manager cancels
                 // the first prewarm because it hasn't finished initialising at cold launch.
                 try? await Task.sleep(nanoseconds: 30_000_000_000)
                 guard SystemLanguageModel.default.isAvailable else { return }
                 LanguageModelSession().prewarm()
+                classifierSession.prewarm()
             }
         }
         #endif
@@ -85,16 +87,17 @@ enum JarvisAgent {
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *), SystemLanguageModel.default.isAvailable {
             do {
-                let session = LanguageModelSession(instructions: """
-                    Classify the user's utterance into exactly one intent:
-                    - command: an instruction to control the Mac (play music, open an app, set volume, search, take a note).
-                    - question: a question that wants an answer.
-                    - dictation: plain text the user wants typed verbatim.
-                    Respond with only the intent value.
-                    """)
-                let result = try await session.respond(to: text, generating: Routing.self,
-                                                        options: GenerationOptions(temperature: 0))
-                return RoutedIntent(rawValue: result.content.intent.lowercased()) ?? .dictation
+                // Reuse the prewarmed static session — zero construction cost per call
+                let result = try await classifierSession.respond(
+                    to: text,
+                    generating: Routing.self,
+                    options: GenerationOptions(temperature: 0)
+                )
+                switch result.content.intent {
+                case .command:  return .command
+                case .question: return .question
+                case .dictation: return .dictation
+                }
             } catch {
                 print("[ROUTER] Apple classify failed: \(error.localizedDescription)")
                 return nil
@@ -120,6 +123,7 @@ enum JarvisAgent {
         approved). After acting, reply with ONE short line that is dry and a little witty —
         JARVIS/TARS humor: clever, deadpan, never mean — and NOTHING else.
         Answer plain questions briefly with no tool.
+        SIRI DELEGATION: If the user's request involves closed native Apple apps (like composing/sending Mail or Messages, showing/searching Photos, or native system configurations not covered by other tools), or if you need to fetch real-time web answers that your local tools cannot find, call the 'ask_siri' tool. Simply pass the user's raw natural language request (or a polished version of it) to Siri.
         CRITICAL: Report only what actually happened. NEVER write fake tool transcripts, NEVER print
         "read_screen:" / "click_element:" lines, and NEVER claim success a tool did not return. If a
         tool returns an error or permission message, relay THAT, do not pretend it worked.
@@ -127,6 +131,22 @@ enum JarvisAgent {
         there directly. NEVER call open_app to open a browser before web_search or open_website;
         that opens two browsers. One call does the job.
         """
+
+    // Static warm session reused across all classify() calls — avoids the 200-400ms
+    // cold-session cost on every utterance. Pure text classification; no tools loaded.
+    #if canImport(FoundationModels)
+    @available(macOS 26.0, *)
+    private static let classifierSession: LanguageModelSession = {
+        let s = LanguageModelSession(instructions: """
+            Classify the user's utterance into exactly one intent:
+            - command: an instruction to control the Mac (play music, open an app, set volume, search, take a note).
+            - question: a question that wants an answer.
+            - dictation: plain text the user wants typed verbatim.
+            Respond with only the intent value.
+            """)
+        return s
+    }()
+    #endif
 
     /// Runs the tool-calling agent on a spoken command. Returns a short spoken reply.
     /// Throws if Apple Intelligence is unavailable so the caller can fall back to MLX/Grok.
@@ -149,11 +169,18 @@ enum JarvisAgent {
 }
 
 #if canImport(FoundationModels)
-/// Constrained classification output (avoids JSON parsing/repair).
+/// Constrained intent type — @Generable enum so guided generation can ONLY
+/// produce one of these three cases; no free-form string that could mismatch.
+@available(macOS 26.0, *)
+@Generable
+enum RoutingIntent {
+    case command, question, dictation
+}
+
 @available(macOS 26.0, *)
 @Generable
 struct Routing {
-    @Guide(description: "One of: command, question, dictation")
-    let intent: String
+    @Guide(description: "The intent type of the utterance.")
+    let intent: RoutingIntent
 }
 #endif

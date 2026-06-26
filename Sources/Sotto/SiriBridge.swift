@@ -27,10 +27,45 @@ enum SiriBridge {
     @MainActor
     static func send(_ prompt: String) async {
         activate()
-        try? await Task.sleep(nanoseconds: 550_000_000)   // let the box appear + take focus
+        let focused = await waitForSiriFocus()
+        if !focused {
+            // Fallback sleep if focus detection fails or is slow
+            try? await Task.sleep(nanoseconds: 400_000_000)
+        }
         await injector.inject(prompt, fileURL: nil)        // pasteboard + ⌘V (reused)
         try? await Task.sleep(nanoseconds: 150_000_000)
         await injector.pressReturn()
+    }
+
+    /// Polls frontmostApplication until Siri becomes the active focused window.
+    @MainActor
+    static func waitForSiriFocus(timeout: TimeInterval = 2.0) async -> Bool {
+        let start = Date()
+        while Date().timeIntervalSince(start) < timeout {
+            if let front = NSWorkspace.shared.frontmostApplication,
+               front.bundleIdentifier == "com.apple.Siri" || front.localizedName?.lowercased().contains("siri") == true {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 30_000_000) // check every 30ms
+        }
+        return false
+    }
+
+    /// Waits until Siri has gained focus and then subsequently lost focus (dismissed or switched away).
+    @MainActor
+    static func waitForSiriDismiss(timeout: TimeInterval = 15.0) async {
+        _ = await waitForSiriFocus(timeout: 2.0)
+        try? await Task.sleep(nanoseconds: 500_000_000) // ensure Siri window is fully active
+        let start = Date()
+        while Date().timeIntervalSince(start) < timeout {
+            if let front = NSWorkspace.shared.frontmostApplication {
+                let isSiri = front.bundleIdentifier == "com.apple.Siri" || front.localizedName?.lowercased().contains("siri") == true
+                if !isSiri {
+                    break
+                }
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000) // check every 100ms
+        }
     }
 
     /// Simulate the Siri activation shortcut. Defaults to Globe/fn + S; every part is

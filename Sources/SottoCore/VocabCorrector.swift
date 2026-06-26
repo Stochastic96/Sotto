@@ -34,6 +34,11 @@ public enum VocabCorrector {
         "open ai":        "OpenAI",
         "javascript":     "JavaScript",
         "typescript":     "TypeScript",
+        // App and assistant name corrections (Parakeet frequently mishears these)
+        "soto":           "Sotto",
+        "sotto":          "Sotto",
+        "jarvise":        "Jarvis",
+        "jarvies":        "Jarvis",
         // Wake-word corrections for common ASR mishears of "Hey Jarvis"
         "hey javascript": "Hey Jarvis",
         "hey jarvis":     "Hey Jarvis",

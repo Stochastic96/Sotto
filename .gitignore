@@ -21,3 +21,8 @@ sotto-data/
 
 # Local Claude Code settings (machine-specific)
 .claude/settings.local.json
+
+# Local profiles / images
+default.profraw
+screenshot2.png
+

@@ -28,7 +28,7 @@ import SottoCore
     let explanationController = ExplanationWindowController()
     let promptReview = PromptReviewWindowController()
     var hotkey: HotkeyListener?
-    var qwen: QwenRefiner?
+    var intelligence: SottoIntelligence?
     var polishEnabled: Bool
     let wakeDetector = WakeWordDetector()
     var visualizerTimer: Timer?
@@ -37,6 +37,7 @@ import SottoCore
     var lastActiveApp: NSRunningApplication?
     var appActivity: NSObjectProtocol?
     var coordinator: AnyObject?
+    private var recordingTimeoutTask: Task<Void, Never>?
 
     enum Mode {
         case dictation
@@ -48,9 +49,7 @@ import SottoCore
     // Set while Jarvis is waiting for the answer to a clarifying ("ASK:") question.
     var pendingClarification = false
 
-    var qwenRefiner: QwenRefiner? {
-        return qwen
-    }
+    var intelligenceEngine: SottoIntelligence? { intelligence }
 
     func showHUD(_ text: String) {
         hud.show(text)
@@ -62,10 +61,19 @@ import SottoCore
 
     var state: State = .loadingModel {
         didSet {
+            stateEnteredAt = Date()
             statusBar.update(for: state)
             updateWakeDetector()
+            if case .idle = state {
+                Task { await EventBus.shared.emit(.idleReady) }
+            }
         }
     }
+    /// When the current `state` was entered. Drives the stuck-state watchdog so a
+    /// transient state (`.transcribing` / `.polishing`) that never completes can't
+    /// permanently wedge dictation — the app self-heals back to `.idle`.
+    private var stateEnteredAt = Date()
+    private var watchdogTimer: Timer?
 
     init() {
         if UserDefaults.standard.object(forKey: Self.polishDefaultsKey) == nil {
@@ -130,7 +138,7 @@ import SottoCore
         Self.shared = self
     }
 
-    /// Nothing external to tear down — the brain (Apple Intelligence + in-process MLX)
+    /// Nothing external to tear down — the brain (Apple Foundation Models)
     /// and TTS (AVSpeechSynthesizer) all run inside this process.
     func cleanup() {}
 
@@ -138,10 +146,38 @@ import SottoCore
         print("[SOTTO-APP] AppController.start() called")
 
         // Prevent App Nap: Keep Sotto awake and responsive to global hotkeys and audio recording
+        // .latencyCritical keeps the event-delivery path hot so hotkeys fire instantly,
+        // without preventing system idle sleep — the previous .idleSystemSleepDisabled
+        // kept the entire Mac awake 24/7 even when idle, burning significant battery.
         self.appActivity = ProcessInfo.processInfo.beginActivity(
-            options: [.userInitiated, .idleSystemSleepDisabled],
-            reason: "Sotto needs to remain fully active to respond instantly to global hotkeys and record voice dictation."
+            options: [.userInitiated, .latencyCritical],
+            reason: "Sotto must respond instantly to global hotkeys and voice recording."
         )
+
+        // Stuck-state watchdog: if a transient state never completes (e.g. a speech
+        // engine that never returns, or a polish that hangs past its own timeout),
+        // force the app back to `.idle` so the next hotkey press works instead of
+        // showing "Still transcribing…" forever. Recording is intentionally exempt —
+        // push-to-talk may legitimately run long and already has its own 300s cap.
+        watchdogTimer?.invalidate()
+        watchdogTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            Task { @MainActor in
+                let stuckFor = Date().timeIntervalSince(self.stateEnteredAt)
+                let limit: TimeInterval
+                switch self.state {
+                case .transcribing: limit = 20   // transcribe has an 8s internal timeout
+                case .polishing:    limit = 25   // polish has a 15s internal timeout
+                default:            return
+                }
+                if stuckFor > limit {
+                    print("[WATCHDOG] State \(self.state) stuck for \(Int(stuckFor))s (limit \(Int(limit))s); force-resetting to idle.")
+                    self.hud.hide()
+                    self.state = .idle
+                    NSSound(named: "Basso")?.play()
+                }
+            }
+        }
 
         // Cache app context so ContextDetector.currentCached() is zero-cost between app switches.
         ContextDetector.startObservingAppSwitches()
@@ -170,7 +206,7 @@ import SottoCore
             UserDefaults.standard.set(enabled, forKey: Self.polishDefaultsKey)
             if enabled {
                 Task { [weak self] in
-                    await self?.qwen?.preload()
+                    await self?.intelligence?.preload()
                 }
             }
         }
@@ -182,10 +218,10 @@ import SottoCore
         settings.onEngineChanged = { [weak self] in
             Task { @MainActor in
                 await self?.loadModel()
-                if let qwen = self?.qwen {
-                    await qwen.forceUnload()
+                if let intel = self?.intelligence {
+                    await intel.forceUnload()
                     if self?.polishEnabled == true {
-                        await qwen.preload()
+                        await intel.preload()
                     }
                 }
             }
@@ -199,6 +235,17 @@ import SottoCore
             guard let self, let text = notification.userInfo?["text"] as? String else { return }
             Task { @MainActor in
                 await self.handleIncomingCommandText(text)
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("SottoOpenGuide"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.showJarvisGuide()
             }
         }
 
@@ -227,32 +274,33 @@ import SottoCore
             }
         }
 
-        print("[SOTTO-APP] Creating QwenRefiner...")
-        let refiner = QwenRefiner { [weak self] status in
+        print("[SOTTO-APP] Creating SottoIntelligence (Apple Foundation Models)...")
+        let intel = SottoIntelligence { [weak self] status in
             Task { @MainActor in
                 guard let self else { return }
                 switch status {
-                case .notLoaded: self.statusBar.qwenStatus = "not loaded (loads on first use)"
-                case .downloading(let pct): self.statusBar.qwenStatus = "loading… \(pct)%"
-                case .ready: self.statusBar.qwenStatus = "ready"
-                case .failed(let msg): self.statusBar.qwenStatus = "failed — \(msg)"
+                case .notLoaded: self.statusBar.intelligenceStatus = "not loaded"
+                case .downloading(let pct): self.statusBar.intelligenceStatus = "loading… \(pct)%"
+                case .ready: self.statusBar.intelligenceStatus = "ready"
+                case .failed(let msg): self.statusBar.intelligenceStatus = "unavailable — \(msg)"
                 }
             }
         }
-        self.qwen = refiner
+        self.intelligence = intel
 
         if polishEnabled {
             Task {
-                await refiner.preload()
+                await intel.preload()
             }
         }
 
         if #available(macOS 26.0, *) {
             self.coordinator = CoordinatorAgent()
-            // Log the full live tool surface at launch so the log console shows what's available.
             let tools = JarvisToolbox.all().map { $0.name }.sorted()
             print("[TOOLS] \(tools.count) available: \(tools.joined(separator: ", "))")
-            print("[TOOLS] MLX sub-agents: \(SettingsController.preferMLX ? "ON" : "OFF (using Apple Intelligence)")")
+            // Run availability diagnostics at startup to surface clear log output
+            // instead of silent failures later.
+            JarvisDiagnostics.reportAvailability()
         }
 
         // Setup hands-free wake word detector
@@ -270,9 +318,11 @@ import SottoCore
         // Resume any bulk background jobs left running from a previous launch.
         LongTaskEngine.resumePending()
 
-        // Warm the on-device Apple Intelligence model so the first dictation/agent call
-        // has no cold-start latency.
+        // Warm both Apple Intelligence sessions at launch:
+        //   JarvisAgent  — intent classifier + single-hop tool calls
+        //   CoordinatorAgent — multi-turn Jarvis orchestration (was cold before, now warm)
         JarvisAgent.prewarm()
+        if #available(macOS 26.0, *) { CoordinatorAgent.prewarm() }
 
         // ── Kernel event bus + proactive observers ──────────────────────────
         // Each observer runs as a sleeping background Task — 0 CPU until an event fires.
@@ -286,6 +336,8 @@ import SottoCore
         BatteryObserver.start()       // IOKit, checks every 60 s
         CalendarProximityObserver.start() // EventKit, checks every 2 min
         NetworkObserver.start()       // NWPathMonitor, kernel callbacks, 0 CPU idle
+        GitObserver.start()           // polls git repos every 5 min for changes/conflicts
+        Task { await MicrotaskQueue.shared.start() }  // background task queue, drains on idle
 
         // Seed the CapabilityRegistry with all built-in tool descriptors, then bind the
         // kernel's reflex executors. The kernel uses the registry to route intents to the
@@ -329,6 +381,21 @@ import SottoCore
 
         Task { @MainActor in
             await self.loadModel()
+        }
+
+        // Show a brief startup HUD so the user always knows Sotto launched and
+        // can see where the HUD lives — even when the menu bar icon is hidden by overflow.
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            self.hud.showResult("✦ Sotto is running  •  ⌘⇧K to dictate", autoHideAfter: 3.5)
+            
+            // Show onboarding guide automatically on first launch
+            let hasShown = UserDefaults.standard.bool(forKey: "sotto_hasShownOnboarding")
+            if !hasShown {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                self.showJarvisGuide()
+                UserDefaults.standard.set(true, forKey: "sotto_hasShownOnboarding")
+            }
         }
     }
 
@@ -429,31 +496,29 @@ import SottoCore
             hud.show("●  Listening  [0:00 / 5:00]")
             NSSound(named: "Pop")?.play()
 
-            // Start visualization timer
+            // Waveform at 15fps (66ms). Skip silent frames — saves ~65% of main-thread
+            // wakeups during the typical mostly-silent recording session.
             self.visualizerTimer?.invalidate()
-            self.visualizerTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            self.visualizerTimer = Timer.scheduledTimer(withTimeInterval: 0.066, repeats: true) { [weak self] _ in
                 guard let self = self else { return }
                 Task { @MainActor in
                     guard case .recording = self.state else { return }
                     let rms = self.recorder.currentRMS
+                    guard rms > 0.005 else { return }
                     let bars = self.waveform(for: rms)
-                    
                     let elapsed = Date().timeIntervalSince(self.recordingStart ?? Date())
-                    let minutes = Int(elapsed) / 60
-                    let seconds = Int(elapsed) % 60
-                    let timeStr = String(format: "%d:%02d", minutes, seconds)
-                    
+                    let timeStr = String(format: "%d:%02d", Int(elapsed) / 60, Int(elapsed) % 60)
                     self.hud.show("●  Listening  \(bars)  [\(timeStr) / 5:00]")
                 }
             }
 
-            // Auto-stop after 300 seconds (5 minutes safety timeout)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 300) { [weak self] in
-                guard let self = self else { return }
-                Task { @MainActor in
-                    guard case .recording = self.state else { return }
-                    self.endRecording()
-                }
+            // Cancellable 5-minute auto-stop — endRecording() cancels this immediately
+            // so there is never a phantom-firing GCD timer from a prior recording session.
+            recordingTimeoutTask?.cancel()
+            recordingTimeoutTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(300))
+                guard let self, case .recording = self.state else { return }
+                self.endRecording()
             }
         } catch {
             state = .error("Mic error: \(error.localizedDescription)")
@@ -464,6 +529,8 @@ import SottoCore
 
     func endRecording() {
         guard case .recording = state else { return }
+        recordingTimeoutTask?.cancel()
+        recordingTimeoutTask = nil
         visualizerTimer?.invalidate()
         visualizerTimer = nil
 
@@ -643,4 +710,79 @@ func hasRepetitiveLoops(_ text: String) -> Bool {
         }
     }
     return false
+}
+
+// MARK: - Jarvis Help & Guide Onboarding Extension
+extension AppController {
+    @MainActor func showJarvisGuide() {
+        let guideText = AppController.generateJarvisGuideText()
+        explanationController.show(text: guideText, title: "Jarvis Help & Guide")
+    }
+
+    static func generateJarvisGuideText() -> String {
+        var text = """
+        ==================================================
+                      SOTTO / JARVIS SYSTEM GUIDE
+        ==================================================
+        
+        Welcome to Sotto, your privacy-first, fully offline on-device AI assistant for Mac!
+        
+        Sotto operates in two modes:
+        1. Dictation Mode (⌘⇧K / PTT):
+           Polishes your speech (fixing grammar/filler words) and inserts it directly into the active app.
+           
+        2. Jarvis Mode (⌘⇧J / PTT):
+           Your offline AI tool-calling assistant. It understands your intent, automatically chooses the right tools, and executes commands locally.
+           
+        --------------------------------------------------
+        HOW TO USE
+        --------------------------------------------------
+        - Push-To-Talk: Press and hold ⌘⇧J (Jarvis) or ⌘⇧K (Dictation). Speak while holding, then release to execute.
+        - Tap-To-Talk: Toggle in Settings. Tap once to start listening, and Sotto will automatically stop when you are silent.
+        - Wake Word: If enabled in Settings, say "Hey Jarvis" hands-free!
+        
+        --------------------------------------------------
+        POPULAR COMMAND EXAMPLES
+        --------------------------------------------------
+        Try speaking these commands in Jarvis Mode to test the system:
+        
+        - "what is the weather like in Berlin today?"
+        - "open Spotify and play some jazz music"
+        - "turn the volume down to twenty percent"
+        - "open Safari to apple.com"
+        - "search Wikipedia for quantum computing details"
+        - "read what is currently on the screen"
+        - "find files larger than 100 megabytes in my home folder"
+        - "explain why this compiler error about actor isolation occurs"
+        
+        --------------------------------------------------
+        AVAILABLE NATIVE TOOLS FOR JARVIS
+        --------------------------------------------------
+        Here are the tools currently configured and ready for Jarvis:
+        
+        """
+        
+        #if canImport(FoundationModels)
+        if #available(macOS 26.0, *) {
+            let tools = JarvisToolbox.all()
+            for (idx, tool) in tools.enumerated() {
+                text += "\(idx + 1). \(tool.name)\n"
+                text += "   Description: \(tool.description)\n\n"
+            }
+        } else {
+            text += "Native Apple Foundation Model tools require macOS 26.0 or later.\n"
+        }
+        #else
+        text += "Native Apple Foundation Model tools require macOS 26.0 or later.\n"
+        #endif
+        
+        text += """
+        --------------------------------------------------
+        TIPS FOR TESTING & DEVELOPING
+        --------------------------------------------------
+        - Logs: View real-time logs using the "Show Console" menu item.
+        - Custom Vocab: Add custom jargon and acronyms under Settings. Sotto will automatically learn them to improve transcription spelling!
+        """
+        return text
+    }
 }

@@ -110,8 +110,11 @@ actor Kernel {
         // compound "open Spotify and play song" resolves entirely at reflex tier (0 tokens).
         bindReflex("media_play") { intent in
             let lower = intent.lowercased()
-            // "open Spotify" / "launch Spotify" → just open the app, don't force play.
-            if lower.contains("spotify") && lower.contains("open") || lower.contains("launch") {
+            // "open/launch Spotify" → just open the app, don't force play.
+            // Parentheses are critical: without them `&&` binds tighter than `||` and ANY
+            // utterance containing "launch" (e.g. "launch my email") would match.
+            if (lower.contains("spotify") && lower.contains("open")) ||
+               (lower.contains("spotify") && lower.contains("launch")) {
                 let ok = await MainActor.run { CommandEngine.openApp(named: "Spotify") }
                 return ok ? "Opening Spotify." : nil
             }
@@ -133,21 +136,27 @@ actor Kernel {
 
         // Spotlight file search — "find file X", "where is X", "locate X"
         // Uses mdfind, returns top 3 names. 0 tokens, ~50 ms.
+        // Process.waitUntilExit() is blocking, so we offload to a global queue to avoid
+        // starving the Swift cooperative thread pool.
         bindReflex("spotlight_search_files") { intent in
             guard let query = Kernel.fileQuery(from: intent) else { return nil }
-            let p = Process(), pipe = Pipe()
-            p.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
-            p.arguments = ["-name", query]
-            p.standardOutput = pipe
-            p.standardError = Pipe()
-            try? p.run(); p.waitUntilExit()
-            let raw = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            let names = raw.components(separatedBy: "\n")
-                .filter { !$0.isEmpty }
-                .prefix(3)
-                .map { URL(fileURLWithPath: $0).lastPathComponent }
-            guard !names.isEmpty else { return nil }  // no match → escalate to AI
-            return "Found: \(names.joined(separator: ", "))"
+            return await withCheckedContinuation { continuation in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let p = Process(), pipe = Pipe()
+                    p.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
+                    p.arguments = ["-name", query]
+                    p.standardOutput = pipe
+                    p.standardError = Pipe()
+                    guard (try? p.run()) != nil else { continuation.resume(returning: nil); return }
+                    p.waitUntilExit()
+                    let raw = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                    let names = raw.components(separatedBy: "\n")
+                        .filter { !$0.isEmpty }
+                        .prefix(3)
+                        .map { URL(fileURLWithPath: $0).lastPathComponent }
+                    continuation.resume(returning: names.isEmpty ? nil : "Found: \(names.joined(separator: ", "))")
+                }
+            }
         }
     }
 

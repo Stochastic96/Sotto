@@ -47,15 +47,47 @@ actor MLXEngine {
         }
     }
 
-    func generate(systemPrompt: String, userPrompt: String, temperature: Float, maxTokens: Int) async throws -> String {
+    func generate(
+        systemPrompt: String,
+        userPrompt: String,
+        history: [(user: String, assistant: String)] = [],
+        temperature: Float,
+        maxTokens: Int,
+        onProgress: (@Sendable @MainActor (String) -> Void)? = nil
+    ) async throws -> String {
         guard let container else {
             throw NSError(domain: "MLXEngine", code: -2,
                           userInfo: [NSLocalizedDescriptionKey: "MLX model not loaded."])
         }
         var params = GenerateParameters(temperature: temperature)
         params.maxTokens = maxTokens
-        let session = ChatSession(container, instructions: systemPrompt, generateParameters: params)
-        return try await session.respond(to: userPrompt)
+        
+        let session: ChatSession
+        if history.isEmpty {
+            session = ChatSession(container, instructions: systemPrompt, generateParameters: params)
+        } else {
+            var chatHistory: [Chat.Message] = []
+            for turn in history {
+                chatHistory.append(.user(turn.user))
+                chatHistory.append(.assistant(turn.assistant))
+            }
+            session = ChatSession(container, instructions: systemPrompt, history: chatHistory, generateParameters: params)
+        }
+        
+        if let onProgress {
+            let stream = session.streamResponse(to: userPrompt)
+            var accumulated = ""
+            for try await chunk in stream {
+                accumulated += chunk
+                let cleaned = SottoIntelligence.cleanup(accumulated)
+                if !cleaned.isEmpty {
+                    await onProgress(cleaned)
+                }
+            }
+            return accumulated
+        } else {
+            return try await session.respond(to: userPrompt)
+        }
     }
 
     /// Free the resident weights (e.g. on memory pressure on 8 GB Macs).
@@ -68,7 +100,14 @@ actor MLXEngine {
 
     func prepareIfNeeded() async -> Bool { false }
 
-    func generate(systemPrompt: String, userPrompt: String, temperature: Float, maxTokens: Int) async throws -> String {
+    func generate(
+        systemPrompt: String,
+        userPrompt: String,
+        history: [(user: String, assistant: String)] = [],
+        temperature: Float,
+        maxTokens: Int,
+        onProgress: (@Sendable @MainActor (String) -> Void)? = nil
+    ) async throws -> String {
         throw NSError(domain: "MLXEngine", code: -1,
                       userInfo: [NSLocalizedDescriptionKey: "MLX is not built into this binary."])
     }

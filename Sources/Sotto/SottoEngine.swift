@@ -16,7 +16,7 @@ final class SottoEngine {
     // MARK: - Sub-components (all owned here)
     private let recorder   = AudioRecorder()
     private let transcriber = Transcriber()
-    private var qwen: QwenRefiner?
+    private var intelligence: SottoIntelligence?
     private var coordinator: AnyObject?    // CoordinatorAgent (macOS 26 only)
 
     var lastActiveApp: NSRunningApplication?
@@ -27,9 +27,9 @@ final class SottoEngine {
         if #available(macOS 26.0, *) {
             coordinator = CoordinatorAgent()
         }
-        let refiner = QwenRefiner { _ in }
-        qwen = refiner
-        await refiner.preload()
+        let intel = SottoIntelligence { _ in }
+        intelligence = intel
+        await intel.preload()
     }
 
     func start() {
@@ -117,8 +117,8 @@ final class SottoEngine {
         var text = raw
         let wordCount = raw.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
 
-        // Polish with Qwen if long enough
-        if wordCount >= 6, let q = qwen {
+        // Polish with Apple Intelligence if long enough
+        if wordCount >= 6, let q = intelligence {
             if let polished = try? await q.refine(raw, context: ContextDetector.current(), history: []),
                isAcceptablePolish(original: raw, polished: polished) {
                 text = polished
@@ -142,9 +142,12 @@ final class SottoEngine {
     // MARK: - Assistant / Jarvis path
 
     private func runAssistant(_ raw: String, samples: [Float], start: CFAbsoluteTime) async {
+        if await CooperativeWorkflowManager.shared.handleResponse(raw) {
+            return
+        }
+
         // Tier 0: zero-latency reflexes
         if let shortcut = CommandEngine.checkZeroLatencyShortcut(for: raw) {
-            let output = await SottoOutput.shared // already @MainActor
             let action = shortcut.command
             var reply = shortcut.hudMessage
             if action.hasPrefix("native:") {
