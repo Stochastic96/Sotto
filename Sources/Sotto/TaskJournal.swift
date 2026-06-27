@@ -4,8 +4,6 @@ import Foundation
 /// ("what did you do today?"). Separate from DatasetLogger (which captures audio +
 /// full training pairs) — this is a small, fast, text-only log for recall.
 enum TaskJournal {
-    private static let io = DispatchQueue(label: "sotto.task.journal")
-
     private static var fileURL: URL {
         SettingsController.sottoDataURL.appendingPathComponent("journal.jsonl")
     }
@@ -15,7 +13,7 @@ enum TaskJournal {
         // Also feed semantic memory so Jarvis can recall past interactions by meaning.
         let shortReply = reply.count > 160 ? String(reply.prefix(160)) + "…" : reply
         SemanticMemory.remember("\(command) → \(shortReply)", kind: "journal")
-        io.async {
+        Task.detached {
             let record: [String: Any] = [
                 "ts": ISO8601DateFormatter().string(from: Date()),
                 "command": command,

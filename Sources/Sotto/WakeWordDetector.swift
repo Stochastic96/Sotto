@@ -84,7 +84,7 @@ final class WakeWordDetector {
                     // Stop to release audio input for primary dictation recording
                     self.stop()
                     
-                    DispatchQueue.main.async {
+                    Task { @MainActor [self] in
                         self.onWakeWordDetected?()
                     }
                 }

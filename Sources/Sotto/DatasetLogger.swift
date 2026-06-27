@@ -7,7 +7,6 @@ import Foundation
 final class DatasetLogger {
     static let shared = DatasetLogger()
 
-    private let io = DispatchQueue(label: "sotto.dataset.logger")
     private let baseDir: URL
     private let audioDir: URL
     private let jsonlURL: URL
@@ -26,7 +25,7 @@ final class DatasetLogger {
              response: String,
              kind: String,
              samples: [Float]? = nil) {
-        io.async {
+        Task.detached { [self] in
             let id = UUID().uuidString
             var audioRel = ""
             if let samples, !samples.isEmpty,

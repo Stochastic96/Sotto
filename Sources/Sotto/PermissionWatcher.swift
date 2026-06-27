@@ -15,7 +15,7 @@ import Speech
 final class PermissionWatcher {
     static let shared = PermissionWatcher()
 
-    private var timer: Timer?
+    private var pollingTask: Task<Void, Never>?
     private var lastAX  = false
     private var lastMic = false
     private var launched = false
@@ -27,14 +27,16 @@ final class PermissionWatcher {
         lastMic = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         launched = true
 
-        timer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.poll() }
+        pollingTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                self?.poll()
+            }
         }
-        timer?.tolerance = 0.5
         print("[WATCH] Permission watcher started — AX:\(lastAX ? "✅" : "❌") Mic:\(lastMic ? "✅" : "❌")")
     }
 
-    func stop() { timer?.invalidate(); timer = nil }
+    func stop() { pollingTask?.cancel(); pollingTask = nil }
 
     // MARK: - Poll
 

@@ -6,7 +6,7 @@ import AppKit
 @MainActor final class LogConsoleWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var textView: NSTextView?
-    private var timer: Timer?
+    private var tailingTask: Task<Void, Never>?
     private var fileOffset: UInt64 = 0
 
     private var logURL: URL { SettingsController.sottoLogURL }
@@ -55,9 +55,12 @@ import AppKit
     }
 
     private func startTailing() {
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
+        tailingTask?.cancel()
+        tailingTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(700))
+                self?.tick()
+            }
         }
     }
 
@@ -82,7 +85,7 @@ import AppKit
     }
 
     func windowWillClose(_ notification: Notification) {
-        timer?.invalidate()
-        timer = nil
+        tailingTask?.cancel()
+        tailingTask = nil
     }
 }
