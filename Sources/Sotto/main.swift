@@ -7,32 +7,46 @@ private var globalCleanup: (() -> Void)?
 struct SottoApp {
     private static var delegate: AppDelegate?
     
-    static func main() async {
+    static func main() {
         if CommandLine.arguments.contains("--run-tests") || CommandLine.arguments.contains("--evaluate") || CommandLine.arguments.contains("--run-evaluation") {
             setvbuf(stdout, nil, _IONBF, 0)
             setvbuf(stderr, nil, _IONBF, 0)
         }
 
         if CommandLine.arguments.contains("--run-tests") {
-            let testSuccess = await runSottoIntegrationTests()
+            var finished = false
+            var testSuccess = false
+            Task {
+                testSuccess = await runSottoIntegrationTests()
+                finished = true
+            }
+            while !finished {
+                RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1))
+            }
             exit(testSuccess ? 0 : 1)
         }
 
         if CommandLine.arguments.contains("--evaluate") || CommandLine.arguments.contains("--run-evaluation") {
+            var finished = false
+            var success = false
             let forceMock = CommandLine.arguments.contains("--mock")
-            let success = await JarvisEvaluation.run(forceMock: forceMock)
+            Task {
+                success = await JarvisEvaluation.run(forceMock: forceMock)
+                finished = true
+            }
+            while !finished {
+                RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1))
+            }
             exit(success ? 0 : 1)
         }
 
-        // AppKit app loop runs on MainActor
-        await MainActor.run {
-            let app = NSApplication.shared
-            app.setActivationPolicy(.accessory)
-            let del = AppDelegate()
-            self.delegate = del
-            app.delegate = del
-            app.run()
-        }
+        // AppKit app loop runs on MainActor/MainThread
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let del = AppDelegate()
+        self.delegate = del
+        app.delegate = del
+        app.run()
     }
 }
 
