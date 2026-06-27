@@ -37,8 +37,21 @@ actor CooperativeWorkflowManager {
             // Reset pending state immediately to prevent loops
             await setPending(.none)
             
-            let isYes = ["yes", "yeah", "yup", "sure", "y", "of course", "i am", "correct", "haan"].contains(where: { clean.contains($0) })
-            let isNo = ["no", "nope", "nah", "not planning", "staying", "na", "nahi"].contains(where: { clean.contains($0) })
+            let words = clean.components(separatedBy: CharacterSet.alphanumerics.inverted).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            let isYes = ["yes", "yeah", "yup", "sure", "y", "of course", "i am", "correct", "haan"].contains { phrase in
+                if phrase.contains(" ") {
+                    return clean.contains(phrase)
+                } else {
+                    return words.contains(phrase)
+                }
+            }
+            let isNo = ["no", "nope", "nah", "not planning", "staying", "na", "nahi"].contains { phrase in
+                if phrase.contains(" ") {
+                    return clean.contains(phrase)
+                } else {
+                    return words.contains(phrase)
+                }
+            }
             
             if isYes {
                 print("[WORKFLOW] User responded YES to weather outside. Triggering transit search.")
