@@ -100,8 +100,9 @@ public class ScreenParser {
 
         var frameValue: AnyObject?
         var frame = CGRect.zero
-        if copyAttr(element, frameAttr as CFString, &frameValue) == .success {
-            AXValueGetValue(frameValue as! AXValue, .cgRect, &frame)
+        if copyAttr(element, frameAttr as CFString, &frameValue) == .success,
+           let frameVal = frameValue {
+            AXValueGetValue(frameVal as! AXValue, .cgRect, &frame)
         }
 
         let isInteractive = isInteractiveRole(role) || (role == "AXStaticText" && !(title ?? "").isEmpty)

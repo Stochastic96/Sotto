@@ -51,7 +51,7 @@ enum GitObserver {
         let paths = repos as CFArray
         let callback: FSEventStreamCallback = { _, _, numEvents, pathsRef, _, _ in
             // pathsRef is UnsafeMutableRawPointer (non-optional) when kFSEventStreamCreateFlagUseCFTypes is set
-            let paths = Unmanaged<CFArray>.fromOpaque(pathsRef).takeUnretainedValue() as! [String]
+            guard let paths = Unmanaged<CFArray>.fromOpaque(pathsRef).takeUnretainedValue() as? [String] else { return }
             Task.detached(priority: .background) {
                 let changed = Set(paths.compactMap { p -> String? in
                     GitObserver.watchedRepos.first { p.hasPrefix($0) }
@@ -78,7 +78,7 @@ enum GitObserver {
 
     private static func startRemotePollLoop() async {
         while true {
-            try? await Task.sleep(nanoseconds: UInt64(remotePollInterval * 1_000_000_000))
+            try? await Task.sleep(for: .seconds(remotePollInterval))
             await checkAll()
         }
     }

@@ -37,8 +37,7 @@ import SottoCore
 
         let scrollView = NSTextView.scrollableTextView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
-        // scrollableTextView() is documented to vend an NSTextView document view.
-        let textView = scrollView.documentView as! NSTextView
+        guard let textView = scrollView.documentView as? NSTextView else { return }
         textView.isEditable = true
         textView.isSelectable = true
         textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)

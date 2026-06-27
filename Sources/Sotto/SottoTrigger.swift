@@ -68,7 +68,7 @@ final class SottoTrigger {
                 guard self?.suspended == false else { return }
                 await EventBus.shared.emit(.wakeWordDetected)
                 // Restart after brief delay so it's ready for the next command
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                try? await Task.sleep(for: .seconds(3))
                 self?.startWakeWord()
             }
         }
@@ -145,7 +145,10 @@ private final class WakeSession {
 
     private func restart() {
         stop()
-        DispatchQueue.global().asyncAfter(deadline: .now() + 1) { [weak self] in self?.start() }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            self?.start()
+        }
     }
 }
 

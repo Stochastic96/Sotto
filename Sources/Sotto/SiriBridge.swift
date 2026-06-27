@@ -30,10 +30,10 @@ enum SiriBridge {
         let focused = await waitForSiriFocus()
         if !focused {
             // Fallback sleep if focus detection fails or is slow
-            try? await Task.sleep(nanoseconds: 400_000_000)
+            try? await Task.sleep(for: .milliseconds(400))
         }
         await injector.inject(prompt, fileURL: nil)        // pasteboard + ⌘V (reused)
-        try? await Task.sleep(nanoseconds: 150_000_000)
+        try? await Task.sleep(for: .milliseconds(150))
         await injector.pressReturn()
     }
 
@@ -46,7 +46,7 @@ enum SiriBridge {
                front.bundleIdentifier == "com.apple.Siri" || front.localizedName?.lowercased().contains("siri") == true {
                 return true
             }
-            try? await Task.sleep(nanoseconds: 30_000_000) // check every 30ms
+            try? await Task.sleep(for: .milliseconds(30)) // check every 30ms
         }
         return false
     }
@@ -55,7 +55,7 @@ enum SiriBridge {
     @MainActor
     static func waitForSiriDismiss(timeout: TimeInterval = 15.0) async {
         _ = await waitForSiriFocus(timeout: 2.0)
-        try? await Task.sleep(nanoseconds: 500_000_000) // ensure Siri window is fully active
+        try? await Task.sleep(for: .milliseconds(500)) // ensure Siri window is fully active
         let start = Date()
         while Date().timeIntervalSince(start) < timeout {
             if let front = NSWorkspace.shared.frontmostApplication {
@@ -64,7 +64,7 @@ enum SiriBridge {
                     break
                 }
             }
-            try? await Task.sleep(nanoseconds: 100_000_000) // check every 100ms
+            try? await Task.sleep(for: .milliseconds(100)) // check every 100ms
         }
     }
 

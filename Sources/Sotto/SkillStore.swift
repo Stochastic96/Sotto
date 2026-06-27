@@ -113,6 +113,10 @@ enum SkillStore {
         let ext = skill.language == "applescript" ? "applescript" : "sh"
         let fileURL = scriptsDir.appendingPathComponent("\(target).\(ext)")
         try? skill.body.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        // Register the skill trigger dynamically with CommandEngine so it can run zero-latency
+        CommandEngine.registerSkillTrigger(skill.trigger, skillName: skill.name)
+
         return "Enabled skill '\(target)'. Jarvis can now run it."
     }
 

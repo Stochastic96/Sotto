@@ -62,7 +62,7 @@ final class PermissionCoordinator {
                      detail: "Enable Sotto in System Settings → Privacy → Accessibility, then re-launch.")
             // Poll every 2s; once granted, continue automatically
             for _ in 0..<30 {                           // up to 60s
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                try? await Task.sleep(for: .seconds(2))
                 if AXIsProcessTrusted() { break }
             }
             if !AXIsProcessTrusted() { win.dismiss(); return }
@@ -75,7 +75,7 @@ final class PermissionCoordinator {
         // Done
         UserDefaults.standard.set(true, forKey: Self.doneKey)
         win.showDone()
-        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        try? await Task.sleep(for: .seconds(2))
         win.dismiss()
         logStatus()
     }

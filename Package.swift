@@ -32,7 +32,8 @@ let package = Package(
             ],
             path: "Sources/Sotto",
             swiftSettings: {
-                let settings: [SwiftSetting] = [.define("SOTTO_MLX")]
+                var settings: [SwiftSetting] = [.define("SOTTO_MLX")]
+                settings.append(.define("SOTTO_FM27"))
                 return settings
             }()
         ),

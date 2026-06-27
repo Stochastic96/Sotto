@@ -108,7 +108,7 @@ struct KeySimulator {
         up.flags = flags
         
         down.post(tap: .cghidEventTap)
-        try? await Task.sleep(nanoseconds: 25_000_000) // 25ms delay
+        try? await Task.sleep(for: .milliseconds(25)) // 25ms delay
         up.post(tap: .cghidEventTap)
         return true
     }

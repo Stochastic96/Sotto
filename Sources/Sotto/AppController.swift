@@ -144,6 +144,7 @@ import SottoCore
 
     func start() {
         print("[SOTTO-APP] AppController.start() called")
+        CommandEngine.registerAllEnabledSkills()
 
         // Prevent App Nap: Keep Sotto awake and responsive to global hotkeys and audio recording
         // .latencyCritical keeps the event-delivery path hot so hotkeys fire instantly,
@@ -167,7 +168,7 @@ import SottoCore
                 let limit: TimeInterval
                 switch self.state {
                 case .transcribing: limit = 20   // transcribe has an 8s internal timeout
-                case .polishing:    limit = 25   // polish has a 15s internal timeout
+                case .polishing:    limit = 45   // increased from 25 to allow for cold-start model load or complex tool loops
                 default:            return
                 }
                 if stuckFor > limit {
@@ -386,13 +387,13 @@ import SottoCore
         // Show a brief startup HUD so the user always knows Sotto launched and
         // can see where the HUD lives — even when the menu bar icon is hidden by overflow.
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            try? await Task.sleep(for: .seconds(1.5))
             self.hud.showResult("✦ Sotto is running  •  ⌘⇧K to dictate", autoHideAfter: 3.5)
             
             // Show onboarding guide automatically on first launch
             let hasShown = UserDefaults.standard.bool(forKey: "sotto_hasShownOnboarding")
             if !hasShown {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                try? await Task.sleep(for: .seconds(1))
                 self.showJarvisGuide()
                 UserDefaults.standard.set(true, forKey: "sotto_hasShownOnboarding")
             }
@@ -426,7 +427,7 @@ import SottoCore
             hud.show("⏳ Loading speech model…")
             NSSound(named: "Basso")?.play()
             Task {
-                try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+                try? await Task.sleep(for: .seconds(2)) // 2 seconds
                 if case .loadingModel = self.state {
                     self.hud.hide()
                 }
@@ -665,7 +666,7 @@ import SottoCore
         let scrollView = NSTextView.scrollableTextView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         
-        let textView = scrollView.documentView as! NSTextView
+        guard let textView = scrollView.documentView as? NSTextView else { return }
         self.textView = textView
         textView.isEditable = false
         textView.isSelectable = true

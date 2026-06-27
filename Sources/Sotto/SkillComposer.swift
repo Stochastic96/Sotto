@@ -108,7 +108,7 @@ actor SkillComposer {
         }
 
         // Give each step time to complete before triggering the next.
-        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        try? await Task.sleep(for: .seconds(2))
     }
 
 #if canImport(FoundationModels)

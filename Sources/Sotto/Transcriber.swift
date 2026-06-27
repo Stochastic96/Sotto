@@ -141,7 +141,8 @@ final class Transcriber {
                     lock.unlock()
                 }
 
-                DispatchQueue.global().asyncAfter(deadline: .now() + 8.0) {
+                Task.detached {
+                    try? await Task.sleep(for: .seconds(8))
                     lock.lock()
                     if finished { lock.unlock(); return }
                     finished = true

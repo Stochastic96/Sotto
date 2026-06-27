@@ -46,7 +46,7 @@ enum BatteryObserver {
                 }
             }
 
-            try? await Task.sleep(nanoseconds: 60_000_000_000) // 60 s
+            try? await Task.sleep(for: .seconds(60)) // 60 s
         }
     }
 

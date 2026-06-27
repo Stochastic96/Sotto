@@ -59,7 +59,7 @@ actor CooperativeWorkflowManager {
                 AppController.shared?.speak("Great! Let me check the transit schedule for you.")
                 
                 // Let siri handle the route lookup natively
-                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                try? await Task.sleep(for: .seconds(1.2))
                 await SiriBridge.send("Show bus timings to work")
                 
                 AppController.shared?.hud.showResult("✓ Opened transit route in Siri AI")

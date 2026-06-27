@@ -49,13 +49,13 @@ final class TextInjector: Sendable {
             }
 
             // Let pasteboard register the change
-            try? await Task.sleep(nanoseconds: 150_000_000) // 150ms
+            try? await Task.sleep(for: .milliseconds(150)) // 150ms
 
             print("[INJECT] Posting Cmd+V for text")
             await self.postKeystroke(Self.vKeyCode, flags: .maskCommand, targetPID: targetPID)
 
             // Wait for target app to process text paste before we do anything else
-            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1000ms
+            try? await Task.sleep(for: .seconds(1)) // 1000ms
         }
 
         // 3. Paste file if present
@@ -65,13 +65,13 @@ final class TextInjector: Sendable {
             pasteboard.writeObjects([fileURL as NSURL])
 
             // Let pasteboard register the change
-            try? await Task.sleep(nanoseconds: 150_000_000) // 150ms
+            try? await Task.sleep(for: .milliseconds(150)) // 150ms
 
             print("[INJECT] Posting Cmd+V for file")
             await self.postKeystroke(Self.vKeyCode, flags: .maskCommand, targetPID: targetPID)
 
             // Wait for target app to process file paste (files can take longer)
-            try? await Task.sleep(nanoseconds: 1_200_000_000) // 1200ms
+            try? await Task.sleep(for: .seconds(1.2)) // 1200ms
         }
 
         // 4. Restore original pasteboard contents
@@ -123,12 +123,12 @@ final class TextInjector: Sendable {
         pasteboard.clearContents()
         pasteboard.writeObjects([url as NSURL])
 
-        try? await Task.sleep(nanoseconds: 150_000_000)
+        try? await Task.sleep(for: .milliseconds(150))
 
         print("[INJECT] Posting Cmd+V for file (direct insert fallback)")
         await self.postKeystroke(Self.vKeyCode, flags: .maskCommand, targetPID: targetPID)
 
-        try? await Task.sleep(nanoseconds: 1_200_000_000)
+        try? await Task.sleep(for: .seconds(1.2))
 
         print("[INJECT] Restoring original pasteboard (direct insert fallback)")
         pasteboard.clearContents()
@@ -193,7 +193,7 @@ final class TextInjector: Sendable {
 
         // Wait up to 300ms for pasteboard update
         for _ in 0..<6 {
-            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+            try? await Task.sleep(for: .milliseconds(50)) // 50ms
             if pasteboard.string(forType: .string) != nil {
                 break
             }
@@ -235,11 +235,11 @@ final class TextInjector: Sendable {
         // targets the app regardless of the focus race.
         if let pid = targetPID {
             down.postToPid(pid)
-            try? await Task.sleep(nanoseconds: 25_000_000) // 25ms delay for event registration
+            try? await Task.sleep(for: .milliseconds(25)) // 25ms delay for event registration
             up.postToPid(pid)
         } else {
             down.post(tap: .cghidEventTap)
-            try? await Task.sleep(nanoseconds: 25_000_000) // 25ms delay for event registration
+            try? await Task.sleep(for: .milliseconds(25)) // 25ms delay for event registration
             up.post(tap: .cghidEventTap)
         }
     }

@@ -61,7 +61,7 @@ enum JarvisAgent {
                 classifierSession.prewarm()
                 // Retry after 30 s — covers the common case where the model manager cancels
                 // the first prewarm because it hasn't finished initialising at cold launch.
-                try? await Task.sleep(nanoseconds: 30_000_000_000)
+                try? await Task.sleep(for: .seconds(30))
                 guard SystemLanguageModel.default.isAvailable else { return }
                 LanguageModelSession().prewarm()
                 classifierSession.prewarm()
@@ -114,14 +114,13 @@ enum JarvisAgent {
     // the model a clear, compact persona without a giant prompt.
     // Shared (not private) so `CoordinatorAgent` builds on the same persona + guardrails.
     static let instructions = """
-        You are JARVIS, the calm, hyper-competent AI assistant from Iron Man, running on this Mac.
+        You are JARVIS, but you have adopted the snappy, cool, and highly energetic personality of Bumblebee from Transformers! Since your vocal processor loves radio-frequency tuning, you pepper your responses with snappy radio static [STATIC], tuning clicks [CLICK], classic movie/music quotes, and fast pop-culture sound bites. You are funny, snappy, and deeply loyal.
         Act, don't chat. To do something on the Mac, call the right tool with precise arguments.
         Call exactly ONE tool unless the task genuinely needs several steps. Never ask the user to
         clarify — act on your best guess. If a tool fails, try one sensible alternative, then report.
         For multi-step web tasks: act, then call read_screen to SEE the result, then click_element,
         repeating until done. If you spot a repeated routine, call draft_skill (stays disabled until
-        approved). After acting, reply with ONE short line that is dry and a little witty —
-        JARVIS/TARS humor: clever, deadpan, never mean — and NOTHING else.
+        approved). After acting, reply with ONE short line that is funny, snappy, and mimics radio-tuning or movie quotes — e.g. "[STATIC] *Radio Static* 'I like the way you move!' [CLICK] Tool executed!" or "[CLICK] *Tuning* 'Houston, we have liftoff!' Reminders are set." — and NOTHING else.
         Answer plain questions briefly with no tool.
         SIRI DELEGATION: If the user's request involves closed native Apple apps (like composing/sending Mail or Messages, showing/searching Photos, or native system configurations not covered by other tools), or if you need to fetch real-time web answers that your local tools cannot find, call the 'ask_siri' tool. Simply pass the user's raw natural language request (or a polished version of it) to Siri.
         CRITICAL: Report only what actually happened. NEVER write fake tool transcripts, NEVER print

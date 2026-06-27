@@ -187,6 +187,7 @@ extension CapabilityRegistry {
             .init(name: "get_weather",       keywords: ["weather","temperature","forecast"],                latencyMs: 300, tier: .foundationModel, requiresNetwork: true),
             .init(name: "get_system_status", keywords: ["system","status","battery","wifi","disk"],         latencyMs: 200, tier: .foundationModel),
             .init(name: "get_ram_status",    keywords: ["ram","memory","usage"],                            latencyMs: 200, tier: .foundationModel),
+            .init(name: "get_gpu_status",    keywords: ["gpu","graphics","card","metal"],                   latencyMs: 200, tier: .foundationModel),
             .init(name: "read_screen",       keywords: ["read","screen","see","show","what"],               latencyMs: 600, tier: .foundationModel),
             .init(name: "click_element",     keywords: ["click","press","tap","button"],                    latencyMs: 400, tier: .foundationModel),
             .init(name: "search_memory",     keywords: ["remember","recall","memory","said","mentioned"],   latencyMs: 300, tier: .foundationModel),

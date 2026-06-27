@@ -40,7 +40,7 @@ extension AppController {
                 }
             }
             let timeoutTask = Task {
-                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                try? await Task.sleep(for: .seconds(15))
                 refinementTask.cancel()
             }
             do {
@@ -62,7 +62,7 @@ extension AppController {
         if let app = self.lastActiveApp {
             if #available(macOS 14.0, *) { NSApplication.shared.yieldActivation(to: app) }
             app.activate(options: [])
-            try? await Task.sleep(nanoseconds: 150_000_000)
+            try? await Task.sleep(for: .milliseconds(150))
         }
         await injector.inject(text, fileURL: nil, targetPID: lastActiveApp?.processIdentifier)
         
@@ -78,7 +78,7 @@ extension AppController {
         print("[BENCHMARK] Dictation \(String(format: "%.0f", total * 1000))ms (polish: \(String(format: "%.0f", polishDuration * 1000))ms)")
         hud.show("✓ Done (\(String(format: "%.1f", total))s)")
         state = .idle
-        Task { try? await Task.sleep(nanoseconds: 1_500_000_000); hud.hide() }
+        Task { try? await Task.sleep(for: .seconds(1.5)); hud.hide() }
     }
     
     /// Sanity-checks an AI-polished dictation against truncation / expansion / loops.

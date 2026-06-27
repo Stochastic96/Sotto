@@ -122,12 +122,44 @@ public func runCapabilityConsistencyCheck() async -> Bool {
     return ok
 }
 
+public func runDynamicSkillTriggerTest() -> Bool {
+    print("[TEST] Running dynamic skill trigger check...")
+    CommandEngine.registerSkillTrigger("clean my desktop", skillName: "clean_desktop")
+    
+    guard let match = CommandEngine.checkZeroLatencyShortcut(for: "clean my desktop") else {
+        print("❌ Dynamic skill trigger failed to match exact phrase.")
+        return false
+    }
+    if match.command != "skill:clean_desktop" {
+        print("❌ Dynamic skill trigger match has wrong command: \(match.command)")
+        return false
+    }
+    
+    guard let matchPunct = CommandEngine.checkZeroLatencyShortcut(for: "clean my desktop.") else {
+        print("❌ Dynamic skill trigger failed to match phrase with trailing punctuation.")
+        return false
+    }
+    if matchPunct.command != "skill:clean_desktop" {
+        print("❌ Dynamic skill trigger match with punctuation has wrong command: \(matchPunct.command)")
+        return false
+    }
+    
+    if let mismatch = CommandEngine.checkZeroLatencyShortcut(for: "clean my desk") {
+        print("❌ Dynamic skill trigger matched incorrect phrase: \(mismatch.command)")
+        return false
+    }
+    
+    print("✅ Dynamic skill trigger check: PASSED")
+    return true
+}
+
 public func runSottoIntegrationTests() async -> Bool {
     print("=== STARTING SOTTO INTEGRATION TESTS ===")
     var success: Bool
     if #available(macOS 26.0, *) {
         success = await runCoordinatorAgentIntegrationTest()
         if success { success = await runCapabilityConsistencyCheck() }
+        if success { success = runDynamicSkillTriggerTest() }
         if success {
             print("[TEST] Verifying JarvisEvaluation runner (forceMock)...")
             success = await JarvisEvaluation.run(forceMock: true)

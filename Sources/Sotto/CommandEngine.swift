@@ -45,6 +45,28 @@ enum CommandEngine {
         var windowTitle: String = ""
     }
     
+    private static let skillLock = NSLock()
+    private static var skillTriggers: [String: String] = [:]
+
+    static func registerSkillTrigger(_ trigger: String, skillName: String) {
+        skillLock.lock()
+        defer { skillLock.unlock() }
+        var clean = trigger.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        while clean.hasSuffix(".") || clean.hasSuffix(",") || clean.hasSuffix("?") || clean.hasSuffix("!") {
+            clean.removeLast()
+        }
+        clean = clean.trimmingCharacters(in: .whitespacesAndNewlines)
+        skillTriggers[clean] = skillName
+        print("[ENGINE] Registered skill trigger: '\(clean)' -> skill: '\(skillName)'")
+    }
+
+    static func registerAllEnabledSkills() {
+        let enabledSkills = SkillStore.listAll().filter { $0.enabled }
+        for skill in enabledSkills {
+            registerSkillTrigger(skill.trigger, skillName: skill.name)
+        }
+    }
+
     static func checkZeroLatencyShortcut(for raw: String) -> ZeroLatencyShortcut? {
         let t = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         var cleanT = t
@@ -52,6 +74,19 @@ enum CommandEngine {
             cleanT.removeLast()
         }
         cleanT = cleanT.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Check for registered custom skill triggers
+        skillLock.lock()
+        let matchedSkill = skillTriggers[cleanT]
+        skillLock.unlock()
+
+        if let skillName = matchedSkill {
+            return ZeroLatencyShortcut(
+                command: "skill:\(skillName)",
+                voiceFeedback: "Running skill \(skillName).",
+                hudMessage: "Run Skill: \(skillName)"
+            )
+        }
 
         // Siri triggers (bypasses agent pipelines for instant zero-latency delegation)
         if ["open siri", "launch siri", "start siri", "activate siri", "ask siri", "tell siri", "siri"].contains(cleanT) {
@@ -487,9 +522,9 @@ enum CommandEngine {
                     
                     var cleanText = text
                     for phrase in uploadFolderPhrases + ["upload"] {
-                        let pattern = "\\b\(NSRegularExpression.escapedPattern(for: phrase))\\b"
-                        if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-                            cleanText = regex.stringByReplacingMatches(in: cleanText, options: [], range: NSRange(location: 0, length: (cleanText as NSString).length), withTemplate: "")
+                        let escaped = NSRegularExpression.escapedPattern(for: phrase)
+                        if let regex = try? Regex("\\b\(escaped)\\b").ignoresCase() {
+                            cleanText = cleanText.replacing(regex, with: "")
                         }
                     }
                     text = cleanText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -543,28 +578,15 @@ enum CommandEngine {
         ]
 
         for (pattern, checkStopWords) in patterns {
-            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-                let nsString = text as NSString
-                let results = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
-                if let match = results.first, match.numberOfRanges > 1 {
-                    var fileName = nsString.substring(with: match.range(at: 1))
-
-                    while fileName.hasSuffix(".") || fileName.hasSuffix(",") || fileName.hasSuffix("?") || fileName.hasSuffix("!") || fileName.hasSuffix(":") || fileName.hasSuffix(";") {
-                        fileName.removeLast()
-                    }
-
-                    if checkStopWords {
-                        let lower = fileName.lowercased()
-                        if stopWords.contains(lower) {
-                            continue
-                        }
-                    }
-
-                    if !fileName.isEmpty {
-                        return fileName
-                    }
-                }
+            guard let regex = try? Regex(pattern).ignoresCase(),
+                  let match = text.firstMatch(of: regex),
+                  let captured = match.output[1].substring else { continue }
+            var fileName = String(captured)
+            while fileName.hasSuffix(".") || fileName.hasSuffix(",") || fileName.hasSuffix("?") || fileName.hasSuffix("!") || fileName.hasSuffix(":") || fileName.hasSuffix(";") {
+                fileName.removeLast()
             }
+            if checkStopWords && stopWords.contains(fileName.lowercased()) { continue }
+            if !fileName.isEmpty { return fileName }
         }
         return nil
     }
@@ -947,7 +969,7 @@ enum CommandEngine {
         }
         
         mouseDownEvent.post(tap: .cghidEventTap)
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        try? await Task.sleep(for: .milliseconds(50))
         mouseUpEvent.post(tap: .cghidEventTap)
         return true
     }
@@ -961,33 +983,28 @@ enum CommandEngine {
         ]
         
         for (pattern, _) in patterns {
-            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-                let nsString = text as NSString
-                let results = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
-                if let match = results.first, match.numberOfRanges > 2 {
-                    let folder = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
-                    let file = nsString.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
-                    return (folder, file)
-                }
-            }
+            guard let regex = try? Regex(pattern).ignoresCase(),
+                  let match = text.firstMatch(of: regex),
+                  let folderSub = match.output[1].substring,
+                  let fileSub = match.output[2].substring else { continue }
+            let folder = String(folderSub).trimmingCharacters(in: .whitespacesAndNewlines)
+            let file = String(fileSub).trimmingCharacters(in: .whitespacesAndNewlines)
+            return (folder, file)
         }
-        
+
         // Single match check: only folder
         let folderPatterns = [
             ("in\\s+folder\\s+([a-zA-Z0-9_/.-]+)", false),
             ("in\\s+directory\\s+([a-zA-Z0-9_/.-]+)", false),
             ("under\\s+folder\\s+([a-zA-Z0-9_/.-]+)", false)
         ]
-        
+
         for (pattern, _) in folderPatterns {
-            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-                let nsString = text as NSString
-                let results = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
-                if let match = results.first, match.numberOfRanges > 1 {
-                    let folder = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
-                    return (folder, nil)
-                }
-            }
+            guard let regex = try? Regex(pattern).ignoresCase(),
+                  let match = text.firstMatch(of: regex),
+                  let folderSub = match.output[1].substring else { continue }
+            let folder = String(folderSub).trimmingCharacters(in: .whitespacesAndNewlines)
+            return (folder, nil)
         }
         
         return (nil, nil)
@@ -1069,12 +1086,11 @@ enum CommandEngine {
         
         var cleanText = input
         for phrase in phrases {
-            let pattern = "\\b\(NSRegularExpression.escapedPattern(for: phrase))\\b"
-            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-                cleanText = regex.stringByReplacingMatches(in: cleanText, options: [], range: NSRange(location: 0, length: (cleanText as NSString).length), withTemplate: "")
+            let escaped = NSRegularExpression.escapedPattern(for: phrase)
+            if let regex = try? Regex("\\b\(escaped)\\b").ignoresCase() {
+                cleanText = cleanText.replacing(regex, with: "")
             }
         }
-        
         return cleanText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -1085,15 +1101,14 @@ enum CommandEngine {
             "file named \(fileName)",
             "file \(fileName)"
         ]
-        
+
         var cleanText = input
         for phrase in phrases {
-            let pattern = "\\b\(NSRegularExpression.escapedPattern(for: phrase))\\b"
-            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-                cleanText = regex.stringByReplacingMatches(in: cleanText, options: [], range: NSRange(location: 0, length: (cleanText as NSString).length), withTemplate: "")
+            let escaped = NSRegularExpression.escapedPattern(for: phrase)
+            if let regex = try? Regex("\\b\(escaped)\\b").ignoresCase() {
+                cleanText = cleanText.replacing(regex, with: "")
             }
         }
-        
         return cleanText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -1101,7 +1116,7 @@ enum CommandEngine {
         let t = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         if t.isEmpty { return false }
         
-        let developerKeywords = ["code", "script", "git", "terminal", "cli", "shell", "run command", "compiler", "swift file", "scratch", "develop", "bug", "refactor"]
+        let developerKeywords = ["code", "script", "git", "terminal", "cli", "shell", "run command", "compiler", "swift file", "scratch", "develop", "bug", "refactor", "ram", "gpu", "memory usage", "system status", "hardware", "cpu"]
         for kw in developerKeywords {
             if t.contains(kw) { return false }
         }
@@ -1113,13 +1128,16 @@ enum CommandEngine {
 
         // 2. Reminders & Tasks
         if t.contains("remind me to") || t.contains("create a reminder") || t.contains("add a reminder") || t.contains("new reminder") ||
-            t.hasPrefix("create task") || t.hasPrefix("new task") || t.hasPrefix("add task") {
+            t.hasPrefix("create task") || t.hasPrefix("new task") || t.hasPrefix("add task") ||
+            t.contains("check my reminder") || t.contains("show my reminder") || t.contains("my reminder") {
             return true
         }
 
         // 3. Calendar & Meetings
         if t.contains("schedule a meeting") || t.contains("create a calendar event") || t.contains("add to my calendar") ||
-            t.contains("schedule meeting") || t.hasPrefix("new meeting") || t.hasPrefix("add event") {
+            t.contains("schedule meeting") || t.hasPrefix("new meeting") || t.hasPrefix("add event") ||
+            t.contains("check my calendar") || t.contains("show my calendar") || t.contains("my calendar") ||
+            t.contains("do i have an event") || t.contains("events for today") || t.contains("my schedule") || t.contains("what is my schedule") {
             return true
         }
 
@@ -1134,10 +1152,11 @@ enum CommandEngine {
             return true
         }
 
-        // 6. Sports / Stocks / Factual lookup
+        // 6. Sports / Stocks / Factual lookup / Location search fallback
         if t.contains("stock price of") || t.contains("sports score") || t.contains("who won the game") ||
-            t.hasPrefix("what is the capital of") || t.hasPrefix("how high is") || t.hasPrefix("who is the president of") ||
-            t.hasPrefix("what's the capital of") {
+            t.contains("what is the capital of") || t.contains("how high is") || t.contains("who is the president of") ||
+            t.contains("what's the capital of") || t.contains("where is ") || t.contains("who is ") || t.contains("what is ") ||
+            t.contains("tell me about ") || t.contains("search for ") || t.contains("search google for ") || t.contains("look up ") {
             return true
         }
 

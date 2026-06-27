@@ -427,6 +427,20 @@ struct RAMMemoryStatusTool: Tool {
     }
 }
 
+/// GPU Memory/utilization diagnostics
+@available(macOS 26.0, *)
+struct GPUStatusTool: Tool {
+    let name = "get_gpu_status"
+    let description = "Get the Mac's GPU model, Metal driver support, and active performance status."
+
+    @Generable
+    struct Arguments {}
+
+    func call(arguments: Arguments) async throws -> String {
+        return SystemDiagnostics.getGPUUsage()
+    }
+}
+
 /// geocode locations using Nominatim / OpenStreetMap
 @available(macOS 26.0, *)
 struct LocationGeocoderTool: Tool {
@@ -872,7 +886,7 @@ enum JarvisToolbox {
             SpotifyTool(), WeatherTool(), VolumeTool(), BrightnessTool(),
             OpenWebsiteTool(), OpenAppTool(), CreateNoteTool(), WebSearchTool(),
             ReadScreenTool(), ClickElementTool(), DraftSkillTool(), RunSkillTool(),
-            RecallHistoryTool(), SystemStatusTool(), RAMMemoryStatusTool(),
+            RecallHistoryTool(), SystemStatusTool(), RAMMemoryStatusTool(), GPUStatusTool(),
             LocationGeocoderTool(), WikipediaLookupTool(), MemoryGoalTool(),
             AskClaudeTool(), AskSiriTool(), ReminderTool(), CalendarTool(), PowerStateTool(),
             NetworkDiagnosticsTool(), ClipboardTool(), SpotlightSearchTool(),
@@ -896,8 +910,8 @@ enum JarvisToolbox {
               make: { [WeatherTool()] }),
         Group(keywords: ["volume", "mute", "louder", "quieter", "sound", "brightness", "dim", "brighter"],
               make: { [VolumeTool(), BrightnessTool()] }),
-        Group(keywords: ["battery", "wifi", "wi-fi", "disk", "ram", "memory", "status", "health", "internet", "network", "reachable", "connection"],
-              make: { [SystemStatusTool(), RAMMemoryStatusTool(), NetworkDiagnosticsTool()] }),
+        Group(keywords: ["battery", "wifi", "wi-fi", "disk", "ram", "memory", "status", "health", "internet", "network", "reachable", "connection", "gpu", "graphics"],
+              make: { [SystemStatusTool(), RAMMemoryStatusTool(), GPUStatusTool(), NetworkDiagnosticsTool()] }),
         Group(keywords: ["open", "launch", "app", "website", "url", "browser", "window", "switch", "activate", "foreground"],
               make: { [OpenAppTool(), OpenWebsiteTool(), AppWindowManagerTool()] }),
         Group(keywords: ["search", "google", "look up", "wikipedia", "who is", "what is", "define", "research", "claude", "explain", "news", "latest"],
@@ -908,7 +922,7 @@ enum JarvisToolbox {
               make: { [SpotlightSearchTool()] }),
         Group(keywords: ["lock", "trash", "empty", "sleep", "power"],
               make: { [PowerStateTool()] }),
-        Group(keywords: ["read screen", "click", "button", "link", "on screen", "see", "page", "ocr"],
+        Group(keywords: ["read screen", "click", "button", "link", "on screen", "see", "page", "ocr", "screen"],
               make: { [ReadScreenTool(), ClickElementTool()] }),
         Group(keywords: ["location", "map", "where is", "geocode", "directions", "place", "address"],
               make: { [LocationGeocoderTool()] }),
@@ -916,7 +930,8 @@ enum JarvisToolbox {
               make: { [KeySimulatorTool()] }),
         Group(keywords: ["skill", "learn", "routine", "goal", "remember", "recall", "history", "did you do", "have you",
                          "list", "scripts", "macros", "capabilities", "all my", "what can",
-                         "task", "queue", "later", "when free", "background", "enqueue", "pending"],
+                         "task", "queue", "later", "when free", "background", "enqueue", "pending",
+                         "command", "asked", "ago"],
               make: { [DraftSkillTool(), RunSkillTool(), RecallHistoryTool(), MemoryGoalTool(), MicrotaskTool()] }),
         Group(keywords: ["morning", "brief", "daily", "today", "summary", "wake"],
               make: { [MorningBriefTool()] }),

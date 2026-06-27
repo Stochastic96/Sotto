@@ -49,7 +49,7 @@ enum JarvisDiagnostics {
         )
 
         // Persist to disk so the user can attach it to Feedback Assistant.
-        let dir = URL.sottoDataDirectory.appendingPathComponent("diagnostics")
+        let dir = SettingsController.sottoDataURL.appendingPathComponent("diagnostics")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let filename = "feedback_\(Int(Date().timeIntervalSince1970)).json"
         try? data.write(to: dir.appendingPathComponent(filename))
@@ -63,7 +63,7 @@ enum JarvisDiagnostics {
         #if canImport(FoundationModels)
         guard let lmSession = session as? LanguageModelSession else { return }
         let data = lmSession.logFeedbackAttachment(sentiment: .positive, issues: [])
-        let dir = URL.sottoDataDirectory.appendingPathComponent("diagnostics")
+        let dir = SettingsController.sottoDataURL.appendingPathComponent("diagnostics")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let filename = "feedback_pos_\(Int(Date().timeIntervalSince1970)).json"
         try? data.write(to: dir.appendingPathComponent(filename))
@@ -135,11 +135,4 @@ extension SottoIntelligence {
     }
 }
 
-// MARK: - URL helper
 
-private extension URL {
-    static var sottoDataDirectory: URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return home.appendingPathComponent("Projects/Sotto/sotto-data")
-    }
-}

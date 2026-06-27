@@ -1,13 +1,14 @@
 import Foundation
 import Network
+import Observation
 
-@MainActor
-final class NetworkMonitor: ObservableObject {
+@MainActor @Observable
+final class NetworkMonitor {
     static let shared = NetworkMonitor()
     private let monitor = NWPathMonitor()
     private let queue = DispatchQueue(label: "sotto.network.monitor")
-    
-    @Published private(set) var isReachable = true
+
+    private(set) var isReachable = true
     
     private init() {
         monitor.pathUpdateHandler = { [weak self] path in
@@ -58,7 +59,7 @@ struct ResilientNetworkClient {
                     throw error
                 }
                 print("[NETWORK-RETRY] Attempt \(attempt) failed: \(error.localizedDescription). Retrying in \(delay)s...")
-                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                try await Task.sleep(for: .seconds(delay))
                 delay *= 2.0 // Exponential backoff
             }
         }

@@ -185,4 +185,57 @@ struct SystemDiagnostics {
         }
         return nil
     }
+
+    // --- GPU Status ---
+    static func getGPUUsage() -> String {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
+        task.arguments = ["SPDisplaysDataType"]
+        
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        
+        do {
+            try task.run()
+            task.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let output = String(data: data, encoding: .utf8) {
+                var model = "Apple GPU"
+                var metal = "Supported"
+                let lines = output.components(separatedBy: .newlines)
+                for line in lines {
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    if trimmed.hasPrefix("Chipset Model:") {
+                        model = trimmed.replacingOccurrences(of: "Chipset Model: ", with: "")
+                    }
+                    if trimmed.hasPrefix("Metal:") {
+                        metal = trimmed.replacingOccurrences(of: "Metal: ", with: "")
+                    }
+                }
+                
+                // Let's also check ioreg for active performance statistics
+                let ioregTask = Process()
+                ioregTask.executableURL = URL(fileURLWithPath: "/usr/sbin/ioreg")
+                ioregTask.arguments = ["-d", "1", "-c", "IOAccelerator"]
+                let ioregPipe = Pipe()
+                ioregTask.standardOutput = ioregPipe
+                ioregTask.standardError = FileHandle.nullDevice
+                try ioregTask.run()
+                ioregTask.waitUntilExit()
+                let ioregData = ioregPipe.fileHandleForReading.readDataToEndOfFile()
+                let ioregOutput = String(data: ioregData, encoding: .utf8) ?? ""
+                
+                var utilStr = "Idle"
+                if ioregOutput.lowercased().contains("performance statistics") {
+                    utilStr = "Active"
+                }
+                
+                return "GPU Model: \(model), Status: \(utilStr) (Metal: \(metal))"
+            }
+        } catch {
+            print("[DIAGNOSTICS] Error reading GPU status: \(error)")
+        }
+        return "GPU Model: Apple GPU, Status: Active"
+    }
 }

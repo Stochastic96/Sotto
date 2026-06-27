@@ -54,7 +54,7 @@ final class SottoOutput {
 
     func dismissHUD(after seconds: Double) {
         Task {
-            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            try? await Task.sleep(for: .seconds(seconds))
             hud.hide()
         }
     }
@@ -129,7 +129,7 @@ final class SottoOutput {
     func grabSelection(targetPID: pid_t?) -> String? {
         guard let pid = targetPID else { return nil }
         let app = AXUIElementCreateApplication(pid)
-        var focusedEl: CFTypeRef?
+        var focusedEl: AnyObject?
         guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focusedEl) == .success,
               let el = focusedEl else { return nil }
         var value: CFTypeRef?

@@ -32,7 +32,7 @@ enum ClipboardObserver {
         var lastText = ""
 
         while true {
-            try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5 s
+            try? await Task.sleep(for: .seconds(1.5)) // 1.5 s
 
             let currentCount = NSPasteboard.general.changeCount
             guard currentCount != lastChangeCount else { continue }

@@ -61,7 +61,7 @@ enum DownloadsObserver {
                 guard !filename.hasPrefix("."), !partialExtensions.contains(ext) else { continue }
 
                 // Brief pause — ensures the file is fully written before we act on it
-                try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 s
+                try? await Task.sleep(for: .milliseconds(800)) // 0.8 s
 
                 let url = downloadsURL.appendingPathComponent(filename)
                 await EventBus.shared.emit(.fileArrived(url: url, ext: ext))

@@ -21,7 +21,7 @@ extension AppController {
             explanationController.show(text: summary, title: "Jarvis Lane Stats")
             hud.show("📊 Lane stats")
             state = .idle
-            Task { try? await Task.sleep(nanoseconds: 1_500_000_000); hud.hide() }
+            Task { try? await Task.sleep(for: .seconds(1.5)); hud.hide() }
             return
         }
         
@@ -37,7 +37,7 @@ extension AppController {
                 hud.show("✓ \(result)")
                 finishLane(.reflex, start: laneStart, raw: raw)
                 state = .idle
-                Task { try? await Task.sleep(nanoseconds: 2_000_000_000); hud.hide() }
+                Task { try? await Task.sleep(for: .seconds(2)); hud.hide() }
                 return
             }
         }
@@ -67,7 +67,7 @@ extension AppController {
             TaskJournal.record(command: raw, reply: summary)
             finishLane(.reflex, start: laneStart, raw: raw)
             state = .idle
-            Task { try? await Task.sleep(nanoseconds: 2_500_000_000); hud.hide() }
+            Task { try? await Task.sleep(for: .seconds(2.5)); hud.hide() }
             return
         }
         
@@ -83,7 +83,7 @@ extension AppController {
             await ConversationMemory.shared.record(user: raw, assistant: reflexReply)
             finishLane(.reflex, start: laneStart, raw: raw)
             state = .idle
-            Task { try? await Task.sleep(nanoseconds: 2_000_000_000); hud.hide() }
+            Task { try? await Task.sleep(for: .seconds(2)); hud.hide() }
             return
         }
         
@@ -120,7 +120,7 @@ extension AppController {
             switch action {
             case .claudeNewChat:
                 hud.show("🔑 Summoning Claude popover…")
-                speak("Claude popover खोल रहा हूँ बॉस।")
+                speak("[STATIC] *Tuning* 'Summoning the big brain!' Launching Claude popover.")
                 await ClaudeQuickEntry.send("")
             case .prepPrompt(let useCase):
                 await handlePrepPrompt(useCase)
@@ -129,7 +129,7 @@ extension AppController {
             }
             finishLane(.reflex, start: laneStart, raw: raw)
             state = .idle
-            Task { try? await Task.sleep(nanoseconds: 2_000_000_000); hud.hide() }
+            Task { try? await Task.sleep(for: .seconds(2)); hud.hide() }
             return
         }
         
@@ -143,7 +143,7 @@ extension AppController {
         speak("Jarvis is unavailable. \(errorMessage)")
         finishLane(.failed, start: laneStart, raw: raw)
         state = .idle
-        Task { try? await Task.sleep(nanoseconds: 3_500_000_000); hud.hide() }
+        Task { try? await Task.sleep(for: .seconds(3.5)); hud.hide() }
     }
     
     /// Presents a Jarvis reply: when the model asks a clarifying question (the `ASK:`
@@ -160,7 +160,7 @@ extension AppController {
             state = .idle
             // Re-open the mic for the answer once the question has been spoken.
             Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                try? await Task.sleep(for: .seconds(1.5))
                 guard self.pendingClarification, case .idle = self.state else { return }
                 self.beginRecording()
             }
@@ -175,7 +175,7 @@ extension AppController {
             speak(shortSpoken(reply))
         }
         state = .idle
-        Task { try? await Task.sleep(nanoseconds: 2_000_000_000); self.hud.hide() }
+        Task { try? await Task.sleep(for: .seconds(2)); self.hud.hide() }
     }
     
     /// Continues the Jarvis session with the user's answer to a clarifying question, reusing
@@ -197,7 +197,7 @@ extension AppController {
             hud.show("⚠️ Jarvis Error")
             speak("Jarvis is unavailable.")
             state = .idle
-            Task { try? await Task.sleep(nanoseconds: 3_000_000_000); self.hud.hide() }
+            Task { try? await Task.sleep(for: .seconds(3)); self.hud.hide() }
         }
     }
     
@@ -238,7 +238,10 @@ extension AppController {
         hud.show("✨ \(shortcut.hudMessage)…")
         
         let output: String
-        if shortcut.command.hasPrefix("native:") {
+        if shortcut.command.hasPrefix("skill:") {
+            let skillName = String(shortcut.command.dropFirst(6))
+            output = SkillStore.runEnabled(skillName)
+        } else if shortcut.command.hasPrefix("native:") {
             let action = String(shortcut.command.dropFirst(7))
             switch action {
             case "system_info":
@@ -246,7 +249,7 @@ extension AppController {
                 let wifi = SystemDiagnostics.getWifiSSID()
                 let disk = SystemDiagnostics.getFreeDiskSpace()
                 output = "# System Status Report\n\n- **Battery**: \(battery)\n- **Wi-Fi SSID**: \(wifi)\n- **Free Disk Space**: \(disk)\n"
-                speak("मिस्टर लॉर्ड, battery \(battery) पर है, Wi-Fi network '\(wifi)' से connected है, और disk पर \(disk) space खाली है। दिल्ली से हूँ भाई, सब चकाचक चल रहा है।")
+                speak("[CLICK] *Beep Boop* System report ready. Battery at \(battery), Wi-Fi connected to \(wifi), and free disk space is \(disk). All systems nominal!")
             case "ram_info":
                 let ram = SystemDiagnostics.getRAMUsage()
                 let hogs = SystemDiagnostics.getTopMemoryProcesses()
@@ -277,7 +280,7 @@ extension AppController {
         
         hud.show("✓ \(shortcut.hudMessage)")
         state = .idle
-        Task { try? await Task.sleep(nanoseconds: 1_500_000_000); hud.hide() }
+        Task { try? await Task.sleep(for: .seconds(1.5)); hud.hide() }
     }
     
     func writeNoteFile(filename: String, content: String) {
@@ -416,7 +419,7 @@ extension AppController {
                     self.speak(reply)
                 }
                 self.state = .idle
-                Task { try? await Task.sleep(nanoseconds: 2_000_000_000); self.hud.hide() }
+                Task { try? await Task.sleep(for: .seconds(2)); self.hud.hide() }
                 return
             } catch {
                 print("[AGENT] Apple agent (URL command) failed: \(error.localizedDescription)")
@@ -429,16 +432,16 @@ extension AppController {
                     NSApplication.shared.yieldActivation(to: app)
                 }
                 app.activate(options: [])
-                try? await Task.sleep(nanoseconds: 150_000_000)
+                try? await Task.sleep(for: .milliseconds(150))
             }
             
             if output.delayBeforeInject > 0 {
-                try? await Task.sleep(nanoseconds: UInt64(output.delayBeforeInject * 1_000_000_000))
+                try? await Task.sleep(for: .seconds(output.delayBeforeInject))
             }
             
             if let shortcut = output.searchShortcut {
                 await self.injector.pressSearchShortcut(shortcut, targetPID: self.lastActiveApp?.processIdentifier)
-                try? await Task.sleep(nanoseconds: 300_000_000)
+                try? await Task.sleep(for: .milliseconds(300))
             }
             
             if !processedText.isEmpty || output.fileURL != nil {
@@ -446,7 +449,7 @@ extension AppController {
             }
             
             if output.pressReturnAfter {
-                try? await Task.sleep(nanoseconds: 350_000_000)
+                try? await Task.sleep(for: .milliseconds(350))
                 await self.injector.pressReturn(targetPID: self.lastActiveApp?.processIdentifier)
             }
             
@@ -454,7 +457,7 @@ extension AppController {
             self.hud.show("✓ Done")
             self.state = .idle
             Task {
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                try? await Task.sleep(for: .seconds(1.5))
                 self.hud.hide()
             }
         } else {
@@ -477,13 +480,13 @@ extension AppController {
         PromptStore.save(prepped)
         
         self.hud.show("📝 Prompt ready — review it")
-        self.speak("Prompt तैयार है बॉस, ज़रा देख लो फिर भेजते हैं।")
+        self.speak("[STATIC] *Tuning* 'Look at this photograph!' Prompt ready for review!")
         
         self.promptReview.show(prompt: prepped) { [weak self] editedText in
             guard let self else { return }
             Task { @MainActor in
                 self.hud.show("📋 Sending to Claude popover…")
-                self.speak("Claude popover में भेज रहा हूँ बॉस।")
+                self.speak("[CLICK] *Tuning* 'Sent it!' Sending prompt to Claude popover.")
                 await ClaudeQuickEntry.send(editedText)
                 self.hud.show("✓ Sent to Claude popover")
             }
@@ -495,11 +498,11 @@ extension AppController {
     func handleSendLastPrompt() async {
         guard let last = PromptStore.loadLast() else {
             self.hud.show("⚠️ No prepared prompt saved")
-            self.speak("कोई prompt तैयार नहीं है बॉस, पहले prep करो।")
+            self.speak("[CLICK] *Buzzer* No prompt saved. Please prep first.")
             return
         }
         self.hud.show("📋 Sending to Claude popover…")
-        self.speak("Claude popover में भेज रहा हूँ बॉस।")
+        self.speak("[CLICK] *Tuning* 'Sent it!' Sending prompt to Claude popover.")
         await ClaudeQuickEntry.send(last.assembledText)
         self.hud.show("✓ Sent to Claude popover")
     }

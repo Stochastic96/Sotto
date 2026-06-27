@@ -150,8 +150,12 @@ final class SottoEngine {
         if let shortcut = CommandEngine.checkZeroLatencyShortcut(for: raw) {
             let action = shortcut.command
             var reply = shortcut.hudMessage
-            if action.hasPrefix("native:") {
+            if action.hasPrefix("skill:") {
+                reply = SkillStore.runEnabled(String(action.dropFirst(6)))
+            } else if action.hasPrefix("native:") {
                 reply = await NativeActions.perform(String(action.dropFirst(7)))
+            } else {
+                reply = CommandEngine.runCommandNatively(action)
             }
             let ms = (CFAbsoluteTimeGetCurrent() - start) * 1000
             let result = EventBus.EngineResult(

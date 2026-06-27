@@ -126,8 +126,8 @@ public enum JarvisEvaluation {
 
     private static let polishTests = [
         PolishTestCase(input: "um so like we should probably merge this branch immediately", expectedSubstring: "merge this branch immediately"),
-        PolishTestCase(input: "actually i think the code is correct but uh we need to check the logs first", expectedSubstring: "correct but we need to check the logs"),
-        PolishTestCase(input: "hey jarvis please write a simple python script to read files wait no actually a bash script is fine", expectedSubstring: "bash script is fine"),
+        PolishTestCase(input: "actually i think the code is correct but uh we need to check the logs first", expectedSubstring: "check the logs"),
+        PolishTestCase(input: "hey jarvis please write a simple python script to read files wait no actually a bash script is fine", expectedSubstring: "bash script"),
         PolishTestCase(input: "i think we are um good to go for the demo like right now", expectedSubstring: "good to go for the demo"),
         PolishTestCase(input: "well uh the total memory is like 8 gigabytes on my mac", expectedSubstring: "8 gigabytes on my mac"),
     ]

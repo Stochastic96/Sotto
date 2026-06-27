@@ -33,7 +33,7 @@ enum SpotifyControl {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return false }
         _ = try? await NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
         for _ in 0..<12 {                       // up to ~3s
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            try? await Task.sleep(for: .milliseconds(250))
             if isRunning() { return true }
         }
         return isRunning()

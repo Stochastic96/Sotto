@@ -140,7 +140,7 @@ public actor CoordinatorAgent {
         Task {
             guard SystemLanguageModel.default.isAvailable else { return }
             LanguageModelSession().prewarm()
-            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            try? await Task.sleep(for: .seconds(30))
             guard SystemLanguageModel.default.isAvailable else { return }
             LanguageModelSession().prewarm()
             print("[COORDINATOR] Prewarmed Apple Intelligence session.")
@@ -233,9 +233,9 @@ public actor CoordinatorAgent {
                         try await session.respond(to: userInput, options: opts).content
                     }
                     group.addTask {
-                        try await Task.sleep(for: .seconds(30))
+                        try await Task.sleep(for: .seconds(40))
                         throw NSError(domain: "JarvisDP", code: -1,
-                                      userInfo: [NSLocalizedDescriptionKey: "DynamicProfile timed out after 30s"])
+                                      userInfo: [NSLocalizedDescriptionKey: "DynamicProfile timed out after 40s"])
                     }
                     guard let result = try await group.next() else {
                         throw NSError(domain: "JarvisDP", code: -2,

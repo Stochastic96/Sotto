@@ -15,7 +15,7 @@ enum ClaudeQuickEntry {
     /// Left Option key. (kVK_Option = 58; right Option = 61.)
     private static let optionKeyCode: CGKeyCode = 58
     /// Gap between the two taps — must be inside macOS's double-tap window (~300 ms).
-    private static let doubleTapGapNanos: UInt64 = 120_000_000
+    private static let doubleTapGapNanos: Duration = .milliseconds(120)
 
     /// Simulate a single press+release of a modifier key. Modifier "key down" carries the
     /// flag; "key up" clears it — that's what produces the flagsChanged the OS/Claude sees.
@@ -36,15 +36,15 @@ enum ClaudeQuickEntry {
         // 1. Double-tap Option to summon the popover.
         let source = CGEventSource(stateID: .privateState)
         tapOption(source)
-        try? await Task.sleep(nanoseconds: doubleTapGapNanos)
+        try? await Task.sleep(for: doubleTapGapNanos)
         tapOption(source)
 
         // 2. Wait for the popover to appear and focus its input field.
-        try? await Task.sleep(nanoseconds: 550_000_000)
+        try? await Task.sleep(for: .milliseconds(550))
 
         // 3. Paste the prompt, then 4. send.
         await injector.inject(prompt, fileURL: nil)
-        try? await Task.sleep(nanoseconds: 250_000_000)
+        try? await Task.sleep(for: .milliseconds(250))
         await injector.pressReturn()
     }
 
@@ -56,7 +56,7 @@ enum ClaudeQuickEntry {
         
         // Wait for generation to start and text to appear
         print("[CLAUDE-QUICK] Prompt sent. Waiting for generation to start...")
-        try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds initial wait
+        try? await Task.sleep(for: .seconds(3)) // 3 seconds initial wait
         
         var lastText = ""
         var stableCount = 0
@@ -81,7 +81,7 @@ enum ClaudeQuickEntry {
                 }
             }
             
-            try? await Task.sleep(nanoseconds: 1_500_000_000) // check every 1.5 seconds
+            try? await Task.sleep(for: .seconds(1.5)) // check every 1.5 seconds
         }
         
         // Extract the response lines

@@ -105,7 +105,8 @@ final class WakeWordDetector {
     private func restart() {
         teardown()
         if isRunning {
-            DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            Task.detached { [weak self] in
+                try? await Task.sleep(for: .seconds(1))
                 self?.setupAndStart()
             }
         }

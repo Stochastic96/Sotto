@@ -38,7 +38,7 @@ enum CalendarProximityObserver {
 
         while true {
             await checkUpcomingEvents()
-            try? await Task.sleep(nanoseconds: 120_000_000_000) // every 2 min
+            try? await Task.sleep(for: .seconds(120)) // every 2 min
         }
     }
 
