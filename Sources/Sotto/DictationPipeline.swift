@@ -227,6 +227,12 @@ extension AppController {
                 print("[LEARNING] Learned new vocabulary terms: \(newJargon)")
             }
         }
+
+        // Invalidate the intelligence actor's vocab/style cache so the next refine()
+        // picks up the freshly written defaults without a per-call UserDefaults read.
+        if let intel = intelligence {
+            Task { await intel.refreshUserCaches() }
+        }
     }
 
     /// True when `b` is only a trivial edit of `a` (e.g. a single typo fixed) — judged by

@@ -333,6 +333,10 @@ import SottoCore
         // the CoreAudio device-enumeration scan.
         recorder.prewarm()
 
+        // Load the in-process MLX Qwen model in the background so the first dictation
+        // doesn't pay the cold model-load cost. No-op when SOTTO_MLX is not compiled in.
+        Task { _ = await MLXEngine.shared.prepareIfNeeded() }
+
         // ── Kernel event bus + proactive observers ──────────────────────────
         // Each observer runs as a sleeping background Task — 0 CPU until an event fires.
         // Combined RAM overhead: ~0 MB (pure Swift, no models loaded).

@@ -38,8 +38,28 @@ actor SottoIntelligence {
     private var polishSession: AnyObject?
     private var polishTurnCount = 0
 
+    // Cached hot-path values — avoids a UserDefaults read + JSON decode on every refine() call.
+    // Invalidated by refreshUserCaches() whenever the underlying defaults change.
+    private var cachedVocab: String = ""
+    private var cachedStyleExamples: [DictationExample] = []
+
     init(onStatus: @escaping @Sendable (Status) -> Void) {
         self.onStatus = onStatus
+    }
+
+    /// Re-reads vocabulary and style examples from UserDefaults. Call after any write
+    /// to `sotto_learned_vocabulary`, `sotto_custom_vocabulary`, or `sotto_style_examples`.
+    func refreshUserCaches() {
+        let custom = SettingsController.customVocabulary
+        let learned = UserDefaults.standard.stringArray(forKey: "sotto_learned_vocabulary") ?? []
+        let combined = ([custom] + learned).filter { !$0.isEmpty }.joined(separator: ", ")
+        cachedVocab = combined
+        if let data = UserDefaults.standard.data(forKey: "sotto_style_examples"),
+           let examples = try? JSONDecoder().decode([DictationExample].self, from: data) {
+            cachedStyleExamples = examples
+        } else {
+            cachedStyleExamples = []
+        }
     }
 
     /// Stable polish instructions. Per-call vocabulary / style / history go into the
@@ -60,6 +80,7 @@ actor SottoIntelligence {
 
     /// Prewarm the dedicated polish session at launch — zero cold-start cost on first dictation.
     func preload() async {
+        refreshUserCaches()
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *), SystemLanguageModel.default.isAvailable {
             let session = LanguageModelSession(instructions: Self.instructions)
@@ -261,14 +282,10 @@ actor SottoIntelligence {
 
         var contextBlock = styleHint
 
-        var vocab = SettingsController.customVocabulary
-        let learnedVocab = UserDefaults.standard.stringArray(forKey: "sotto_learned_vocabulary") ?? []
-        if !learnedVocab.isEmpty {
-            let learnedJoined = learnedVocab.joined(separator: ", ")
-            vocab = vocab.isEmpty ? learnedJoined : vocab + ", " + learnedJoined
-        }
-        if !vocab.isEmpty {
-            contextBlock += "\nUse this custom vocabulary to correctly spell names and jargon: \(vocab)."
+        // Use cached vocab/style to avoid per-call UserDefaults reads and JSON decoding.
+        // Cache is populated at preload() and invalidated after each learnFromDictation write.
+        if !cachedVocab.isEmpty {
+            contextBlock += "\nUse this custom vocabulary to correctly spell names and jargon: \(cachedVocab)."
         }
 
         // Few-shot style examples for short inputs are skipped to save ~100-200 tokens
@@ -276,12 +293,9 @@ actor SottoIntelligence {
         let wordCount = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
         let isShortInput = wordCount < 8
         var exampleBlock = ""
-        if !isShortInput,
-           let data = UserDefaults.standard.data(forKey: "sotto_style_examples"),
-           let examples = try? JSONDecoder().decode([DictationExample].self, from: data),
-           !examples.isEmpty {
+        if !isShortInput, !cachedStyleExamples.isEmpty {
             exampleBlock += "\n\nExample of the user's dictation style (raw speech vs polished):\n"
-            for example in examples.suffix(1) {
+            for example in cachedStyleExamples.suffix(1) {
                 exampleBlock += "Speech: \"\(example.raw)\"\nPolished: \"\(example.polished)\"\n"
             }
             exampleBlock += "\nMimic this style and tone. Do NOT merge this example into your response."
