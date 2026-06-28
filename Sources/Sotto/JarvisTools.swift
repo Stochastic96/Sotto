@@ -40,7 +40,7 @@ enum VolumeAction {
 
 @available(macOS 26.0, *)
 @Generable
-enum BrightnessDirection {
+enum BrightnessAction {
     case up, down
 }
 
@@ -66,6 +66,12 @@ enum AppWindowAction {
 @Generable
 enum MemoryAction {
     case set, get, list
+}
+
+@available(macOS 26.0, *)
+@Generable
+enum TaskAction {
+    case enqueue, list, clearDone
 }
 
 /// Control Spotify specifically (never Apple Music): play, pause, skip, or play a song.
@@ -135,7 +141,7 @@ struct BrightnessTool: Tool {
     @Generable
     struct Arguments {
         @Guide(description: "The direction to adjust brightness.")
-        let direction: BrightnessDirection
+        let direction: BrightnessAction
     }
 
     func call(arguments: Arguments) async throws -> String {
@@ -501,7 +507,7 @@ struct WikipediaLookupTool: Tool {
 
 /// Persistent memory / active goals
 @available(macOS 26.0, *)
-struct MemoryGoalTool: Tool {
+struct MemoryTool: Tool {
     let name = "manage_memory_goals"
     let description = "Manage persistent tasks, goals, or settings. Supports setting, getting, or listing keys."
 
@@ -726,7 +732,7 @@ struct ClipboardTool: Tool {
 
 /// Manage running applications and list visible window titles natively.
 @available(macOS 26.0, *)
-struct AppWindowManagerTool: Tool {
+struct AppWindowTool: Tool {
     let name = "manage_apps_windows"
     let description = "List running applications, active window titles, or bring a running app to the foreground using its PID."
 
@@ -833,8 +839,8 @@ struct MicrotaskTool: Tool {
 
     @Generable
     struct Arguments {
-        @Guide(description: "Action: 'enqueue' to add a task, 'list' to see queue, 'clear_done' to remove completed tasks.")
-        let action: String
+        @Guide(description: "Action to perform on the task queue.")
+        let action: TaskAction
         @Guide(description: "Short human-readable task name (e.g. 'Check git status').")
         let name: String?
         @Guide(description: "Full goal description passed to Jarvis when task runs.")
@@ -844,8 +850,8 @@ struct MicrotaskTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        switch arguments.action.lowercased() {
-        case "enqueue":
+        switch arguments.action {
+        case .enqueue:
             guard let goal = arguments.goal, !goal.isEmpty else {
                 return "Please provide a goal for the task."
             }
@@ -854,7 +860,7 @@ struct MicrotaskTool: Tool {
                                                 priority: arguments.priority ?? 0)
             return "Queued '\(taskName)' — I'll run it next time I'm free."
 
-        case "list":
+        case .list:
             let tasks = await MicrotaskQueue.shared.allTasks()
             if tasks.isEmpty { return "No tasks in the queue." }
             let lines = tasks.map { t in
@@ -862,12 +868,9 @@ struct MicrotaskTool: Tool {
             }.joined(separator: "\n")
             return "Task queue:\n\(lines)"
 
-        case "clear_done":
+        case .clearDone:
             await MicrotaskQueue.shared.clearDone()
             return "Cleared completed tasks from the queue."
-
-        default:
-            return "Unknown action '\(arguments.action)'. Use 'enqueue', 'list', or 'clear_done'."
         }
     }
 }
@@ -891,14 +894,14 @@ enum JarvisToolbox {
             OpenWebsiteTool(), OpenAppTool(), CreateNoteTool(), WebSearchTool(),
             ReadScreenTool(), ClickElementTool(), DraftSkillTool(), RunSkillTool(),
             RecallHistoryTool(), SystemStatusTool(), RAMMemoryStatusTool(), GPUStatusTool(),
-            LocationGeocoderTool(), WikipediaLookupTool(), MemoryGoalTool(),
+            LocationGeocoderTool(), WikipediaLookupTool(), MemoryTool(),
             AskClaudeTool(), PowerStateTool(),
             NetworkDiagnosticsTool(), ClipboardTool(), SpotlightSearchTool(),
-            AppWindowManagerTool(), KeySimulatorTool(),
+            AppWindowTool(), KeySimulatorTool(),
             MorningBriefTool(), FocusSessionTool(), EndWorkdayTool(), WorkspaceSwitchTool(),
             FileOrganizerTool(), LargeFileFinderTool(),
             ExplainCodeTool(), GenerateGitCommitTool(), FindBugTool(), ExplainErrorTool(),
-            ComposedWorkflowTool(), MicrotaskTool(),
+            MicrotaskTool(),
         ]
     }
 
@@ -920,7 +923,7 @@ enum JarvisToolbox {
         Group(keywords: ["battery", "wifi", "wi-fi", "disk", "ram", "memory", "status", "health", "internet", "network", "reachable", "connection", "gpu", "graphics"],
               make: { [SystemStatusTool(), RAMMemoryStatusTool(), GPUStatusTool(), NetworkDiagnosticsTool()] }),
         Group(keywords: ["open", "launch", "app", "website", "url", "browser", "window", "switch", "activate", "foreground"],
-              make: { [OpenAppTool(), OpenWebsiteTool(), AppWindowManagerTool()] }),
+              make: { [OpenAppTool(), OpenWebsiteTool(), AppWindowTool()] }),
         Group(keywords: ["search", "google", "look up", "wikipedia", "who is", "what is", "define", "research", "claude", "explain", "news", "latest"],
               make: { [WebSearchTool(), WikipediaLookupTool(), AskClaudeTool()] }),
         // Reminders, calendar, alarms — Siri only. ReminderTool/CalendarTool removed.
@@ -943,7 +946,7 @@ enum JarvisToolbox {
                          "list", "scripts", "macros", "capabilities", "all my", "what can",
                          "task", "queue", "later", "when free", "background", "enqueue", "pending",
                          "command", "asked", "ago"],
-              make: { [DraftSkillTool(), RunSkillTool(), RecallHistoryTool(), MemoryGoalTool(), MicrotaskTool()] }),
+              make: { [DraftSkillTool(), RunSkillTool(), RecallHistoryTool(), MemoryTool(), MicrotaskTool()] }),
         Group(keywords: ["morning", "brief", "daily", "today", "summary", "wake"],
               make: { [MorningBriefTool()] }),
         Group(keywords: ["focus", "session", "dnd", "distract", "work", "start"],
@@ -960,9 +963,7 @@ enum JarvisToolbox {
               make: { [ExplainCodeTool(), FindBugTool(), ExplainErrorTool()] }),
         Group(keywords: ["git", "commit", "message", "changes", "push", "pull", "branch", "merge", "conflict", "status"],
               make: { [GenerateGitCommitTool()] }),
-        Group(keywords: ["compose", "workflow", "plan", "setup", "prepare"],
-              make: { [ComposedWorkflowTool()] }),
-        Group(keywords: ["siri", "ask siri", "tell siri", "message", "send message", "text", "email", "mail",
+Group(keywords: ["siri", "ask siri", "tell siri", "message", "send message", "text", "email", "mail",
                          "imessage", "call", "phone", "facetime", "whatsapp"],
               make: { [AskSiriTool()] }),
     ]

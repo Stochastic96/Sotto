@@ -32,14 +32,14 @@ struct JarvisProfile: LanguageModelSession.DynamicProfile {
         case .chat:
             // Small talk: warm, brief, and tools off so nothing fires by accident.
             LanguageModelSession.Profile {
-                Instructions { instructions + "\n\nThis is small talk — reply warmly in ONE short line and use no tools." }
+                Instructions(instructions + "\n\nThis is small talk — reply warmly in ONE short line and use no tools.")
             }
             .toolCallingMode(GenerationOptions.ToolCallingMode.disallowed)
             .temperature(0.7)
         case .bigJob:
             // A large repetitive job: narrow to the background-job tool and require it.
             LanguageModelSession.Profile {
-                Instructions { instructions + "\n\nThis is a large repetitive job. Call start_long_task with the full goal in plain language." }
+                Instructions(instructions + "\n\nThis is a large repetitive job. Call start_long_task with the full goal in plain language.")
                 ([StartLongTaskTool()] as [any Tool])
             }
             .toolCallingMode(GenerationOptions.ToolCallingMode.required)
@@ -47,7 +47,7 @@ struct JarvisProfile: LanguageModelSession.DynamicProfile {
         case .quick:
             // The everyday lane: the routed native tools plus the escalation handoffs.
             LanguageModelSession.Profile {
-                Instructions { instructions }
+                Instructions(instructions)
                 routedTools
                 (escalationTools as [any Tool])
             }

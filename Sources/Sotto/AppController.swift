@@ -24,6 +24,10 @@ import SottoCore
     let injector = TextInjector()
     let speechSynthesizer = AVSpeechSynthesizer()
     var activeSound: NSSound?
+    // Preloaded sounds — avoids a per-play NSSound(named:) lookup on every keypress.
+    let soundPop = NSSound(named: "Pop")
+    let soundTink = NSSound(named: "Tink")
+    let soundBasso = NSSound(named: "Basso")
     let settings = SettingsController()
     let explanationController = ExplanationWindowController()
     let promptReview = PromptReviewWindowController()
@@ -175,7 +179,7 @@ import SottoCore
                     print("[WATCHDOG] State \(self.state) stuck for \(Int(stuckFor))s (limit \(Int(limit))s); force-resetting to idle.")
                     self.hud.hide()
                     self.state = .idle
-                    NSSound(named: "Basso")?.play()
+                    self.soundBasso?.play()
                 }
             }
         }
@@ -325,6 +329,10 @@ import SottoCore
         JarvisAgent.prewarm()
         if #available(macOS 26.0, *) { CoordinatorAgent.prewarm() }
 
+        // Cache the built-in mic device ID so the first recording press skips
+        // the CoreAudio device-enumeration scan.
+        recorder.prewarm()
+
         // ── Kernel event bus + proactive observers ──────────────────────────
         // Each observer runs as a sleeping background Task — 0 CPU until an event fires.
         // Combined RAM overhead: ~0 MB (pure Swift, no models loaded).
@@ -425,7 +433,7 @@ import SottoCore
         if case .loadingModel = state {
             print("[APP] beginRecording() aborted: Speech model is loading")
             hud.show("⏳ Loading speech model…")
-            NSSound(named: "Basso")?.play()
+            soundBasso?.play()
             Task {
                 try? await Task.sleep(for: .seconds(2)) // 2 seconds
                 if case .loadingModel = self.state {
@@ -438,14 +446,14 @@ import SottoCore
         if case .transcribing = state {
             print("[APP] beginRecording() aborted: Currently transcribing")
             hud.show("⏳ Still transcribing…")
-            NSSound(named: "Basso")?.play()
+            soundBasso?.play()
             return
         }
 
         if case .polishing = state {
             print("[APP] beginRecording() aborted: Currently polishing")
             hud.show("⏳ Still polishing…")
-            NSSound(named: "Basso")?.play()
+            soundBasso?.play()
             return
         }
 
@@ -495,7 +503,7 @@ import SottoCore
             try recorder.start()
             state = .recording
             hud.show("●  Listening  [0:00 / 5:00]")
-            NSSound(named: "Pop")?.play()
+            soundPop?.play()
 
             // Waveform at 15fps (66ms). Skip silent frames — saves ~65% of main-thread
             // wakeups during the typical mostly-silent recording session.
@@ -536,20 +544,24 @@ import SottoCore
         visualizerTimer = nil
 
         let samples = recorder.stop()
+
+        // Ignore accidental taps shorter than ~0.3s of audio — check synchronously
+        // before transitioning state so we don't flash the "Transcribing" HUD.
+        guard samples.count > 4800 else {
+            state = .idle
+            hud.hide()
+            return
+        }
+
         state = .transcribing
         hud.show("…  Transcribing")
 
-        // Capture the focused app *now*, before transcription finishes.
-        let context = ContextDetector.current()
+        // Capture the focused app now, before transcription finishes.
+        // currentCached() is zero-cost between app switches.
+        let context = ContextDetector.currentCached()
         let mode = currentMode
 
         Task { @MainActor in
-            // Ignore accidental taps shorter than ~0.3s of audio.
-            guard samples.count > 4800 else {
-                self.state = .idle
-                self.hud.hide()
-                return
-            }
             do {
                 var raw = try await self.transcriber.transcribe(samples)
                 raw = VocabCorrector.apply(to: raw)
@@ -574,7 +586,7 @@ import SottoCore
                     await self.runJarvisPipeline(raw: command, samples: samples, context: context)
                 }
             } catch {
-                NSSound(named: "Basso")?.play()
+                soundBasso?.play()
                 self.hud.hide()
                 self.state = .error("Transcription failed: \(error.localizedDescription)")
                 self.scheduleErrorRecovery()

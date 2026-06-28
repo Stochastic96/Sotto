@@ -115,7 +115,6 @@ enum EventHandler {
         case .conversationTurn:
             break
 
-        // ─── New trigger/engine/output events (handled by SottoTrigger/Engine/Output) ──
         default:
             break
         }

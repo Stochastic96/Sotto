@@ -35,6 +35,29 @@ enum NativeActions {
         case "lock":         NativeSystemOrchestrator.lockScreen();    return ""
         case "empty_trash":  NativeSystemOrchestrator.emptyTrash();    return ""
 
+        // System status & diagnostics
+        case "system_status":
+            let battery = SystemDiagnostics.getBatteryPercentage()
+            let wifi = SystemDiagnostics.getWifiSSID()
+            let disk = SystemDiagnostics.getFreeDiskSpace()
+            AppController.shared?.speak("System report ready. Battery at \(battery), Wi-Fi on \(wifi), free disk \(disk).")
+            return "# System Status Report\n\n- **Battery**: \(battery)\n- **Wi-Fi SSID**: \(wifi)\n- **Free Disk Space**: \(disk)\n"
+            
+        case "ram_status":
+            let ram = SystemDiagnostics.getRAMUsage()
+            let hogs = SystemDiagnostics.getTopMemoryProcesses()
+            var report = "# 🧠 RAM Memory Status\n\n"
+            report += "- **Total RAM**: \(String(format: "%.2f", ram.totalGB)) GB\n"
+            report += "- **Used RAM**: \(String(format: "%.2f", ram.totalGB - ram.freeGB)) GB (\(String(format: "%.1f", ram.usedPercent))%)\n"
+            report += "- **Free RAM**: \(String(format: "%.2f", ram.freeGB)) GB\n"
+            report += "- **Wired (System)**: \(String(format: "%.2f", ram.wiredGB)) GB\n"
+            report += "- **Active (App)**: \(String(format: "%.2f", ram.activeGB)) GB\n"
+            report += "- **Compressed**: \(String(format: "%.2f", ram.compressedGB)) GB\n\n"
+            report += "## 🏆 Top Memory Consumers\n\n| Process Name | Memory Usage |\n| :--- | :--- |\n"
+            report += hogs
+            AppController.shared?.speak("Total RAM is \(String(format: "%.1f", ram.totalGB)) gigabytes. Used is \(String(format: "%.1f", ram.usedPercent)) percent.")
+            return report
+
         // Appearance
         case "dark_mode_toggle": Appearance.toggleDarkMode(); return ""
         case "show_desktop":     Appearance.showDesktop();    return ""
@@ -47,34 +70,6 @@ enum NativeActions {
         case let a where a.hasPrefix("ask_siri:"):
             let query = String(a.dropFirst("ask_siri:".count))
             await SiriBridge.send(query)
-            
-            // Asynchronously wait for Siri UI to load, perform screen OCR, and summarize the result
-            Task { @MainActor in
-                // Alert if Screen Recording TCC is not granted
-                if !CGPreflightScreenCaptureAccess() {
-                    AppController.shared?.showHUD("⚠️ Screen Recording Needed")
-                    AppController.shared?.speak("[CLICK] *Tuning* 'Warning!' Screen Recording permission is needed to read Siri's search results. Please enable it in Privacy & Security settings.")
-                    return
-                }
-                
-                try? await Task.sleep(for: .seconds(4.5))
-                let screenText = await CommandEngine.ocrScreen()
-                
-                if !screenText.isEmpty {
-                    let systemPrompt = "You are a helpful assistant. Summarize the text visible on the screen. Focus on the main topic, key details, and visual results shown (e.g. weather, location, search results). Keep the summary short (1-2 sentences, max 30 words), snappy, and formatted like a meta description."
-                    let userPrompt = "Summarize this screen text: \(screenText)"
-                    
-                    if let refiner = AppController.shared?.intelligenceEngine {
-                        if let s = try? await refiner.getCompletion(systemPrompt: systemPrompt, userPrompt: userPrompt) {
-                            let summary = s.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if !summary.isEmpty {
-                                AppController.shared?.showHUD("Siri Summary: \(summary)")
-                                AppController.shared?.speak(summary)
-                            }
-                        }
-                    }
-                }
-            }
             return "Sent query '\(query)' to Siri."
 
         // Parametric volume/brightness controls

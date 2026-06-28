@@ -26,3 +26,6 @@ sotto-data/
 default.profraw
 screenshot2.png
 
+# Agent configurations
+.agents/
+

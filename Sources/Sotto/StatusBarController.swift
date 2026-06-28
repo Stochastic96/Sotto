@@ -21,7 +21,8 @@ final class MenuBarPill: NSObject {
 
     func update(icon: String, label: String = "") {
         let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
-        iconButton?.image = NSImage(systemSymbolName: icon, accessibilityDescription: "Sotto")?
+        let description = label.isEmpty ? "Sotto" : "Sotto — \(label)"
+        iconButton?.image = NSImage(systemSymbolName: icon, accessibilityDescription: description)?
             .withSymbolConfiguration(cfg)
     }
 
@@ -103,7 +104,8 @@ final class MenuBarPill: NSObject {
 // MARK: - StatusBarController
 
 @MainActor final class StatusBarController: NSObject, NSMenuDelegate {
-    private let item: NSStatusItem
+    private var item: NSStatusItem?
+    private var lastState: AppController.State?
     private let statusMenuItem = NSMenuItem(title: String(localized: "menu.starting", defaultValue: "Starting…", bundle: .module), action: nil, keyEquivalent: "")
     private let transcriptMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let intelligenceStatusMenuItem = NSMenuItem(title: "Apple Intelligence: ready", action: nil, keyEquivalent: "")
@@ -148,70 +150,81 @@ final class MenuBarPill: NSObject {
     }
 
     init(polishEnabled: Bool) {
-        item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         polishMenuItem = NSMenuItem(title: String(localized: "menu.aiPolish", defaultValue: "AI Polish", bundle: .module), action: nil, keyEquivalent: "")
         dictateMenuItem = NSMenuItem(title: String(localized: "menu.startDictation", defaultValue: "🎤 Start Dictation", bundle: .module), action: #selector(startDictate), keyEquivalent: "d")
         super.init()
 
-        item.button?.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Sotto / Jarvis")
-        item.button?.image?.isTemplate = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            statusItem.button?.image = nil
+            statusItem.button?.title = "J"
+            statusItem.button?.font = .systemFont(ofSize: 14, weight: .bold)
 
-        let menu = NSMenu()
-        menu.delegate = self
-        statusMenuItem.isEnabled = false
-        menu.addItem(statusMenuItem)
-        transcriptMenuItem.isEnabled = true
-        transcriptMenuItem.target = self
-        transcriptMenuItem.action = #selector(copyLastTranscript)
-        transcriptMenuItem.isHidden = true
-        menu.addItem(transcriptMenuItem)
+            let menu = NSMenu()
+            menu.delegate = self
+            self.statusMenuItem.isEnabled = false
+            menu.addItem(self.statusMenuItem)
+            self.transcriptMenuItem.isEnabled = true
+            self.transcriptMenuItem.target = self
+            self.transcriptMenuItem.action = #selector(self.copyLastTranscript)
+            self.transcriptMenuItem.isHidden = true
+            menu.addItem(self.transcriptMenuItem)
 
-        historyMenuItem.submenu = historyMenu
-        historyMenuItem.isHidden = true
-        menu.addItem(historyMenuItem)
-        menu.addItem(.separator())
+            self.historyMenuItem.submenu = self.historyMenu
+            self.historyMenuItem.isHidden = true
+            menu.addItem(self.historyMenuItem)
+            menu.addItem(.separator())
 
+            self.dictateMenuItem.target = self
+            menu.addItem(self.dictateMenuItem)
+            menu.addItem(.separator())
 
+            self.polishMenuItem.target = self
+            self.polishMenuItem.action = #selector(self.togglePolish(_:))
+            self.polishMenuItem.state = polishEnabled ? .on : .off
+            menu.addItem(self.polishMenuItem)
 
-        dictateMenuItem.target = self
-        menu.addItem(dictateMenuItem)
-        menu.addItem(.separator())
+            self.intelligenceStatusMenuItem.isEnabled = false
+            menu.addItem(self.intelligenceStatusMenuItem)
+            menu.addItem(.separator())
 
-        polishMenuItem.target = self
-        polishMenuItem.action = #selector(togglePolish(_:))
-        polishMenuItem.state = polishEnabled ? .on : .off
-        menu.addItem(polishMenuItem)
+            // Settings Menu Item
+            let settingsMenuItem = NSMenuItem(title: String(localized: "menu.settings", defaultValue: "Settings…", bundle: .module), action: #selector(self.openSettings), keyEquivalent: ",")
+            settingsMenuItem.target = self
+            menu.addItem(settingsMenuItem)
 
-        intelligenceStatusMenuItem.isEnabled = false
-        menu.addItem(intelligenceStatusMenuItem)
-        menu.addItem(.separator())
+            // Jarvis Help & Guide Menu Item
+            let guideMenuItem = NSMenuItem(title: String(localized: "menu.jarvisHelp", defaultValue: "Jarvis Help & Guide…", bundle: .module), action: #selector(self.openGuide), keyEquivalent: "?")
+            guideMenuItem.target = self
+            menu.addItem(guideMenuItem)
 
-        // Settings Menu Item
-        let settingsMenuItem = NSMenuItem(title: String(localized: "menu.settings", defaultValue: "Settings…", bundle: .module), action: #selector(openSettings), keyEquivalent: ",")
-        settingsMenuItem.target = self
-        menu.addItem(settingsMenuItem)
+            let consoleMenuItem = NSMenuItem(title: String(localized: "menu.showConsole", defaultValue: "Show Console", bundle: .module), action: #selector(self.showConsole), keyEquivalent: "l")
+            consoleMenuItem.target = self
+            menu.addItem(consoleMenuItem)
 
-        // Jarvis Help & Guide Menu Item
-        let guideMenuItem = NSMenuItem(title: String(localized: "menu.jarvisHelp", defaultValue: "Jarvis Help & Guide…", bundle: .module), action: #selector(openGuide), keyEquivalent: "?")
-        guideMenuItem.target = self
-        menu.addItem(guideMenuItem)
+            let logMenuItem = NSMenuItem(title: String(localized: "menu.openLog", defaultValue: "Open Log File", bundle: .module), action: #selector(self.openLogFile), keyEquivalent: "")
+            logMenuItem.target = self
+            menu.addItem(logMenuItem)
+            menu.addItem(.separator())
 
-        let consoleMenuItem = NSMenuItem(title: String(localized: "menu.showConsole", defaultValue: "Show Console", bundle: .module), action: #selector(showConsole), keyEquivalent: "l")
-        consoleMenuItem.target = self
-        menu.addItem(consoleMenuItem)
+            menu.addItem(NSMenuItem(title: String(localized: "menu.quit", defaultValue: "Quit Sotto", bundle: .module), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+            
+            statusItem.menu = menu
+            self.item = statusItem
 
-        let logMenuItem = NSMenuItem(title: String(localized: "menu.openLog", defaultValue: "Open Log File", bundle: .module), action: #selector(openLogFile), keyEquivalent: "")
-        logMenuItem.target = self
-        menu.addItem(logMenuItem)
-        menu.addItem(.separator())
+            print("[STATUSBAR-DEBUG] Created item: \(statusItem)")
+            print("[STATUSBAR-DEBUG] Item button: \(String(describing: statusItem.button))")
+            print("[STATUSBAR-DEBUG] Item button frame: \(String(describing: statusItem.button?.frame))")
+            print("[STATUSBAR-DEBUG] Item button window: \(String(describing: statusItem.button?.window))")
+            print("[STATUSBAR-DEBUG] Item button window isVisible: \(String(describing: statusItem.button?.window?.isVisible))")
 
-        menu.addItem(NSMenuItem(title: String(localized: "menu.quit", defaultValue: "Quit Sotto", bundle: .module), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-        item.menu = menu
+            // Re-apply latest state once registered
+            if let lastState = self.lastState {
+                self.update(for: lastState)
+            }
+        }
         intelligenceStatus = "ready"
-
-        // Always show the floating pill so Sotto is visible regardless of menu bar space.
-        // It shares the same NSMenu, so clicking it gives the same Quit / Settings / etc.
-        pill.show(attachedTo: menu)
     }
 
     func onPolishToggle(_ handler: @escaping (Bool) -> Void) {
@@ -255,36 +268,31 @@ final class MenuBarPill: NSObject {
     }
 
     func update(for state: AppController.State) {
+        lastState = state
+        guard let _ = self.item else { return }
         switch state {
         case .loadingModel:
-            set(icon: "arrow.down.circle", text: String(localized: "status.loadingModel", defaultValue: "Loading model… (first run downloads ~600 MB)", bundle: .module))
+            set(title: "J", text: String(localized: "status.loadingModel", defaultValue: "Loading model… (first run downloads ~600 MB)", bundle: .module))
         case .idle:
-            set(icon: "mic", text: String(localized: "status.ready", defaultValue: "Ready", bundle: .module))
+            set(title: "J", text: String(localized: "status.ready", defaultValue: "Ready", bundle: .module))
         case .recording:
-            set(icon: "mic.fill", text: String(localized: "status.listening", defaultValue: "Listening…", bundle: .module))
+            set(title: "J", text: String(localized: "status.listening", defaultValue: "Listening…", bundle: .module))
         case .transcribing:
-            set(icon: "waveform", text: String(localized: "status.transcribing", defaultValue: "Transcribing…", bundle: .module))
+            set(title: "J", text: String(localized: "status.transcribing", defaultValue: "Transcribing…", bundle: .module))
         case .polishing:
-            set(icon: "sparkles", text: String(localized: "status.polishing", defaultValue: "Polishing…", bundle: .module))
+            set(title: "J", text: String(localized: "status.polishing", defaultValue: "Polishing…", bundle: .module))
         case .error(let message):
-            set(icon: "exclamationmark.triangle", text: message)
+            set(title: "J", text: message)
         }
     }
 
-    private func set(icon: String, text: String) {
-        let image = NSImage(systemSymbolName: icon, accessibilityDescription: "Sotto")
-        image?.isTemplate = true
-        item.button?.image = image
+    private func set(title: String, text: String) {
+        guard let item = self.item else { return }
+        item.button?.image = nil
+        item.button?.title = title
+        item.button?.font = .systemFont(ofSize: 14, weight: .bold)
         statusMenuItem.title = text
-        pill.update(icon: icon, label: "")
-
-        if #available(macOS 14.0, *) {
-            let imageView = item.button?.subviews.compactMap { $0 as? NSImageView }.first
-            imageView?.removeAllSymbolEffects()
-            if icon == "mic.fill" || icon == "waveform" || icon == "sparkles" {
-                imageView?.addSymbolEffect(.pulse, options: .repeating)
-            }
-        }
+        // pill.update(icon: "sparkles", label: text)
     }
 
     private func rebuildHistoryMenu() {

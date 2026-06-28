@@ -24,6 +24,10 @@ fi
 echo "→ Copying $BIN → $APP"
 cp "$BIN" "$APP"
 
+BIN_DIR="$(dirname "$BIN")"
+echo "→ Syncing resource bundles from $BIN_DIR..."
+cp -R "$BIN_DIR/"*.bundle "$REPO/build/Sotto.app/Contents/Resources/" 2>/dev/null || true
+
 # Try Apple Development cert first; fall back to ad-hoc
 CERT="Apple Development: prashant@digitaltaantra.com (687GPC75G5)"
 if codesign -dvv "$APP" 2>&1 | grep -q "$CERT" || \

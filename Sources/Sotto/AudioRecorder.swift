@@ -10,6 +10,11 @@ final class AudioRecorder: @unchecked Sendable {
     private var samples: [Float] = []
     private let lock = OSAllocatedUnfairLock<Void>()
 
+    // Cached hardware config — avoids re-enumerating all CoreAudio devices on every press.
+    private var cachedBuiltInMicID: AudioDeviceID?
+    private var cachedConverter: AVAudioConverter?
+    private var cachedHwFormat: AVAudioFormat?
+
     private var silenceDetectedHandler: (() -> Void)?
     private var silenceAccumulator: Double = 0.0
     private let silenceThreshold: Float = 0.015 // RMS threshold for silence (~ -36 dB)
@@ -30,6 +35,15 @@ final class AudioRecorder: @unchecked Sendable {
         self.silenceDetectedHandler = handler
     }
 
+    /// Warms the CoreAudio device cache at launch so the first recording press doesn't
+    /// pay the device-enumeration cost. Safe to call on any thread.
+    func prewarm() {
+        if cachedBuiltInMicID == nil {
+            cachedBuiltInMicID = findBuiltInMicrophoneDeviceID()
+            print("[AUDIO] Prewarmed mic ID: \(cachedBuiltInMicID.map { "\($0)" } ?? "not found")")
+        }
+    }
+
     func start() throws {
         lock.withLock {
             samples.removeAll(keepingCapacity: true)
@@ -40,10 +54,10 @@ final class AudioRecorder: @unchecked Sendable {
         let input = engine.inputNode
 
         // Always use the physical built-in mic, regardless of Bluetooth/external speaker state.
-        // AVCaptureDevice.default(.microphone) returns the *system default* input which macOS
-        // switches to the Bluetooth device when a headset/speaker connects — so we bypass that
-        // and find the built-in hardware directly via its CoreAudio transport type.
-        if let builtInMicID = findBuiltInMicrophoneDeviceID() {
+        // Use the cached device ID when available to avoid re-enumerating all CoreAudio devices.
+        let builtInMicID = cachedBuiltInMicID ?? findBuiltInMicrophoneDeviceID()
+        if cachedBuiltInMicID == nil { cachedBuiltInMicID = builtInMicID }
+        if let builtInMicID {
             print("[AUDIO] Forcing built-in microphone input device ID: \(builtInMicID)")
             do {
                 try setInputDevice(engine: engine, deviceID: builtInMicID)
@@ -58,8 +72,20 @@ final class AudioRecorder: @unchecked Sendable {
         guard hwFormat.sampleRate > 0 else {
             throw NSError(domain: "AudioRecorder", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid hardware sample rate (0)"])
         }
-        guard let converter = AVAudioConverter(from: hwFormat, to: targetFormat) else {
-            throw NSError(domain: "AudioRecorder", code: -2, userInfo: [NSLocalizedDescriptionKey: "Failed to create audio converter from \(hwFormat.sampleRate)Hz to 16000Hz"])
+
+        // Reuse the cached converter when the hardware format matches — AVAudioConverter
+        // creation is non-trivial and the format is stable within a session.
+        let converter: AVAudioConverter
+        if let cached = cachedConverter, let fmt = cachedHwFormat,
+           fmt.sampleRate == hwFormat.sampleRate && fmt.channelCount == hwFormat.channelCount {
+            converter = cached
+        } else {
+            guard let fresh = AVAudioConverter(from: hwFormat, to: targetFormat) else {
+                throw NSError(domain: "AudioRecorder", code: -2, userInfo: [NSLocalizedDescriptionKey: "Failed to create audio converter from \(hwFormat.sampleRate)Hz to 16000Hz"])
+            }
+            converter = fresh
+            cachedConverter = fresh
+            cachedHwFormat = hwFormat
         }
 
         // Strong capture: the tap is always removed in stop() before AudioRecorder can

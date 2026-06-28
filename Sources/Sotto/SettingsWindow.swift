@@ -295,6 +295,7 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         }
         enginePopUp.target = self
         enginePopUp.action = #selector(enginePopUpChanged(_:))
+        enginePopUp.setAccessibilityLabel("Speech Recognition Engine")
         engineStack.addArrangedSubview(enginePopUp)
         
         let engineDesc = createDescriptionLabel("Choose the speech recognition technology. Offline AI runs a local private ANE model (requires model download). Apple Native Dictation uses macOS Siri engine for instant setup.")
@@ -384,6 +385,7 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         }
         voicePopUp.target = self
         voicePopUp.action = #selector(voicePopUpChanged(_:))
+        voicePopUp.setAccessibilityLabel("Jarvis Voice Selection")
         dropdownStack.addArrangedSubview(voicePopUp)
         
         let testBtn = NSButton(title: "Test Voice", target: self, action: #selector(testVoicePress(_:)))
@@ -402,6 +404,7 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         let rateSlider = NSSlider(value: Double(Self.speechRate), minValue: Double(AVSpeechUtteranceMinimumSpeechRate), maxValue: Double(AVSpeechUtteranceMaximumSpeechRate), target: self, action: #selector(rateSliderChanged(_:)))
         rateSlider.translatesAutoresizingMaskIntoConstraints = false
         rateSlider.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        rateSlider.setAccessibilityLabel("Speech Speed")
         voiceStack.addArrangedSubview(rateSlider)
         
         let voiceCard = createCard(title: "Jarvis Voice Feedback", iconName: "speaker.wave.2.bubble.left.fill", subview: voiceStack)
@@ -553,10 +556,11 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         headerStack.alignment = .centerY
         headerStack.translatesAutoresizingMaskIntoConstraints = false
         
-        if let image = NSImage(systemSymbolName: iconName, accessibilityDescription: title) {
+        if let image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil) {
             let iv = NSImageView(image: image)
             iv.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
             iv.contentTintColor = NSColor.controlAccentColor
+            iv.setAccessibilityElement(false)  // titleLabel immediately after provides the same text
             headerStack.addArrangedSubview(iv)
         }
         

@@ -3,15 +3,14 @@ import SwiftUI
 
 // MARK: - HUD State
 //
-// The HUD lives at the bottom-center of the screen — never in the way.
-// It reads the existing text API from AppController and maps prefixes
-// to visual states automatically, so no call sites need changing.
+// The HUD lives at the bottom-center of the screen — never in the way of notifications or menu items.
+// It reads the existing text API from AppController and maps prefixes to visual states automatically.
 //
-// Listening  "●  Listening…"  → animated waveform bars (blue)
-// Thinking   "…" / "✨" / "⏳" → bouncing dots (indigo)
-// Success    "✓ …"            → green dot + text
-// Warning    "⚠️" / "🔋" / "⚡" → amber/red dot + text
-// Info       anything else    → white dot + text
+// Listening  "●  Listening…"  → animated multicolor Siri-style waveform + pulsing glow mic
+// Thinking   "…" / "✨" / "⏳" → rotating Siri-style orb + bouncing gradient dots
+// Success    "✓ …"            → glowing green dot + text
+// Warning    "⚠️" / "🔋" / "⚡" → glowing amber dot + text
+// Info       anything else    → glowing blue/cyan dot + text
 
 enum HUDDisplayState: Equatable {
     case listening
@@ -34,161 +33,229 @@ struct HUDRootView: View {
     var model: HUDViewModel
 
     var body: some View {
-        Group {
-            switch model.displayState {
-            case .listening:
-                ListeningCapsuleContent()
-            case .thinking(let label):
-                ThinkingCapsuleContent(label: label)
-            case .result(let text, let style):
-                ResultCapsuleContent(text: text, style: style)
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                Group {
+                    switch model.displayState {
+                    case .listening:
+                        ListeningCapsuleContent()
+                    case .thinking(let label):
+                        ThinkingCapsuleContent(label: label)
+                    case .result(let text, let style):
+                        ResultCapsuleContent(text: text, style: style)
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 14)
+                .background(
+                    Capsule()
+                        .fill(Color(NSColor.windowBackgroundColor).opacity(0.72))
+                )
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [.white.opacity(0.28), .white.opacity(0.12)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1
+                        )
+                )
+                .compositingGroup()
+                .shadow(color: .black.opacity(0.25), radius: 14, x: 0, y: 6)
+                Spacer()
             }
+            Spacer()
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 14)
-        .background(
-            Capsule()
-                .fill(LinearGradient(
-                    colors: [Color.black.opacity(0.78), Color(red: 0.08, green: 0.08, blue: 0.16).opacity(0.82)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ))
-        )
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(
-            Capsule()
-                .strokeBorder(
+        .frame(width: 600, height: 120)
+        .opacity(model.visible ? 1 : 0)
+        .scaleEffect(model.visible ? 1.0 : 0.94)
+        .offset(y: model.visible ? 0 : 15)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: model.visible)
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: model.displayState)
+    }
+}
+
+// MARK: - Glow Mic Indicator
+
+struct GlowMic: View {
+    @State private var animateGlow = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(
                     LinearGradient(
-                        colors: [.white.opacity(0.24), .blue.opacity(0.35), .purple.opacity(0.45), .white.opacity(0.12)],
+                        colors: [Color(red: 0.38, green: 0.11, blue: 0.81), Color(red: 0.18, green: 0.50, blue: 0.93), Color(red: 0.96, green: 0.23, blue: 0.47)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: 12, height: 12)
+                .shadow(color: .purple.opacity(0.6), radius: 6)
+                .scaleEffect(animateGlow ? 1.25 : 0.95)
+                .blur(radius: animateGlow ? 1.5 : 0.2)
+            
+            Circle()
+                .stroke(
+                    LinearGradient(
+                        colors: [.cyan, .purple, .pink],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
-                    lineWidth: 1
+                    lineWidth: 1.5
                 )
-        )
-        .compositingGroup()
-        .shadow(color: .black.opacity(0.45), radius: 18, x: 0, y: 8)
-        .shadow(color: Color.blue.opacity(0.12), radius: 28, x: 0, y: 12)
-        .animation(.spring(response: 0.28, dampingFraction: 0.8), value: model.displayState)
-        .opacity(model.visible ? 1 : 0)
-        .offset(y: model.visible ? 0 : -10)
-        .animation(.spring(response: 0.3, dampingFraction: 0.82), value: model.visible)
+                .frame(width: 18, height: 18)
+                .scaleEffect(animateGlow ? 1.4 : 1.0)
+                .opacity(animateGlow ? 0 : 0.8)
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
+                animateGlow = true
+            }
+        }
     }
 }
 
-// MARK: - Listening: animated waveform bars
+// MARK: - Waveform
 
-struct ListeningCapsuleContent: View {
+struct Waveform: View {
     @State private var animate = false
-
-    private let barHeights: [CGFloat] = [10, 18, 26, 18, 10, 22, 14]
-    private let barDelays: [Double]   = [0.0, 0.1, 0.2, 0.15, 0.05, 0.2, 0.1]
+    
+    private let barHeights: [CGFloat] = [12, 22, 32, 26, 14, 28, 18, 24, 10]
+    private let barDelays: [Double]   = [0.0, 0.1, 0.2, 0.15, 0.05, 0.2, 0.1, 0.25, 0.05]
 
     var body: some View {
-        HStack(spacing: 12) {
-            // Pulsing mic dot
-            Circle()
-                .fill(Color.blue)
-                .frame(width: 8, height: 8)
-                .overlay(
-                    Circle()
-                        .stroke(Color.blue.opacity(0.4), lineWidth: 3)
-                        .scaleEffect(animate ? 2.3 : 1.0)
-                        .opacity(animate ? 0 : 0.8)
-                )
-                .animation(.easeOut(duration: 1.2).repeatForever(autoreverses: false), value: animate)
-
-            // Waveform bars
-            HStack(spacing: 3) {
-                ForEach(0..<7, id: \.self) { i in
-                    RoundedRectangle(cornerRadius: 2.5)
-                        .fill(
-                            LinearGradient(
-                                colors: [.blue, Color(red: 0.3, green: 0.7, blue: 1.0), .cyan],
-                                startPoint: .bottom, endPoint: .top
-                            )
+        HStack(spacing: 3) {
+            ForEach(0..<9, id: \.self) { i in
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color(red: 0.18, green: 0.50, blue: 0.93), Color(red: 0.38, green: 0.11, blue: 0.81), Color(red: 0.96, green: 0.23, blue: 0.47)],
+                            startPoint: .bottom,
+                            endPoint: .top
                         )
-                        .frame(width: 4, height: animate ? barHeights[i] : 6)
-                        .animation(
-                            .easeInOut(duration: 0.42)
-                                .repeatForever(autoreverses: true)
-                                .delay(barDelays[i]),
-                            value: animate
-                        )
-                }
-            }
-            .frame(height: 28)
-
-            Text(String(localized: "hud.listening", defaultValue: "Listening", bundle: .module))
-                .font(.system(.callout, design: .rounded, weight: .bold))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [.white, Color.blue.opacity(0.95)],
-                        startPoint: .leading,
-                        endPoint: .trailing
                     )
-                )
+                    .frame(width: 3, height: animate ? barHeights[i] : 6)
+                    .animation(
+                        .easeInOut(duration: 0.45)
+                            .repeatForever(autoreverses: true)
+                            .delay(barDelays[i]),
+                        value: animate
+                    )
+            }
         }
+        .frame(height: 36)
         .onAppear { animate = true }
-        .onDisappear { animate = false }
     }
 }
 
-// MARK: - Thinking: bouncing dots
+// MARK: - Listening: animated waveform
+
+struct ListeningCapsuleContent: View {
+    var body: some View {
+        HStack(spacing: 14) {
+            GlowMic()
+            Waveform()
+            Text(String(localized: "hud.listening", defaultValue: "Listening", bundle: .module))
+                .font(.system(.callout, design: .rounded, weight: .bold))
+                .foregroundStyle(.primary)
+        }
+    }
+}
+
+// MARK: - Thinking Orb
+
+struct ThinkingOrb: View {
+    @State private var rotate = false
+    @State private var pulse = false
+    
+    var body: some View {
+        ZStack {
+            // Background blur/glow
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [Color(red: 0.38, green: 0.11, blue: 0.81).opacity(0.5), Color(red: 0.96, green: 0.23, blue: 0.47).opacity(0.3)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: 22, height: 22)
+                .blur(radius: 4)
+                .scaleEffect(pulse ? 1.3 : 0.9)
+            
+            // Rotating gradient border
+            Circle()
+                .stroke(
+                    AngularGradient(
+                        colors: [Color(red: 0.18, green: 0.50, blue: 0.93), Color(red: 0.38, green: 0.11, blue: 0.81), Color(red: 0.96, green: 0.23, blue: 0.47), Color(red: 0.18, green: 0.50, blue: 0.93)],
+                        center: .center
+                    ),
+                    lineWidth: 3
+                )
+                .frame(width: 20, height: 20)
+                .rotationEffect(.degrees(rotate ? 360 : 0))
+            
+            // Inner core
+            Circle()
+                .fill(Color(NSColor.windowBackgroundColor))
+                .frame(width: 14, height: 14)
+        }
+        .onAppear {
+            withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
+                rotate = true
+            }
+            withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        }
+    }
+}
+
+// MARK: - Thinking: rotating orb + bouncing dots
 
 struct ThinkingCapsuleContent: View {
     let label: String
-    @State private var animate = false
+    @State private var animateDots = false
 
     var body: some View {
         HStack(spacing: 14) {
-            // Glowing J avatar
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [.indigo, .purple],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 28, height: 28)
-                    .shadow(color: .indigo.opacity(0.5), radius: 6, x: 0, y: 2)
-                Text("J")
-                    .font(.system(.subheadline, design: .rounded, weight: .black))
-                    .foregroundStyle(.white)
-            }
-
+            ThinkingOrb()
+            
             // Bouncing dots
             HStack(spacing: 5) {
                 ForEach(0..<3, id: \.self) { i in
                     Circle()
                         .fill(
                             LinearGradient(
-                                colors: [.indigo, .purple],
+                                colors: [Color(red: 0.38, green: 0.11, blue: 0.81), Color(red: 0.96, green: 0.23, blue: 0.47)],
                                 startPoint: .bottom,
                                 endPoint: .top
                             )
                         )
-                        .frame(width: 7, height: 7)
-                        .offset(y: animate ? -7 : 4)
+                        .frame(width: 6, height: 6)
+                        .offset(y: animateDots ? -5 : 3)
                         .animation(
-                            .easeInOut(duration: 0.48)
+                            .easeInOut(duration: 0.5)
                                 .repeatForever(autoreverses: true)
-                                .delay(Double(i) * 0.16),
-                            value: animate
+                                .delay(Double(i) * 0.15),
+                            value: animateDots
                         )
                 }
             }
+            .onAppear { animateDots = true }
 
             if !label.isEmpty {
                 Text(label)
-                    .font(.system(.callout, design: .rounded, weight: .semibold))
+                    .font(.system(.callout, design: .rounded, weight: .bold))
                     .foregroundStyle(.secondary)
             }
         }
-        .onAppear { animate = true }
-        .onDisappear { animate = false }
     }
 }
 
@@ -198,29 +265,34 @@ struct ResultCapsuleContent: View {
     let text: String
     let style: HUDDisplayState.ResultStyle
 
-    private var dotColor: Color {
+    private var dotColors: [Color] {
         switch style {
-        case .success: return .green
-        case .warning: return Color(red: 1.0, green: 0.6, blue: 0.0)
-        case .info:    return Color.blue
+        case .success: return [.green, Color(red: 0.2, green: 0.8, blue: 0.4)]
+        case .warning: return [Color(red: 1.0, green: 0.6, blue: 0.0), .orange]
+        case .info:    return [Color(red: 0.18, green: 0.50, blue: 0.93), .cyan]
         }
     }
 
     var body: some View {
         HStack(spacing: 12) {
             Circle()
-                .fill(dotColor)
-                .frame(width: 8, height: 8)
-                .shadow(color: dotColor.opacity(0.6), radius: 4)
+                .fill(
+                    LinearGradient(
+                        colors: dotColors,
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: 10, height: 10)
+                .shadow(color: dotColors[0].opacity(0.6), radius: 5)
 
             Text(text)
-                .font(.system(.callout, design: .rounded, weight: .semibold))
+                .font(.system(.callout, design: .rounded, weight: .bold))
                 .foregroundStyle(.primary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 340, alignment: .leading)
         }
-        .transition(.opacity.combined(with: .move(edge: .trailing)))
     }
 }
 
@@ -236,8 +308,30 @@ final class HUDOverlay {
 
     func show(_ text: String) {
         hideTask?.cancel(); hideTask = nil
-        viewModel.displayState = classify(text)
+        let newState = classify(text)
+        viewModel.displayState = newState
         revealPanel()
+        postAccessibilityAnnouncement(for: newState)
+    }
+
+    private func postAccessibilityAnnouncement(for state: HUDDisplayState) {
+        let message: String
+        switch state {
+        case .listening:
+            message = "Listening"
+        case .thinking(let label):
+            message = label.isEmpty ? "Jarvis is thinking" : label
+        case .result(let text, _):
+            message = text
+        }
+        NSAccessibility.post(
+            element: NSApp,
+            notification: .announcementRequested,
+            userInfo: [
+                NSAccessibility.NotificationUserInfoKey.announcement: message,
+                NSAccessibility.NotificationUserInfoKey.priority: NSAccessibilityPriorityLevel.medium.rawValue
+            ]
+        )
     }
 
     func showResult(_ text: String, autoHideAfter seconds: Double = 6) {
@@ -313,10 +407,9 @@ final class HUDOverlay {
         guard panel == nil else { return }
 
         let hosting = NSHostingView(rootView: HUDRootView(model: viewModel))
-        hosting.translatesAutoresizingMaskIntoConstraints = false
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 440, height: 60),
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 120),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -335,12 +428,14 @@ final class HUDOverlay {
     private func positionPanel() {
         guard let panel, let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let sf = screen.visibleFrame
-        let pw: CGFloat = 440
-        let ph: CGFloat = 60
+        let pw: CGFloat = 600
+        let ph: CGFloat = 120
 
-        // Position in the top-right corner of the screen with 20pt padding
-        let x = sf.maxX - pw - 20
-        let y = sf.maxY - ph - 20
+        // Position at the bottom-center of the screen, floating 50pt above the bottom/dock
+        let x = sf.minX + (sf.width - pw) / 2
+        let y = sf.minY + 50
+        print("[HUD-DEBUG] Main Screen Frame: \(screen.frame), Visible Frame: \(sf)")
+        print("[HUD-DEBUG] Calculated HUD Frame: x=\(x), y=\(y), w=\(pw), h=\(ph)")
         panel.setFrame(NSRect(x: x, y: y, width: pw, height: ph), display: false)
     }
 }

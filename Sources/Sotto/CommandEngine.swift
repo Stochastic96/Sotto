@@ -173,6 +173,26 @@ enum CommandEngine {
             )
         }
 
+        // ── SYSTEM DIAGNOSTIC SHORTCUTS ──
+        if cleanT == "system status" || cleanT == "system report" || cleanT == "battery and wifi" || cleanT == "device status" || cleanT == "system info" {
+            return ZeroLatencyShortcut(
+                command: "native:system_status",
+                voiceFeedback: "", // spoken dynamically by the action
+                hudMessage: "System Status",
+                showOutputInWindow: true,
+                windowTitle: "System Status"
+            )
+        }
+        if cleanT == "ram status" || cleanT == "ram usage" || cleanT == "memory usage" || cleanT == "check ram" || cleanT == "ram info" {
+            return ZeroLatencyShortcut(
+                command: "native:ram_status",
+                voiceFeedback: "", // spoken dynamically by the action
+                hudMessage: "RAM Status",
+                showOutputInWindow: true,
+                windowTitle: "RAM Status"
+            )
+        }
+
         return nil
     }
 

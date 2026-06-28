@@ -120,7 +120,7 @@ extension AppController {
             switch action {
             case .claudeNewChat:
                 hud.show("🔑 Summoning Claude popover…")
-                speak("[STATIC] *Tuning* 'Summoning the big brain!' Launching Claude popover.")
+                speak("Launching Claude popover.")
                 await ClaudeQuickEntry.send("")
             case .prepPrompt(let useCase):
                 await handlePrepPrompt(useCase)
@@ -249,29 +249,7 @@ extension AppController {
             output = SkillStore.runEnabled(skillName)
         } else if shortcut.command.hasPrefix("native:") {
             let action = String(shortcut.command.dropFirst(7))
-            switch action {
-            case "system_info":
-                let battery = SystemDiagnostics.getBatteryPercentage()
-                let wifi = SystemDiagnostics.getWifiSSID()
-                let disk = SystemDiagnostics.getFreeDiskSpace()
-                output = "# System Status Report\n\n- **Battery**: \(battery)\n- **Wi-Fi SSID**: \(wifi)\n- **Free Disk Space**: \(disk)\n"
-                speak("[CLICK] *Beep Boop* System report ready. Battery at \(battery), Wi-Fi connected to \(wifi), and free disk space is \(disk). All systems nominal!")
-            case "ram_info":
-                let ram = SystemDiagnostics.getRAMUsage()
-                let hogs = SystemDiagnostics.getTopMemoryProcesses()
-                var report = "# 🧠 RAM Memory Status\n\n"
-                report += "- **Total RAM**: \(String(format: "%.2f", ram.totalGB)) GB\n"
-                report += "- **Used RAM**: \(String(format: "%.2f", ram.totalGB - ram.freeGB)) GB (\(String(format: "%.1f", ram.usedPercent))%)\n"
-                report += "- **Free RAM**: \(String(format: "%.2f", ram.freeGB)) GB\n"
-                report += "- **Wired (System)**: \(String(format: "%.2f", ram.wiredGB)) GB\n"
-                report += "- **Active (App)**: \(String(format: "%.2f", ram.activeGB)) GB\n"
-                report += "- **Compressed**: \(String(format: "%.2f", ram.compressedGB)) GB\n\n"
-                report += "## 🏆 Top Memory Consumers\n\n| Process Name | Memory Usage |\n| :--- | :--- |\n"
-                report += hogs
-                output = report
-            default:
-                output = await NativeActions.perform(action)
-            }
+            output = await NativeActions.perform(action)
         } else {
             output = CommandEngine.runCommandNatively(shortcut.command)
         }
@@ -486,13 +464,13 @@ extension AppController {
         PromptStore.save(prepped)
         
         self.hud.show("📝 Prompt ready — review it")
-        self.speak("[STATIC] *Tuning* 'Look at this photograph!' Prompt ready for review!")
+        self.speak("Prompt ready for review.")
         
         self.promptReview.show(prompt: prepped) { [weak self] editedText in
             guard let self else { return }
             Task { @MainActor in
                 self.hud.show("📋 Sending to Claude popover…")
-                self.speak("[CLICK] *Tuning* 'Sent it!' Sending prompt to Claude popover.")
+                self.speak("Sending prompt to Claude popover.")
                 await ClaudeQuickEntry.send(editedText)
                 self.hud.show("✓ Sent to Claude popover")
             }
@@ -504,11 +482,11 @@ extension AppController {
     func handleSendLastPrompt() async {
         guard let last = PromptStore.loadLast() else {
             self.hud.show("⚠️ No prepared prompt saved")
-            self.speak("[CLICK] *Buzzer* No prompt saved. Please prep first.")
+            self.speak("No prompt saved. Please prep first.")
             return
         }
         self.hud.show("📋 Sending to Claude popover…")
-        self.speak("[CLICK] *Tuning* 'Sent it!' Sending prompt to Claude popover.")
+        self.speak("Sending prompt to Claude popover.")
         await ClaudeQuickEntry.send(last.assembledText)
         self.hud.show("✓ Sent to Claude popover")
     }

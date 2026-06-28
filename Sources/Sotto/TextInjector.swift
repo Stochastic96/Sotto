@@ -52,15 +52,23 @@ final class TextInjector: Sendable {
                 return
             }
 
-            // Let pasteboard register the change
-            try? await Task.sleep(for: .milliseconds(150))
+            // Let pasteboard register the change (50ms is ample; pboard server is synchronous)
+            try? await Task.sleep(for: .milliseconds(50))
 
             print("[INJECT] Posting Cmd+V for text")
+            let pasteChangeCount = pasteboard.changeCount
             await self.postKeystroke(Self.vKeyCode, flags: .maskCommand, targetPID: targetPID)
 
-            // Wait for target app to consume the paste before restoring the pasteboard.
-            // 1500ms covers slow apps (Electron, heavy browsers).
-            try? await Task.sleep(for: .milliseconds(1500))
+            // Wait for target app to read the paste. Poll changeCount as a fast-path:
+            // if any process touches the pasteboard we can restore sooner.
+            // Floor: 100ms (covers all native apps). Ceiling: 500ms (covers Electron/browsers).
+            try? await Task.sleep(for: .milliseconds(100))
+            var waited = 100
+            while waited < 500 {
+                try? await Task.sleep(for: .milliseconds(50))
+                waited += 50
+                if pasteboard.changeCount != pasteChangeCount { break }
+            }
         }
 
         // 3. Paste file if present
@@ -70,13 +78,13 @@ final class TextInjector: Sendable {
             pasteboard.writeObjects([fileURL as NSURL])
 
             // Let pasteboard register the change
-            try? await Task.sleep(for: .milliseconds(150)) // 150ms
+            try? await Task.sleep(for: .milliseconds(50))
 
             print("[INJECT] Posting Cmd+V for file")
             await self.postKeystroke(Self.vKeyCode, flags: .maskCommand, targetPID: targetPID)
 
-            // Wait for target app to process file paste (files can take longer)
-            try? await Task.sleep(for: .seconds(1.2)) // 1200ms
+            // Files may take longer to process than plain text — use a 600ms ceiling.
+            try? await Task.sleep(for: .milliseconds(600))
         }
 
         // 4. Restore original pasteboard contents
@@ -91,7 +99,8 @@ final class TextInjector: Sendable {
         let systemWide = AXUIElementCreateSystemWide()
         var focusedElement: AnyObject?
         let result = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedElement)
-        guard result == .success, let rawElement = focusedElement else { return false }
+        guard result == .success, let rawElement = focusedElement,
+              CFGetTypeID(rawElement as CFTypeRef) == AXUIElementGetTypeID() else { return false }
         let element = rawElement as! AXUIElement
 
         // Only attempt direct AX insertion where the focused element actually
@@ -127,12 +136,12 @@ final class TextInjector: Sendable {
         pasteboard.clearContents()
         pasteboard.writeObjects([url as NSURL])
 
-        try? await Task.sleep(for: .milliseconds(150))
+        try? await Task.sleep(for: .milliseconds(50))
 
         print("[INJECT] Posting Cmd+V for file (direct insert fallback)")
         await self.postKeystroke(Self.vKeyCode, flags: .maskCommand, targetPID: targetPID)
 
-        try? await Task.sleep(for: .seconds(1.2))
+        try? await Task.sleep(for: .milliseconds(600))
 
         print("[INJECT] Restoring original pasteboard (direct insert fallback)")
         pasteboard.clearContents()
@@ -166,7 +175,8 @@ final class TextInjector: Sendable {
         let systemWide = AXUIElementCreateSystemWide()
         var focusedElement: AnyObject?
         let result = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedElement)
-        if result == .success, let rawElement = focusedElement {
+        if result == .success, let rawElement = focusedElement,
+           CFGetTypeID(rawElement as CFTypeRef) == AXUIElementGetTypeID() {
             let element = rawElement as! AXUIElement
             var selectedTextValue: AnyObject?
             let selectedTextResult = AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &selectedTextValue)

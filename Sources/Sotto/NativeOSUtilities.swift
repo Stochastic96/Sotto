@@ -12,31 +12,6 @@ struct NativeClipboard {
     }
 }
 
-struct SpotlightSearch {
-    static func findFiles(matching queryStr: String) -> [String] {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
-        task.arguments = [queryStr]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = FileHandle.nullDevice
-        
-        do {
-            try task.run()
-            task.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let output = String(data: data, encoding: .utf8) {
-                let lines = output.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                // Cap results to top 25 for prompt token boundaries
-                return Array(lines.prefix(25))
-            }
-        } catch {
-            print("[SPOTLIGHT] Error running mdfind: \(error)")
-        }
-        return []
-    }
-}
-
 struct WindowManager {
     static func getRunningApps() -> [String] {
         let apps = NSWorkspace.shared.runningApplications

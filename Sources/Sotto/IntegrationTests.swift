@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 import AppKit
 
@@ -174,3 +175,4 @@ public func runSottoIntegrationTests() async -> Bool {
     }
     return success
 }
+#endif

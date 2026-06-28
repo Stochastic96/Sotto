@@ -29,8 +29,7 @@ actor CommandLearner {
     private let threshold = 3
 
     private lazy var fileURL: URL = {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent("Projects/Sotto/sotto-data/learned_shortcuts.json")
+        SettingsController.sottoDataURL.appendingPathComponent("learned_shortcuts.json")
     }()
 
     private init() {}

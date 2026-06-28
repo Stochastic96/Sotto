@@ -19,15 +19,10 @@ let package = Package(
             name: "SottoCore",
             path: "Sources/SottoCore"
         ),
-        .target(
-            name: "SottoInfra",
-            path: "Sources/SottoInfra"
-        ),
         .executableTarget(
             name: "Sotto",
             dependencies: [
                 "SottoCore",
-                "SottoInfra",
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),

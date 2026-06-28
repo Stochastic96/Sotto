@@ -175,14 +175,11 @@ enum JarvisAgent {
 /// produce one of these three cases; no free-form string that could mismatch.
 @available(macOS 26.0, *)
 @Generable
-enum RoutingIntent {
-    case command, question, dictation
-}
-
-@available(macOS 26.0, *)
-@Generable
 struct Routing {
+    @Generable
+    enum Intent { case command, question, dictation }
+
     @Guide(description: "The intent type of the utterance.")
-    let intent: RoutingIntent
+    let intent: Intent
 }
 #endif

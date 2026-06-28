@@ -8,6 +8,7 @@ struct SottoApp {
     private static var delegate: AppDelegate?
     
     static func main() {
+        #if DEBUG
         if CommandLine.arguments.contains("--run-tests") || CommandLine.arguments.contains("--evaluate") || CommandLine.arguments.contains("--run-evaluation") {
             setvbuf(stdout, nil, _IONBF, 0)
             setvbuf(stderr, nil, _IONBF, 0)
@@ -25,6 +26,7 @@ struct SottoApp {
             }
             exit(testSuccess ? 0 : 1)
         }
+        #endif
 
         if CommandLine.arguments.contains("--evaluate") || CommandLine.arguments.contains("--run-evaluation") {
             var finished = false
@@ -104,5 +106,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        Task { @MainActor in
+            controller?.settings.showSettings()
+        }
+        return true
     }
 }
