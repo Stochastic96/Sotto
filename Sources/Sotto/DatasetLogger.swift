@@ -74,7 +74,7 @@ final class DatasetLogger {
         }
         let dataSize = count * 2
         var out = Data()
-        func str(_ s: String) { out.append(s.data(using: .ascii)!) }
+        func str(_ s: String) { out.append(Data(s.utf8)) }
         func u32(_ v: UInt32) { var x = v.littleEndian; out.append(Data(bytes: &x, count: 4)) }
         func u16(_ v: UInt16) { var x = v.littleEndian; out.append(Data(bytes: &x, count: 2)) }
         str("RIFF"); u32(UInt32(36 + dataSize)); str("WAVE")

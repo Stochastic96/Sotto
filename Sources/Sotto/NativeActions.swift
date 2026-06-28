@@ -178,9 +178,10 @@ enum NativeWindow {
 
     private static func currentSize(_ win: AXUIElement) -> CGSize? {
         var value: AnyObject?
-        guard AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &value) == .success else { return nil }
+        guard AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &value) == .success,
+              let rawValue = value else { return nil }
         var size = CGSize.zero
-        AXValueGetValue(value as! AXValue, .cgSize, &size)
+        AXValueGetValue(rawValue as! AXValue, .cgSize, &size)
         return size
     }
 

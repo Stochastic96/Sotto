@@ -1,0 +1,237 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "engine.appleSpeech" : {
+      "comment" : "Display name for Apple's built-in Siri dictation engine",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Apple Native Dictation (Siri)"
+          }
+        }
+      }
+    },
+    "engine.offlineAI" : {
+      "comment" : "Display name for the offline Parakeet AI transcription engine",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Offline AI (Parakeet ANE)"
+          }
+        }
+      }
+    },
+    "hud.listening" : {
+      "comment" : "HUD label shown when the microphone is active and recording",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Listening"
+          }
+        }
+      }
+    },
+    "hud.polishing" : {
+      "comment" : "HUD label shown while AI polishes the dictated text",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Polishing…"
+          }
+        }
+      }
+    },
+    "menu.aiPolish" : {
+      "comment" : "Menu item that toggles AI text polishing on or off",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "AI Polish"
+          }
+        }
+      }
+    },
+    "menu.copyTooltip" : {
+      "comment" : "Tooltip on the last-transcript menu item; clicking copies it to the clipboard",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Click to copy full transcript to clipboard"
+          }
+        }
+      }
+    },
+    "menu.jarvisHelp" : {
+      "comment" : "Menu item that opens the Jarvis help and guide window",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Jarvis Help & Guide…"
+          }
+        }
+      }
+    },
+    "menu.openLog" : {
+      "comment" : "Menu item that reveals the application log file in Finder",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Open Log File"
+          }
+        }
+      }
+    },
+    "menu.quit" : {
+      "comment" : "Menu item that quits the application",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Quit Sotto"
+          }
+        }
+      }
+    },
+    "menu.recentTranscripts" : {
+      "comment" : "Submenu title listing recent transcript history entries",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Recent Transcripts"
+          }
+        }
+      }
+    },
+    "menu.settings" : {
+      "comment" : "Menu item that opens the Settings window",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Settings…"
+          }
+        }
+      }
+    },
+    "menu.showConsole" : {
+      "comment" : "Menu item that shows the log console window",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Show Console"
+          }
+        }
+      }
+    },
+    "menu.startDictation" : {
+      "comment" : "Menu item that begins a push-to-talk dictation session",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "🎤 Start Dictation"
+          }
+        }
+      }
+    },
+    "menu.starting" : {
+      "comment" : "Initial status placeholder shown in the menu while the app is starting up",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Starting…"
+          }
+        }
+      }
+    },
+    "status.appleIntelligencePrefix" : {
+      "comment" : "Prefix label for the Apple Intelligence status line in the menu (followed by a status word like 'ready')",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Apple Intelligence:"
+          }
+        }
+      }
+    },
+    "status.lastTranscriptPrefix" : {
+      "comment" : "Prefix label shown before a recent transcript snippet in the menu",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Last:"
+          }
+        }
+      }
+    },
+    "status.listening" : {
+      "comment" : "Status bar text shown while audio is being recorded",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Listening…"
+          }
+        }
+      }
+    },
+    "status.loadingModel" : {
+      "comment" : "Status bar text shown while the ML model is downloading on first run",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Loading model… (first run downloads ~600 MB)"
+          }
+        }
+      }
+    },
+    "status.polishing" : {
+      "comment" : "Status bar text shown while AI polishes the transcribed text",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Polishing…"
+          }
+        }
+      }
+    },
+    "status.ready" : {
+      "comment" : "Status bar text shown when the app is idle and ready to record",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Ready"
+          }
+        }
+      }
+    },
+    "status.transcribing" : {
+      "comment" : "Status bar text shown while audio is being converted to text",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Transcribing…"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

@@ -131,9 +131,10 @@ final class SottoOutput {
         let app = AXUIElementCreateApplication(pid)
         var focusedEl: AnyObject?
         guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focusedEl) == .success,
-              let el = focusedEl else { return nil }
+              let rawEl = focusedEl else { return nil }
+        let el = rawEl as! AXUIElement
         var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(el as! AXUIElement,
+        guard AXUIElementCopyAttributeValue(el,
               kAXSelectedTextAttribute as CFString, &value) == .success else { return nil }
         return value as? String
     }

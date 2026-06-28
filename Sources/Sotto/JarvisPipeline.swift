@@ -154,15 +154,21 @@ extension AppController {
         if reply.hasPrefix(kClarificationPrefix) {
             let question = String(reply.dropFirst(kClarificationPrefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
             print("[JARVIS] Clarifying question: \(question)")
-            hud.show("❓ \(question)")
+            hud.show("❓ \(question)  —  press Jarvis to answer")
             speak(question)
             pendingClarification = true
             state = .idle
-            // Re-open the mic for the answer once the question has been spoken.
+            // Do NOT auto-reopen the mic here — doing so with a timer race overwrites
+            // currentMode and permanently kills Jarvis for the session.
+            // The user re-activates Jarvis (⌘⇧J) to give the answer; pendingClarification
+            // routes that transcript to continueClarification instead of a fresh turn.
+            // Safety timeout: if no answer arrives in 30 s, discard the pending state.
             Task { @MainActor in
-                try? await Task.sleep(for: .seconds(1.5))
-                guard self.pendingClarification, case .idle = self.state else { return }
-                self.beginRecording()
+                try? await Task.sleep(for: .seconds(30))
+                guard self.pendingClarification else { return }
+                self.pendingClarification = false
+                self.hud.hide()
+                print("[JARVIS] Clarification timed out — discarding pending state.")
             }
             return
         }

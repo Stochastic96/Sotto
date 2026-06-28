@@ -136,6 +136,8 @@ public actor CoordinatorAgent {
     /// Warm a session at launch so the first Jarvis command has no cold-start penalty.
     /// Mirrors JarvisAgent.prewarm() — one prewarm per session-type is sufficient.
     public static func prewarm() {
+        // Bootstrap CommandLearner so hint cache is warm before the first Jarvis turn.
+        Task { await CommandLearner.shared.bootstrap() }
         #if canImport(FoundationModels)
         Task {
             guard SystemLanguageModel.default.isAvailable else { return }
@@ -244,6 +246,8 @@ public actor CoordinatorAgent {
                     group.cancelAll()
                     return result
                 }
+                let toolHint = CommandLearner.inferTool(from: reply)
+                Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
                 return reply
             } catch {
                 print("[COORDINATOR] DynamicProfile failed (\(error.localizedDescription)); falling back to macOS 26 path.")
@@ -277,6 +281,8 @@ public actor CoordinatorAgent {
         print("[COORDINATOR] Tools: \(tools.map { $0.name }.joined(separator: ", "))")
         do {
             let response = try await session.respond(to: userInput, options: GenerationOptions(temperature: 0.3))
+            let toolHint = CommandLearner.inferTool(from: response.content)
+            Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
             return response.content
         } catch let error as LanguageModelSession.GenerationError {
             // The model's context window was exceeded — usually a very long writing
@@ -412,7 +418,12 @@ public class ScriptingExecutorAgent {
         // SECURITY: Never auto-execute LLM-generated code. Draft it as a DISABLED skill
         // so the user must explicitly say "enable skill <name>" before it runs.
         // This preserves the SkillStore approval gate for all agent-generated scripts.
-        let skillName = "script_\(abs(task.hashValue) % 99999)"
+        // Stable name derived from task content (hashValue is non-deterministic per process run)
+        let stableKey = task.lowercased()
+            .components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.prefix(6)
+            .joined(separator: "_")
+            .filter { $0.isLetter || $0.isNumber || $0 == "_" }
+        let skillName = "skill_\(stableKey.isEmpty ? "task" : stableKey)"
         let draftResult = SkillStore.draft(
             name: skillName,
             description: "Generated for: \(task.prefix(80))",

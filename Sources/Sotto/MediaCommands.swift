@@ -2,72 +2,120 @@ import Foundation
 
 extension CommandEngine {
     static func checkMediaShortcut(for t: String) -> ZeroLatencyShortcut? {
-        switch t {
-        case "play spotify", "resume spotify", "spotify play", "resume music", "play music":
-            return ZeroLatencyShortcut(
-                command: "native:media_play",
-                voiceFeedback: "लो भाई, गाना चालू कर दिया। मचा दो भौकाल!",
-                hudMessage: "Music Playing"
-            )
-        case "pause spotify", "pause music", "spotify pause", "stop music", "stop spotify":
-            return ZeroLatencyShortcut(
-                command: "native:media_pause",
-                voiceFeedback: "गाना रोक दिया भाई, शांति छा गई!",
-                hudMessage: "Music Paused"
-            )
-        case "next song", "next track", "spotify next", "skip song", "skip track":
-            return ZeroLatencyShortcut(
-                command: "native:media_next",
-                voiceFeedback: "लो भाई, अगला गाना लगा दिया।",
-                hudMessage: "Next Track"
-            )
-        case "previous song", "previous track", "spotify back", "spotify previous":
-            return ZeroLatencyShortcut(
-                command: "native:media_prev",
-                voiceFeedback: "लो भाई, पिछला गाना लगा दिया।",
-                hudMessage: "Previous Track"
-            )
-        case "volume up", "increase volume", "louder":
-            return ZeroLatencyShortcut(
-                command: "native:volume_up",
-                voiceFeedback: "आवाज़ बढ़ा दी भाई, फुल स्पीड!",
-                hudMessage: "Volume Up"
-            )
-        case "volume down", "decrease volume", "quieter":
-            return ZeroLatencyShortcut(
-                command: "native:volume_down",
-                voiceFeedback: "आवाज़ कम कर दी भाई, थोड़ी शांति।",
-                hudMessage: "Volume Down"
-            )
-        case "mute", "mute volume", "silence":
-            return ZeroLatencyShortcut(
-                command: "native:mute",
-                voiceFeedback: "Mute मार दिया भाई।",
-                hudMessage: "Volume Muted"
-            )
-        case "unmute", "unmute volume":
+
+        // ── UNMUTE (check before mute to avoid "unmute" matching "mute") ──
+        if t.contains("unmute") || t == "turn sound back on" || t == "turn audio back on" {
             return ZeroLatencyShortcut(
                 command: "native:unmute",
-                voiceFeedback: "Unmute कर दिया भाई।",
+                voiceFeedback: "Unmuted.",
                 hudMessage: "Volume Unmuted"
             )
-        case "brightness up", "increase brightness", "brighter":
+        }
+
+        // ── MUTE ──
+        if t.contains("mute") || t == "silence" || t == "silence the volume" || t == "no sound" {
+            return ZeroLatencyShortcut(
+                command: "native:mute",
+                voiceFeedback: "Muted.",
+                hudMessage: "Volume Muted"
+            )
+        }
+
+        // ── VOLUME UP ──
+        if t.contains("volume up") || t.contains("louder") || t.contains("increase volume") ||
+           t.contains("turn up") || t.contains("raise the volume") || t.contains("raise volume") ||
+           t.contains("higher volume") || t == "volume higher" {
+            return ZeroLatencyShortcut(
+                command: "native:volume_up",
+                voiceFeedback: "Volume up.",
+                hudMessage: "Volume Up"
+            )
+        }
+
+        // ── VOLUME DOWN ──
+        if t.contains("volume down") || t.contains("quieter") || t.contains("decrease volume") ||
+           t.contains("turn down") || t.contains("lower the volume") || t.contains("lower volume") ||
+           t.contains("reduce volume") || t == "volume lower" {
+            return ZeroLatencyShortcut(
+                command: "native:volume_down",
+                voiceFeedback: "Volume down.",
+                hudMessage: "Volume Down"
+            )
+        }
+
+        // ── BRIGHTNESS UP ──
+        if t.contains("brightness up") || t.contains("brighter") || t.contains("increase brightness") ||
+           t.contains("turn up brightness") || t.contains("raise brightness") || t.contains("more brightness") {
             return ZeroLatencyShortcut(
                 command: "native:brightness_up",
-                voiceFeedback: "लो भाई, screen की चमक बढ़ा दी।",
+                voiceFeedback: "Brightness up.",
                 hudMessage: "Brightness Up"
             )
-        case "brightness down", "decrease brightness", "dimmer":
+        }
+
+        // ── BRIGHTNESS DOWN ──
+        if t.contains("brightness down") || t.contains("dimmer") || t.contains("decrease brightness") ||
+           t.contains("dim the screen") || t.contains("dim screen") || t.contains("lower brightness") ||
+           t.contains("reduce brightness") || t.contains("less brightness") {
             return ZeroLatencyShortcut(
                 command: "native:brightness_down",
-                voiceFeedback: "लो भाई, screen की चमक कम कर दी।",
+                voiceFeedback: "Brightness down.",
                 hudMessage: "Brightness Down"
             )
-        default:
-            return nil
         }
+
+        // ── NEXT TRACK ──
+        if t.contains("next song") || t.contains("next track") || t.contains("skip song") ||
+           t.contains("skip track") || t.contains("skip this") || t.contains("spotify next") ||
+           t == "next" || t == "skip" || t == "forward" {
+            return ZeroLatencyShortcut(
+                command: "native:media_next",
+                voiceFeedback: "Next track.",
+                hudMessage: "Next Track"
+            )
+        }
+
+        // ── PREVIOUS TRACK ──
+        if t.contains("previous song") || t.contains("previous track") || t.contains("last song") ||
+           t.contains("spotify back") || t.contains("go back") && t.contains("song") ||
+           t == "previous" || t == "go back" && t.contains("track") {
+            return ZeroLatencyShortcut(
+                command: "native:media_prev",
+                voiceFeedback: "Previous track.",
+                hudMessage: "Previous Track"
+            )
+        }
+
+        // ── PAUSE / STOP ── (media_play is a play/pause toggle)
+        // Check before generic play so "pause" doesn't fall through.
+        let isPause = t.contains("pause") || t == "stop music" || t == "stop the music" ||
+                      t == "stop spotify" || t == "stop playback" || t == "pause playback"
+        if isPause {
+            return ZeroLatencyShortcut(
+                command: "native:media_play",
+                voiceFeedback: "Paused.",
+                hudMessage: "Music Paused"
+            )
+        }
+
+        // ── PLAY / RESUME (generic — no song name) ──
+        // Do NOT intercept "play X on spotify" or "play [song]" — those need Jarvis/SpotifyTool.
+        let isGenericPlay = t == "play" || t == "play music" || t == "play the music" ||
+                            t == "play spotify" || t == "play on spotify" || t == "unpause" ||
+                            t == "resume" || t == "resume music" || t == "resume spotify" ||
+                            t == "resume playback" || t == "start music" || t == "start playing" ||
+                            t == "continue playing" || t == "continue music"
+        if isGenericPlay {
+            return ZeroLatencyShortcut(
+                command: "native:media_play",
+                voiceFeedback: "Playing.",
+                hudMessage: "Music Playing"
+            )
+        }
+
+        return nil
     }
-    
+
     static func processSpotifyMusic(lowerText: String, text: String) -> CommandOutput? {
         if lowerText.hasPrefix("search spotify for ") {
             var query = String(text.dropFirst(19)).trimmingCharacters(in: .whitespaces)

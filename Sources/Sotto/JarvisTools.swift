@@ -560,7 +560,7 @@ struct AskClaudeTool: Tool {
 @available(macOS 26.0, *)
 struct AskSiriTool: Tool {
     let name = "ask_siri"
-    let description = "Open Siri and ask a question, compose messages, control closed Apple apps, or query real-time info."
+    let description = "Delegate to Siri — the preferred handler for: weather/forecasts, reminders, calendar events, alarms, timers, phone calls, FaceTime, iMessages, emails, and any Apple-native task. Always prefer this over specialized tools for these categories."
 
     @Generable
     struct Arguments {
@@ -882,13 +882,17 @@ struct MicrotaskTool: Tool {
 @available(macOS 26.0, *)
 enum JarvisToolbox {
     static func all() -> [any Tool] {
+        // WeatherTool, ReminderTool, CalendarTool removed — Siri (AskSiriTool) is the
+        // authoritative handler for all of those. Keeping only tools that work reliably
+        // without additional permissions or network keys.
         [
-            SpotifyTool(), WeatherTool(), VolumeTool(), BrightnessTool(),
+            AskSiriTool(),
+            SpotifyTool(), VolumeTool(), BrightnessTool(),
             OpenWebsiteTool(), OpenAppTool(), CreateNoteTool(), WebSearchTool(),
             ReadScreenTool(), ClickElementTool(), DraftSkillTool(), RunSkillTool(),
             RecallHistoryTool(), SystemStatusTool(), RAMMemoryStatusTool(), GPUStatusTool(),
             LocationGeocoderTool(), WikipediaLookupTool(), MemoryGoalTool(),
-            AskClaudeTool(), AskSiriTool(), ReminderTool(), CalendarTool(), PowerStateTool(),
+            AskClaudeTool(), PowerStateTool(),
             NetworkDiagnosticsTool(), ClipboardTool(), SpotlightSearchTool(),
             AppWindowManagerTool(), KeySimulatorTool(),
             MorningBriefTool(), FocusSessionTool(), EndWorkdayTool(), WorkspaceSwitchTool(),
@@ -906,8 +910,11 @@ enum JarvisToolbox {
     private static let groups: [Group] = [
         Group(keywords: ["spotify", "music", "song", "play", "pause", "track", "artist", "skip", "tune", "album"],
               make: { [SpotifyTool()] }),
-        Group(keywords: ["weather", "temperature", "forecast", "rain", "cold", "hot", "sunny", "snow", "wind"],
-              make: { [WeatherTool()] }),
+        // Weather always goes to Siri — real-time data, no API key needed, handles all locales.
+        // WeatherTool remains in all() as an offline fallback but is not routed directly.
+        Group(keywords: ["weather", "temperature", "forecast", "rain", "raining", "cold", "hot", "sunny", "snow",
+                         "wind", "outside", "umbrella", "humidity", "storm", "cloudy"],
+              make: { [AskSiriTool()] }),
         Group(keywords: ["volume", "mute", "louder", "quieter", "sound", "brightness", "dim", "brighter"],
               make: { [VolumeTool(), BrightnessTool()] }),
         Group(keywords: ["battery", "wifi", "wi-fi", "disk", "ram", "memory", "status", "health", "internet", "network", "reachable", "connection", "gpu", "graphics"],
@@ -916,8 +923,12 @@ enum JarvisToolbox {
               make: { [OpenAppTool(), OpenWebsiteTool(), AppWindowManagerTool()] }),
         Group(keywords: ["search", "google", "look up", "wikipedia", "who is", "what is", "define", "research", "claude", "explain", "news", "latest"],
               make: { [WebSearchTool(), WikipediaLookupTool(), AskClaudeTool()] }),
-        Group(keywords: ["note", "remind", "reminder", "calendar", "event", "appointment", "meeting", "schedule", "clipboard", "copy", "paste"],
-              make: { [CreateNoteTool(), ReminderTool(), CalendarTool(), ClipboardTool()] }),
+        // Reminders, calendar, alarms — Siri only. ReminderTool/CalendarTool removed.
+        Group(keywords: ["remind", "reminder", "calendar", "event", "appointment", "meeting", "schedule",
+                         "alarm", "timer", "wake me"],
+              make: { [AskSiriTool()] }),
+        Group(keywords: ["note", "clipboard", "copy", "paste"],
+              make: { [CreateNoteTool(), ClipboardTool()] }),
         Group(keywords: ["file", "spotlight", "pdf", "document", "find file", "folder"],
               make: { [SpotlightSearchTool()] }),
         Group(keywords: ["lock", "trash", "empty", "sleep", "power"],
@@ -951,30 +962,46 @@ enum JarvisToolbox {
               make: { [GenerateGitCommitTool()] }),
         Group(keywords: ["compose", "workflow", "plan", "setup", "prepare"],
               make: { [ComposedWorkflowTool()] }),
-        Group(keywords: ["siri", "ask siri", "tell siri", "message", "send message", "text", "email", "mail", "imessage"],
+        Group(keywords: ["siri", "ask siri", "tell siri", "message", "send message", "text", "email", "mail",
+                         "imessage", "call", "phone", "facetime", "whatsapp"],
               make: { [AskSiriTool()] }),
     ]
 
     /// Common general-purpose tools used when an utterance matches no group's keywords.
     private static func defaultSet() -> [any Tool] {
         [OpenAppTool(), OpenWebsiteTool(), WebSearchTool(), WikipediaLookupTool(),
-         SpotifyTool(), WeatherTool(), CreateNoteTool(), AskClaudeTool()]
+         SpotifyTool(), AskSiriTool(), CreateNoteTool(), AskClaudeTool()]
     }
 
-    /// Returns only the ≤8 most relevant tools for `command`, keeping the small model's
+    /// Returns only the ≤5 most relevant tools for `command`, keeping the small model's
     /// choice sharp. Falls back to `defaultSet()` when nothing matches.
+    /// CommandLearner hints are checked first — if this exact phrase has been used 3+ times
+    /// the learned tool goes to position #1, skipping keyword scoring entirely for that slot.
     static func routed(for command: String) -> [any Tool] {
         let lower = command.lowercased()
+
+        // Fast-path: CommandLearner knows the right tool for this phrase from past usage.
+        var learnedTool: (any Tool)? = nil
+        if let hintName = CommandLearner.hint(for: command),
+           let found = all().first(where: { $0.name == hintName }) {
+            learnedTool = found
+        }
+
         let scored = groups
             .map { (score: $0.keywords.reduce(0) { $0 + (lower.contains($1) ? 1 : 0) }, group: $0) }
             .filter { $0.score > 0 }
             .sorted { $0.score > $1.score }
 
-        if scored.isEmpty { return defaultSet() }
-
         // Apple's Tool docs: "Limit the number of tools you use to three to five."
         // Cap at 5 — selection accuracy drops beyond that with the on-device model.
         var picked: [any Tool] = []
+        // Learned tool goes first so the model sees the correct one at position #1.
+        if let learned = learnedTool { picked.append(learned) }
+        if scored.isEmpty {
+            let defaults = defaultSet().filter { t in !picked.contains(where: { $0.name == t.name }) }
+            picked.append(contentsOf: defaults.prefix(5 - picked.count))
+            return picked
+        }
         for entry in scored {
             for tool in entry.group.make() where picked.count < 5 && !picked.contains(where: { $0.name == tool.name }) {
                 picked.append(tool)

@@ -119,7 +119,7 @@ struct ListeningCapsuleContent: View {
             }
             .frame(height: 28)
 
-            Text("Listening")
+            Text(String(localized: "hud.listening", defaultValue: "Listening", bundle: .module))
                 .font(.system(.callout, design: .rounded, weight: .bold))
                 .foregroundStyle(
                     LinearGradient(
@@ -258,7 +258,7 @@ final class HUDOverlay {
 
         // Thinking
         if text.hasPrefix("…") { return .thinking(label: clean(text)) }
-        if text.hasPrefix("✨") { return .thinking(label: "Polishing…") }
+        if text.hasPrefix("✨") { return .thinking(label: String(localized: "hud.polishing", defaultValue: "Polishing…", bundle: .module)) }
         if text.hasPrefix("⏳") { return .thinking(label: clean(text)) }
 
         // Success

@@ -63,7 +63,7 @@ final class SottoTrigger {
 
     private func startWakeWord() {
         guard SFSpeechRecognizer.authorizationStatus() == .authorized else { return }
-        let session = WakeSession { [weak self] in
+        guard let session = WakeSession(onDetected: { [weak self] in
             Task { @MainActor in
                 guard self?.suspended == false else { return }
                 await EventBus.shared.emit(.wakeWordDetected)
@@ -71,7 +71,7 @@ final class SottoTrigger {
                 try? await Task.sleep(for: .seconds(3))
                 self?.startWakeWord()
             }
-        }
+        }) else { return }
         session.start()
         wakeSession = session
     }
@@ -99,8 +99,9 @@ private final class WakeSession {
     private var task: SFSpeechRecognitionTask?
     private let onDetected: () -> Void
 
-    init(onDetected: @escaping () -> Void) {
-        self.recognizer  = SFSpeechRecognizer(locale: .init(identifier: "en-US"))!
+    init?(onDetected: @escaping () -> Void) {
+        guard let r = SFSpeechRecognizer(locale: .init(identifier: "en-US")) else { return nil }
+        self.recognizer  = r
         self.onDetected  = onDetected
     }
 

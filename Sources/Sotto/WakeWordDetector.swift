@@ -7,7 +7,7 @@ import AVFoundation
 /// Runs completely offline on the Apple Neural Engine with close-to-zero CPU.
 @available(macOS 10.15, *)
 final class WakeWordDetector {
-    private let speechRecognizer: SFSpeechRecognizer
+    private let speechRecognizer: SFSpeechRecognizer?
     private var audioEngine: AVAudioEngine?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
@@ -17,7 +17,8 @@ final class WakeWordDetector {
     var onWakeWordDetected: (() -> Void)?
 
     init() {
-        self.speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")) ?? SFSpeechRecognizer()!
+        self.speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+            ?? SFSpeechRecognizer()
     }
 
     func start() {
@@ -72,7 +73,11 @@ final class WakeWordDetector {
             return
         }
 
-        recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
+        guard let recognizer = speechRecognizer else {
+            print("[WAKE] SFSpeechRecognizer unavailable on this system.")
+            return
+        }
+        recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             guard let self = self else { return }
             if let result = result {
                 let transcription = result.bestTranscription.formattedString.lowercased()

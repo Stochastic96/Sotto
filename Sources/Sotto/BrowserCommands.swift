@@ -6,37 +6,37 @@ extension CommandEngine {
         case "reload page", "reload tab", "refresh page", "refresh tab", "refresh", "reload":
             return ZeroLatencyShortcut(
                 command: "native:browser_reload",
-                voiceFeedback: "Page refresh मार दिया है मिस्टर लॉर्ड, चकाचक नया लोड हो गया।",
+                voiceFeedback: "Page reloaded.",
                 hudMessage: "Page Reloaded"
             )
         case "go back", "go back page", "page back", "back tab", "browser back", "go back tab":
             return ZeroLatencyShortcut(
                 command: "native:browser_back",
-                voiceFeedback: "पीछे वाले page पे आ गए भाई।",
+                voiceFeedback: "Going back.",
                 hudMessage: "Page Back"
             )
         case "go forward", "go forward page", "page forward", "forward tab", "browser forward", "go forward tab":
             return ZeroLatencyShortcut(
                 command: "native:browser_forward",
-                voiceFeedback: "आगे वाले page पे आ गए मिस्टर लॉर्ड।",
+                voiceFeedback: "Going forward.",
                 hudMessage: "Page Forward"
             )
         case "new tab", "open new tab", "create tab", "create new tab":
             return ZeroLatencyShortcut(
                 command: "native:browser_new_tab",
-                voiceFeedback: "नया tab खोल दिया है भाई, बकचोदी चालू करो।",
+                voiceFeedback: "New tab opened.",
                 hudMessage: "New Tab Opened"
             )
         case "close tab", "close current tab":
             return ZeroLatencyShortcut(
                 command: "native:browser_close_tab",
-                voiceFeedback: "Tab बंद कर दिया मिस्टर लॉर्ड, सीन क्लियर है।",
+                voiceFeedback: "Tab closed.",
                 hudMessage: "Tab Closed"
             )
         case "list tabs", "show all tabs", "what tabs are open", "get all tabs", "show tabs":
             return ZeroLatencyShortcut(
                 command: "native:browser_list_tabs",
-                voiceFeedback: "मिस्टर लॉर्ड, open tabs की list निकाल दी है, clipboard पे copy कर दी है।",
+                voiceFeedback: "Open tabs listed and copied to clipboard.",
                 hudMessage: "List of Tabs"
             )
         default:

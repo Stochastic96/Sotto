@@ -1,4 +1,5 @@
 import Foundation
+import os
 import CoreSpotlight
 
 /// A skill Jarvis drafted for itself. Drafts are saved DISABLED — generation is
@@ -22,7 +23,7 @@ struct DraftedSkill: Codable {
 /// This is the safe shape of "write scripts in the background": creating is cheap and
 /// reversible; running unreviewed self-written code is not, so it's gated.
 enum SkillStore {
-    private static let lock = NSLock()
+    private static let lock = OSAllocatedUnfairLock<Void>()
 
     private static var baseDir: URL {
         SettingsController.sottoDataURL.appendingPathComponent("skills/jarvis")
@@ -59,8 +60,6 @@ enum SkillStore {
     /// Draft a new skill. Always saved DISABLED. Returns a confirmation string.
     @discardableResult
     static func draft(name: String, description: String, trigger: String, language: String, body: String) -> String {
-        lock.lock(); defer { lock.unlock() }
-        var skills = load()
         let lang = language.lowercased().contains("apple") ? "applescript" : "shell"
         let skill = DraftedSkill(
             name: slug(name),
@@ -71,17 +70,19 @@ enum SkillStore {
             createdAt: ISO8601DateFormatter().string(from: Date()),
             enabled: false
         )
-        skills.removeAll { $0.name == skill.name }   // overwrite a prior draft of same name
-        skills.append(skill)
-        save(skills)
+        lock.withLock {
+            var skills = load()
+            skills.removeAll { $0.name == skill.name }   // overwrite a prior draft of same name
+            skills.append(skill)
+            save(skills)
+        }
         indexInSpotlight(skill: skill)
         return "Drafted skill '\(skill.name)' (\(lang)), disabled. Say \"enable skill \(skill.name)\" to activate it."
     }
 
     /// All drafts (enabled + pending), newest last.
     static func listAll() -> [DraftedSkill] {
-        lock.lock(); defer { lock.unlock() }
-        return load()
+        lock.withLock { load() }
     }
 
     /// Human-readable list of pending (disabled) drafts, for recall/summaries.
@@ -96,18 +97,19 @@ enum SkillStore {
 
     /// Enable a drafted skill by (slugged) name and write its script file. USER-ONLY.
     static func enable(_ rawName: String) -> String {
-        lock.lock(); defer { lock.unlock() }
         let target = slug(rawName)
-        var skills = load()
-        guard let idx = skills.firstIndex(where: { $0.name == target }) else {
+        let skill: DraftedSkill? = lock.withLock {
+            var skills = load()
+            guard let idx = skills.firstIndex(where: { $0.name == target }) else { return nil }
+            skills[idx].enabled = true
+            save(skills)
+            return skills[idx]
+        }
+        guard let skill else {
             return "No drafted skill named '\(target)'."
         }
-        skills[idx].enabled = true
-        save(skills)
-        
-        let skill = skills[idx]
         indexInSpotlight(skill: skill)
-        
+
         // Materialize the script on disk for transparency / inspection.
         ensureDirs()
         let ext = skill.language == "applescript" ? "applescript" : "sh"
@@ -128,10 +130,8 @@ enum SkillStore {
 
     /// Run an ENABLED skill by name. Refuses anything not approved by the user.
     static func runEnabled(_ rawName: String) -> String {
-        lock.lock()
         let target = slug(rawName)
-        let skill = load().first { $0.name == target }
-        lock.unlock()
+        let skill = lock.withLock { load().first { $0.name == target } }
 
         guard let skill else { return "No skill named '\(target)'." }
         guard skill.enabled else {

@@ -44,18 +44,23 @@ final class TextInjector: Sendable {
             pasteboard.clearContents()
             let wrote = pasteboard.setString(text, forType: .string)
             let landed = pasteboard.string(forType: .string) == text
-            if !wrote || !landed {
-                print("[INJECT] ⚠️ Pasteboard write failed (setString=\(wrote), readback matches=\(landed), changeCount=\(pasteboard.changeCount)). Paste may not work.")
+            guard wrote && landed else {
+                // Write failed — abort entirely so Cmd+V never pastes stale content.
+                print("[INJECT] ⚠️ Pasteboard write failed (setString=\(wrote), readback=\(landed)). Aborting paste.")
+                pasteboard.clearContents()
+                if !saved.isEmpty { pasteboard.writeObjects(saved) }
+                return
             }
 
             // Let pasteboard register the change
-            try? await Task.sleep(for: .milliseconds(150)) // 150ms
+            try? await Task.sleep(for: .milliseconds(150))
 
             print("[INJECT] Posting Cmd+V for text")
             await self.postKeystroke(Self.vKeyCode, flags: .maskCommand, targetPID: targetPID)
 
-            // Wait for target app to process text paste before we do anything else
-            try? await Task.sleep(for: .seconds(1)) // 1000ms
+            // Wait for target app to consume the paste before restoring the pasteboard.
+            // 1500ms covers slow apps (Electron, heavy browsers).
+            try? await Task.sleep(for: .milliseconds(1500))
         }
 
         // 3. Paste file if present
@@ -86,9 +91,8 @@ final class TextInjector: Sendable {
         let systemWide = AXUIElementCreateSystemWide()
         var focusedElement: AnyObject?
         let result = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedElement)
-        guard result == .success, let element = focusedElement as! AXUIElement? else {
-            return false
-        }
+        guard result == .success, let rawElement = focusedElement else { return false }
+        let element = rawElement as! AXUIElement
 
         // Only attempt direct AX insertion where the focused element actually
         // supports writing its selected text. Terminal, web views and most
@@ -162,7 +166,8 @@ final class TextInjector: Sendable {
         let systemWide = AXUIElementCreateSystemWide()
         var focusedElement: AnyObject?
         let result = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedElement)
-        if result == .success, let element = focusedElement as! AXUIElement? {
+        if result == .success, let rawElement = focusedElement {
+            let element = rawElement as! AXUIElement
             var selectedTextValue: AnyObject?
             let selectedTextResult = AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &selectedTextValue)
             if selectedTextResult == .success, let selection = selectedTextValue as? String, !selection.isEmpty {

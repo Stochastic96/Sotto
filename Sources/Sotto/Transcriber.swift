@@ -1,5 +1,6 @@
 import Foundation
 import FluidAudio
+import os
 @preconcurrency import Speech
 import AVFoundation
 
@@ -112,45 +113,45 @@ final class Transcriber {
             // can cancel it without tripping concurrency warnings.
             final class TaskBox: @unchecked Sendable { var task: SFSpeechRecognitionTask? }
             let box = TaskBox()
-            let lock = NSLock()
-            var finished = false
-            var latestPartial = ""
+            struct SpeechState { var finished = false; var partial = "" }
+            let state = OSAllocatedUnfairLock(initialState: SpeechState())
             return try await withCheckedThrowingContinuation { continuation in
                 box.task = recognizer.recognitionTask(with: request) { result, error in
-                    lock.lock()
-                    if finished { lock.unlock(); return }
-                    if let result = result {
-                        latestPartial = result.bestTranscription.formattedString
-                        if result.isFinal {
-                            finished = true
-                            lock.unlock()
-                            continuation.resume(returning: result.bestTranscription.formattedString)
-                            return
+                    // withLock owns both fields; returning String? avoids capturing a var.
+                    let resumeText: String? = state.withLock { s in
+                        guard !s.finished else { return nil }
+                        if let result {
+                            s.partial = result.bestTranscription.formattedString
+                            if result.isFinal {
+                                s.finished = true
+                                return s.partial
+                            }
                         }
+                        if error != nil {
+                            s.finished = true
+                            // Prefer any partial we captured; treat "no speech
+                            // detected" as an empty (silent) result, not a hard failure.
+                            return s.partial
+                        }
+                        return nil
                     }
-                    if let error = error {
-                        finished = true
-                        let partial = latestPartial
-                        lock.unlock()
-                        // Prefer any partial we captured; otherwise treat "no speech
-                        // detected" as an empty (silent) result, not a hard failure.
-                        continuation.resume(returning: partial)
-                        _ = error
-                        return
+                    if let text = resumeText {
+                        continuation.resume(returning: text)
                     }
-                    lock.unlock()
                 }
 
                 Task.detached {
                     try? await Task.sleep(for: .seconds(8))
-                    lock.lock()
-                    if finished { lock.unlock(); return }
-                    finished = true
-                    let partial = latestPartial
-                    lock.unlock()
-                    box.task?.cancel()
-                    print("[TRANSCRIBER] Apple Speech timed out after 8s; returning best partial (\(partial.count) chars).")
-                    continuation.resume(returning: partial)
+                    let resumeText: String? = state.withLock { s in
+                        guard !s.finished else { return nil }
+                        s.finished = true
+                        return s.partial
+                    }
+                    if let text = resumeText {
+                        box.task?.cancel()
+                        print("[TRANSCRIBER] Apple Speech timed out after 8s; returning best partial (\(text.count) chars).")
+                        continuation.resume(returning: text)
+                    }
                 }
             }
         }

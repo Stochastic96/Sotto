@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import Vision
+import os
 import SottoCore
 import ScreenCaptureKit
 
@@ -45,18 +46,16 @@ enum CommandEngine {
         var windowTitle: String = ""
     }
     
-    private static let skillLock = NSLock()
-    private static var skillTriggers: [String: String] = [:]
+    // The dictionary IS the lock state — no separate lock variable needed.
+    private static let skillTriggers = OSAllocatedUnfairLock<[String: String]>(initialState: [:])
 
     static func registerSkillTrigger(_ trigger: String, skillName: String) {
-        skillLock.lock()
-        defer { skillLock.unlock() }
         var clean = trigger.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         while clean.hasSuffix(".") || clean.hasSuffix(",") || clean.hasSuffix("?") || clean.hasSuffix("!") {
             clean.removeLast()
         }
         clean = clean.trimmingCharacters(in: .whitespacesAndNewlines)
-        skillTriggers[clean] = skillName
+        skillTriggers.withLock { [clean] in $0[clean] = skillName }
         print("[ENGINE] Registered skill trigger: '\(clean)' -> skill: '\(skillName)'")
     }
 
@@ -76,9 +75,7 @@ enum CommandEngine {
         cleanT = cleanT.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Check for registered custom skill triggers
-        skillLock.lock()
-        let matchedSkill = skillTriggers[cleanT]
-        skillLock.unlock()
+        let matchedSkill = skillTriggers.withLock { [cleanT] in $0[cleanT] }
 
         if let skillName = matchedSkill {
             return ZeroLatencyShortcut(
@@ -136,12 +133,12 @@ enum CommandEngine {
             case .setVolume(let pct):
                 return ZeroLatencyShortcut(
                     command: "native:set_volume:\(pct)",
-                    voiceFeedback: "Volume \(pct) percent पे सेट कर दिया मिस्टर लॉर्ड।",
+                    voiceFeedback: "Volume set to \(pct)%.",
                     hudMessage: "Volume \(pct)%")
             case .setBrightness(let pct):
                 return ZeroLatencyShortcut(
                     command: "native:set_brightness:\(pct)",
-                    voiceFeedback: "Brightness \(pct) percent पे सेट कर दी मिस्टर लॉर्ड।",
+                    voiceFeedback: "Brightness set to \(pct)%.",
                     hudMessage: "Brightness \(pct)%")
             }
         }
@@ -149,30 +146,34 @@ enum CommandEngine {
         // Delegate to registered CommandMatcher chain (WindowMatcher → BrowserMatcher → MediaMatcher)
         if let shortcut = shortcutMatchers.lazy.compactMap({ $0.match(cleanT) }).first { return shortcut }
 
-        // System controls and other reflexes
-        switch cleanT {
-        // --- 3. SYSTEM CONTROL & POWER ---
-        case "sleep mac", "put mac to sleep", "sleep computer":
+        // ── SYSTEM CONTROLS (keyword-based so transcription variants are accepted) ──
+        if cleanT.contains("sleep") && (cleanT.contains("mac") || cleanT.contains("computer") ||
+           cleanT.contains("machine") || cleanT.contains("laptop") || cleanT == "sleep") {
             return ZeroLatencyShortcut(
                 command: "native:sleep",
-                voiceFeedback: "Mac को सुला दिया है मिस्टर लॉर्ड, तेरे भाई ने चिल मार दिया।",
+                voiceFeedback: "Going to sleep.",
                 hudMessage: "Mac Sleeping"
             )
-        case "lock mac", "lock my mac", "lock screen", "lock computer":
+        }
+        if cleanT.contains("lock") && (cleanT.contains("mac") || cleanT.contains("screen") ||
+           cleanT.contains("computer") || cleanT.contains("device") || cleanT.contains("laptop")) {
             return ZeroLatencyShortcut(
                 command: "native:lock",
-                voiceFeedback: "Mac को lock कर दिया है मिस्टर लॉर्ड, सुरक्षा एकदम टाइट है।",
+                voiceFeedback: "Screen locked.",
                 hudMessage: "Mac Locked"
             )
-        case "empty trash", "clean trash", "empty bin", "empty recycling bin":
+        }
+        if cleanT.contains("empty trash") || cleanT.contains("empty the trash") ||
+           cleanT.contains("clean trash") || cleanT.contains("empty bin") ||
+           cleanT.contains("empty recycling") || cleanT.contains("clear trash") {
             return ZeroLatencyShortcut(
                 command: "native:empty_trash",
-                voiceFeedback: "Trash की सारी भसड़ साफ़ कर दी है भाई, एकदम चकाचक!",
+                voiceFeedback: "Trash emptied.",
                 hudMessage: "Trash Emptied"
             )
-        default:
-            return nil
         }
+
+        return nil
     }
 
     static func orchestratorAction(for raw: String) -> OrchestratorAction? {
@@ -1121,8 +1122,12 @@ enum CommandEngine {
             if t.contains(kw) { return false }
         }
 
-        // 1. Weather
-        if t.contains("weather") || t.contains("temperature") || t.contains("forecast") || t.contains("outside today") {
+        // 1. Weather — covers synonyms that previously fell through to WeatherTool
+        if t.contains("weather") || t.contains("temperature") || t.contains("forecast") ||
+           t.contains("outside today") || t.contains("raining") || t.contains("is it rain") ||
+           t.contains("will it rain") || t.contains("will it snow") || t.contains("is it hot") ||
+           t.contains("is it cold") || t.contains("umbrella") || t.contains("how hot") ||
+           t.contains("how cold") || t.contains("storm") || t.contains("sunny outside") {
             return true
         }
 
@@ -1142,13 +1147,15 @@ enum CommandEngine {
         }
 
         // 4. Alarms & Timers
-        if t.contains("set alarm") || t.contains("set a timer") || t.contains("start a timer") || t.contains("wake me up at") {
+        if t.contains("set alarm") || t.contains("set a timer") || t.contains("start a timer") ||
+           t.contains("wake me up at") || t.contains("create a timer") || t.contains("timer for ") {
             return true
         }
 
-        // 5. Messages & Mail
+        // 5. Messages, Mail & Calls
         if t.hasPrefix("send a message") || t.hasPrefix("send a text") || t.hasPrefix("message ") || t.hasPrefix("text ") ||
-            t.hasPrefix("email ") || t.hasPrefix("send an email") {
+           t.hasPrefix("email ") || t.hasPrefix("send an email") || t.hasPrefix("call ") ||
+           t.hasPrefix("facetime ") || t.hasPrefix("whatsapp ") {
             return true
         }
 

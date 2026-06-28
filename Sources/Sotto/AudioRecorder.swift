@@ -38,8 +38,11 @@ final class AudioRecorder: @unchecked Sendable {
         }
 
         let input = engine.inputNode
-        
-        // Force the input device to be the built-in microphone if available
+
+        // Always use the physical built-in mic, regardless of Bluetooth/external speaker state.
+        // AVCaptureDevice.default(.microphone) returns the *system default* input which macOS
+        // switches to the Bluetooth device when a headset/speaker connects — so we bypass that
+        // and find the built-in hardware directly via its CoreAudio transport type.
         if let builtInMicID = findBuiltInMicrophoneDeviceID() {
             print("[AUDIO] Forcing built-in microphone input device ID: \(builtInMicID)")
             do {
@@ -98,7 +101,7 @@ final class AudioRecorder: @unchecked Sendable {
         guard status != .error, let channel = out.floatChannelData else { return }
 
         let count = Int(out.frameLength)
-        
+
         // VAD / Silence detection logic
         if count > 0 {
             var sum: Float = 0.0
@@ -108,7 +111,7 @@ final class AudioRecorder: @unchecked Sendable {
             }
             let rms = sqrt(sum / Float(count))
             lock.withLock { self._currentRMS = rms }
-            
+
             if !SettingsController.isPushToTalk {
                 if rms < silenceThreshold {
                     let duration = Double(count) / targetFormat.sampleRate
@@ -130,21 +133,45 @@ final class AudioRecorder: @unchecked Sendable {
         lock.withLock { samples.append(contentsOf: newSamples) }
     }
 
+    // MARK: - Device discovery
+
+    /// Finds the physical built-in microphone by CoreAudio transport type.
+    /// This is reliable even when Bluetooth speakers/headsets are connected and
+    /// macOS has switched the system default input away from the built-in mic.
     private func findBuiltInMicrophoneDeviceID() -> AudioDeviceID? {
-        if let builtInMic = AVCaptureDevice.default(.microphone, for: .audio, position: .unspecified) {
-            return getAudioDeviceID(from: builtInMic.uniqueID)
+        for deviceID in getAllDevices() {
+            guard getTransportType(deviceID: deviceID) == kAudioDeviceTransportTypeBuiltIn,
+                  hasInputChannels(deviceID: deviceID) else { continue }
+            return deviceID
         }
         return nil
     }
 
-    private func getAudioDeviceID(from uid: String) -> AudioDeviceID? {
-        let devices = getAllDevices()
-        for dev in devices {
-            if getDeviceUID(deviceID: dev) == uid {
-                return dev
-            }
-        }
-        return nil
+    private func getTransportType(deviceID: AudioDeviceID) -> UInt32 {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var transportType: UInt32 = 0
+        var dataSize = UInt32(MemoryLayout<UInt32>.size)
+        AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &dataSize, &transportType)
+        return transportType
+    }
+
+    private func hasInputChannels(deviceID: AudioDeviceID) -> Bool {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(deviceID, &propertyAddress, 0, nil, &dataSize) == noErr,
+              dataSize >= MemoryLayout<AudioBufferList>.size else { return false }
+        let buffer = UnsafeMutableRawPointer.allocate(byteCount: Int(dataSize), alignment: MemoryLayout<AudioBufferList>.alignment)
+        defer { buffer.deallocate() }
+        guard AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &dataSize, buffer) == noErr else { return false }
+        return buffer.load(as: AudioBufferList.self).mNumberBuffers > 0
     }
 
     private func getAllDevices() -> [AudioDeviceID] {
@@ -153,7 +180,7 @@ final class AudioRecorder: @unchecked Sendable {
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-        
+
         var dataSize: UInt32 = 0
         let status = AudioObjectGetPropertyDataSize(
             AudioObjectID(kAudioObjectSystemObject),
@@ -163,10 +190,10 @@ final class AudioRecorder: @unchecked Sendable {
             &dataSize
         )
         guard status == noErr else { return [] }
-        
+
         let deviceCount = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
         var deviceIDs = [AudioDeviceID](repeating: 0, count: deviceCount)
-        
+
         let retrieveStatus = AudioObjectGetPropertyData(
             AudioObjectID(kAudioObjectSystemObject),
             &propertyAddress,
@@ -178,37 +205,12 @@ final class AudioRecorder: @unchecked Sendable {
         return retrieveStatus == noErr ? deviceIDs : []
     }
 
-    private func getDeviceUID(deviceID: AudioDeviceID) -> String? {
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceUID,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        
-        var deviceUID: Unmanaged<CFString>? = nil
-        var dataSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-        
-        let status = AudioObjectGetPropertyData(
-            deviceID,
-            &propertyAddress,
-            0,
-            nil,
-            &dataSize,
-            &deviceUID
-        )
-        
-        if status == noErr, let uid = deviceUID?.takeRetainedValue() {
-            return uid as String
-        }
-        return nil
-    }
-
     private func setInputDevice(engine: AVAudioEngine, deviceID: AudioDeviceID) throws {
         let inputNode = engine.inputNode
         guard let audioUnit = inputNode.audioUnit else {
             throw NSError(domain: "AudioRecorder", code: -3, userInfo: [NSLocalizedDescriptionKey: "Input node audio unit is nil"])
         }
-        
+
         var mDeviceID = deviceID
         let size = UInt32(MemoryLayout<AudioDeviceID>.size)
         let status = AudioUnitSetProperty(
@@ -219,7 +221,7 @@ final class AudioRecorder: @unchecked Sendable {
             &mDeviceID,
             size
         )
-        
+
         if status != noErr {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: [NSLocalizedDescriptionKey: "AudioUnitSetProperty CurrentDevice failed with status \(status)"])
         }

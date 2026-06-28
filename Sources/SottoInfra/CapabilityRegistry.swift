@@ -22,15 +22,15 @@ import Foundation
 
 // MARK: - Types
 
-enum AITier: Int, Comparable, Sendable, CustomStringConvertible {
+public enum AITier: Int, Comparable, Sendable, CustomStringConvertible {
     case reflex         = 0   // Pure Swift, 0 tokens, 0–20 ms
     case foundationModel = 1  // Apple Intelligence, on-device, 0 API cost, 200–600 ms
     case mlx            = 2   // On-device Qwen, local GPU, no network, 1–3 s
     case cloud          = 3   // External API (Claude CLI, etc.), requires network
 
-    static func < (l: Self, r: Self) -> Bool { l.rawValue < r.rawValue }
+    public static func < (l: Self, r: Self) -> Bool { l.rawValue < r.rawValue }
 
-    var description: String {
+    public var description: String {
         switch self {
         case .reflex:          return "reflex"
         case .foundationModel: return "apple_intelligence"
@@ -40,23 +40,23 @@ enum AITier: Int, Comparable, Sendable, CustomStringConvertible {
     }
 }
 
-enum RiskLevel: Int, Comparable, Sendable {
+public enum RiskLevel: Int, Comparable, Sendable {
     case low = 0, medium = 1, high = 2
-    static func < (l: Self, r: Self) -> Bool { l.rawValue < r.rawValue }
+    public static func < (l: Self, r: Self) -> Bool { l.rawValue < r.rawValue }
 }
 
-struct CapabilityDescriptor: Sendable {
-    let name: String
-    let description: String
-    let keywords: Set<String>      // used for routing — matched against user utterance words
-    let latencyMs: Int             // estimated p50
-    let ramMB: Int                 // 0 = negligible
-    let tier: AITier
-    let risk: RiskLevel
-    let isResumable: Bool          // can the job be paused and resumed?
-    let requiresNetwork: Bool
+public struct CapabilityDescriptor: Sendable {
+    public let name: String
+    public let description: String
+    public let keywords: Set<String>      // used for routing — matched against user utterance words
+    public let latencyMs: Int             // estimated p50
+    public let ramMB: Int                 // 0 = negligible
+    public let tier: AITier
+    public let risk: RiskLevel
+    public let isResumable: Bool          // can the job be paused and resumed?
+    public let requiresNetwork: Bool
 
-    init(
+    public init(
         name: String,
         description: String = "",
         keywords: Set<String>,
@@ -81,18 +81,20 @@ struct CapabilityDescriptor: Sendable {
 
 // MARK: - Registry actor
 
-actor CapabilityRegistry {
-    static let shared = CapabilityRegistry()
+public actor CapabilityRegistry {
+    public static let shared = CapabilityRegistry()
     private var capabilities: [String: CapabilityDescriptor] = [:]
+
+    private init() {}
 
     // MARK: - Registration
 
-    func register(_ cap: CapabilityDescriptor) {
+    public func register(_ cap: CapabilityDescriptor) {
         capabilities[cap.name] = cap
         print("[REGISTRY] +\(cap.name) (\(cap.tier), \(cap.latencyMs)ms, keywords: \(cap.keywords.sorted().joined(separator: ",")))")
     }
 
-    func registerAll(_ caps: [CapabilityDescriptor]) {
+    public func registerAll(_ caps: [CapabilityDescriptor]) {
         for cap in caps { capabilities[cap.name] = cap }
         print("[REGISTRY] Registered \(caps.count) capabilities. Total: \(capabilities.count)")
     }
@@ -101,7 +103,7 @@ actor CapabilityRegistry {
 
     /// Returns the cheapest (lowest tier, then lowest latency) capability whose
     /// keywords overlap the intent words. Returns nil if nothing matches.
-    func cheapest(for intent: String, maxTier: AITier = .cloud) -> CapabilityDescriptor? {
+    public func cheapest(for intent: String, maxTier: AITier = .cloud) -> CapabilityDescriptor? {
         let words = intentWords(intent)
         return capabilities.values
             .filter { cap in
@@ -115,18 +117,18 @@ actor CapabilityRegistry {
     }
 
     /// All capabilities matching any of the given keywords, sorted cheapest first.
-    func matching(keywords: Set<String>, maxTier: AITier = .cloud) -> [CapabilityDescriptor] {
+    public func matching(keywords: Set<String>, maxTier: AITier = .cloud) -> [CapabilityDescriptor] {
         capabilities.values
             .filter { !$0.keywords.isDisjoint(with: keywords) && $0.tier <= maxTier }
             .sorted { $0.tier < $1.tier }
     }
 
     /// Every registered capability name, for the log console.
-    func allNames() -> [String] {
+    public func allNames() -> [String] {
         capabilities.keys.sorted()
     }
 
-    func count() -> Int { capabilities.count }
+    public func count() -> Int { capabilities.count }
 
     // MARK: - Private
 
@@ -137,9 +139,9 @@ actor CapabilityRegistry {
     }
 }
 
-// MARK: - Seed: register all 33 existing tools at startup
+// MARK: - Seed: register all built-in tools at startup
 
-extension CapabilityRegistry {
+public extension CapabilityRegistry {
 
     /// Call once in AppController.start() after CoordinatorAgent is created.
     func seedBuiltins() async {

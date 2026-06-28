@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Sotto",
+    defaultLocalization: "en",
     platforms: [.macOS(.v14)],
     dependencies: [
         .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.15.0"),
@@ -18,10 +19,15 @@ let package = Package(
             name: "SottoCore",
             path: "Sources/SottoCore"
         ),
+        .target(
+            name: "SottoInfra",
+            path: "Sources/SottoInfra"
+        ),
         .executableTarget(
             name: "Sotto",
             dependencies: [
                 "SottoCore",
+                "SottoInfra",
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
@@ -31,6 +37,7 @@ let package = Package(
                 .product(name: "Tokenizers", package: "swift-transformers")
             ],
             path: "Sources/Sotto",
+            resources: [.process("Resources")],
             swiftSettings: {
                 var settings: [SwiftSetting] = [.define("SOTTO_MLX")]
                 settings.append(.define("SOTTO_FM27"))

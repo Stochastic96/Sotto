@@ -2,99 +2,137 @@ import Foundation
 
 extension CommandEngine {
     static func checkWindowShortcut(for t: String) -> ZeroLatencyShortcut? {
-        switch t {
-        case "maximize", "maximize window", "full screen", "full screen window", "make window full screen":
-            return ZeroLatencyShortcut(
-                command: "native:win_maximize",
-                voiceFeedback: "मिस्टर लॉर्ड, window को फुल स्क्रीन पे चेप दिया है। दिल्ली से हूँ भाई, सीन एकदम मक्खन कर दिया।",
-                hudMessage: "Window Maximized"
-            )
-        case "minimize", "minimize window", "hide window":
-            return ZeroLatencyShortcut(
-                command: "native:win_minimize",
-                voiceFeedback: "window को छोटा कर दिया है मिस्टर लॉर्ड, चिल मारो।",
-                hudMessage: "Window Minimized"
-            )
-        case "tile left", "tile window left", "left align window", "window left":
-            return ZeroLatencyShortcut(
-                command: "native:win_left",
-                voiceFeedback: "लो मिस्टर लॉर्ड, window को left में सेट कर दिया है। भौकाल टाइलिंग!",
-                hudMessage: "Window Tiled Left"
-            )
-        case "tile right", "tile window right", "right align window", "window right":
-            return ZeroLatencyShortcut(
-                command: "native:win_right",
-                voiceFeedback: "Right side में window चेप दी है मिस्टर लॉर्ड, एकदम सॉलिड सीन है।",
-                hudMessage: "Window Tiled Right"
-            )
-        case "center", "center window", "center active window":
-            return ZeroLatencyShortcut(
-                command: "native:win_center",
-                voiceFeedback: "Window को center में सेट कर दिया है, मिस्टर लॉर्ड। तेरे भाई का जुगाड़ एकदम मक्खन है।",
-                hudMessage: "Window Centered"
-            )
-        case "close window", "close active window":
-            return ZeroLatencyShortcut(
-                command: "native:win_close",
-                voiceFeedback: "लो भाई, window ही साफ़ कर दी। भसड़ ख़त्म!",
-                hudMessage: "Window Closed"
-            )
-        case "tile top", "tile window top", "top half window", "window top", "tile top half", "tile window top half":
-            return ZeroLatencyShortcut(
-                command: "native:win_top_half",
-                voiceFeedback: "लो भाई, window को ऊपर वाले half में सेट कर दिया है मिस्टर लॉर्ड।",
-                hudMessage: "Window Tiled Top"
-            )
-        case "tile bottom", "tile window bottom", "bottom half window", "window bottom", "tile bottom half", "tile window bottom half":
-            return ZeroLatencyShortcut(
-                command: "native:win_bottom_half",
-                voiceFeedback: "लो भाई, window को नीचे वाले half में सेट कर दिया है मिस्टर लॉर्ड।",
-                hudMessage: "Window Tiled Bottom"
-            )
-        case "tile top left", "window top left", "tile window top left":
+        // A recognised window-action word must be present so random sentences don't fire.
+        let hasWinWord = t.contains("tile") || t.contains("window") || t.contains("snap") ||
+                         t.contains("split") || t.contains("half") || t.contains("align") ||
+                         t.contains("resize") || t.contains("move") || t.contains("put") ||
+                         t.contains("maximize") || t.contains("minimise") || t.contains("minimize") ||
+                         t.contains("full screen") || t.contains("fullscreen") ||
+                         t.contains("close") || t.contains("screen")
+
+        guard hasWinWord else { return nil }
+
+        // ── CORNERS (check first — most specific, must not fall through to halves) ──
+        if t.contains("top") && t.contains("left") {
             return ZeroLatencyShortcut(
                 command: "native:win_top_left",
-                voiceFeedback: "Window top-left corner में सेट कर दी है मिस्टर लॉर्ड।",
-                hudMessage: "Window Tiled Top-Left"
+                voiceFeedback: "Snapped to top-left.",
+                hudMessage: "Window Top-Left"
             )
-        case "tile top right", "window top right", "tile window top right":
+        }
+        if t.contains("top") && t.contains("right") {
             return ZeroLatencyShortcut(
                 command: "native:win_top_right",
-                voiceFeedback: "Window top-right corner in set कर दी है मिस्टर लॉर्ड।",
-                hudMessage: "Window Tiled Top-Right"
+                voiceFeedback: "Snapped to top-right.",
+                hudMessage: "Window Top-Right"
             )
-        case "tile bottom left", "window bottom left", "tile window bottom left":
+        }
+        if t.contains("bottom") && t.contains("left") {
             return ZeroLatencyShortcut(
                 command: "native:win_bottom_left",
-                voiceFeedback: "Window bottom-left corner in set कर दी है मिस्टर लॉर्ड।",
-                hudMessage: "Window Tiled Bottom-Left"
+                voiceFeedback: "Snapped to bottom-left.",
+                hudMessage: "Window Bottom-Left"
             )
-        case "tile bottom right", "window bottom right", "tile window bottom right":
+        }
+        if t.contains("bottom") && t.contains("right") {
             return ZeroLatencyShortcut(
                 command: "native:win_bottom_right",
-                voiceFeedback: "Window bottom-right corner in set कर दी है मिस्टर लॉर्ड।",
-                hudMessage: "Window Tiled Bottom-Right"
+                voiceFeedback: "Snapped to bottom-right.",
+                hudMessage: "Window Bottom-Right"
             )
-        case "make window small", "small window", "resize small":
+        }
+
+        // ── HALVES ──
+        if t.contains("left") {
+            return ZeroLatencyShortcut(
+                command: "native:win_left",
+                voiceFeedback: "Tiled left.",
+                hudMessage: "Window Tiled Left"
+            )
+        }
+        if t.contains("right") {
+            return ZeroLatencyShortcut(
+                command: "native:win_right",
+                voiceFeedback: "Tiled right.",
+                hudMessage: "Window Tiled Right"
+            )
+        }
+        if t.contains("top") || t.contains("upper") {
+            return ZeroLatencyShortcut(
+                command: "native:win_top_half",
+                voiceFeedback: "Tiled to top half.",
+                hudMessage: "Window Tiled Top"
+            )
+        }
+        if t.contains("bottom") || t.contains("lower") {
+            return ZeroLatencyShortcut(
+                command: "native:win_bottom_half",
+                voiceFeedback: "Tiled to bottom half.",
+                hudMessage: "Window Tiled Bottom"
+            )
+        }
+
+        // ── MAXIMIZE / FULL SCREEN ──
+        if t.contains("full screen") || t.contains("fullscreen") || t.contains("maximize") ||
+           t.contains("maximise") || t.contains("full size") {
+            return ZeroLatencyShortcut(
+                command: "native:win_maximize",
+                voiceFeedback: "Window maximized.",
+                hudMessage: "Window Maximized"
+            )
+        }
+
+        // ── MINIMIZE / HIDE ──
+        if t.contains("minimize") || t.contains("minimise") || t.contains("hide window") ||
+           t.contains("hide the window") {
+            return ZeroLatencyShortcut(
+                command: "native:win_minimize",
+                voiceFeedback: "Window minimized.",
+                hudMessage: "Window Minimized"
+            )
+        }
+
+        // ── CLOSE ──
+        if t.contains("close window") || t.contains("close the window") || t.contains("close this window") {
+            return ZeroLatencyShortcut(
+                command: "native:win_close",
+                voiceFeedback: "Window closed.",
+                hudMessage: "Window Closed"
+            )
+        }
+
+        // ── CENTER ── (left/right already handled above)
+        if t.contains("center") || t.contains("centre") {
+            return ZeroLatencyShortcut(
+                command: "native:win_center",
+                voiceFeedback: "Window centered.",
+                hudMessage: "Window Centered"
+            )
+        }
+
+        // ── SIZE PRESETS ──
+        if t.contains("small") {
             return ZeroLatencyShortcut(
                 command: "native:win_small",
-                voiceFeedback: "Window को छोटा और center में कर दिया है मिस्टर लॉर्ड।",
+                voiceFeedback: "Window resized small.",
                 hudMessage: "Window Resized Small"
             )
-        case "make window medium", "medium window", "resize medium":
+        }
+        if t.contains("medium") {
             return ZeroLatencyShortcut(
                 command: "native:win_medium",
-                voiceFeedback: "Window को medium size में center कर दिया है मिस्टर लॉर्ड।",
+                voiceFeedback: "Window resized medium.",
                 hudMessage: "Window Resized Medium"
             )
-        case "make window large", "large window", "resize large":
+        }
+        if t.contains("large") {
             return ZeroLatencyShortcut(
                 command: "native:win_large",
-                voiceFeedback: "Window को large size में center कर दिया है मिस्टर लॉर्ड।",
+                voiceFeedback: "Window resized large.",
                 hudMessage: "Window Resized Large"
             )
-        default:
-            return nil
         }
+
+        return nil
     }
 }

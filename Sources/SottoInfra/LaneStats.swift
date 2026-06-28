@@ -7,15 +7,15 @@ import Foundation
 //
 // Target: ~80–90% reflex, ~10–20% apple. Counts persist across launches.
 
-enum Lane: String, Sendable, CaseIterable {
+public enum Lane: String, Sendable, CaseIterable {
     case reflex   // pure Swift, 0 tokens (zero-latency shortcut, kernel reflex, weather, Siri)
     case apple    // Apple Intelligence Foundation Models agent
     case cloud    // Claude CLI / external
     case failed   // nothing handled it
 }
 
-actor LaneStats {
-    static let shared = LaneStats()
+public actor LaneStats {
+    public static let shared = LaneStats()
 
     struct Bucket: Codable, Sendable {
         var count = 0
@@ -35,7 +35,7 @@ actor LaneStats {
         }
     }
 
-    func record(lane: Lane, ms: Double) {
+    public func record(lane: Lane, ms: Double) {
         var b = buckets[lane.rawValue] ?? Bucket()
         b.count += 1
         b.totalMs += ms
@@ -46,13 +46,13 @@ actor LaneStats {
         }
     }
 
-    func reset() {
+    public func reset() {
         buckets.removeAll()
         UserDefaults.standard.removeObject(forKey: Self.defaultsKey)
     }
 
     /// Human-readable distribution table for the log/explanation window.
-    func summary() -> String {
+    public func summary() -> String {
         let total = buckets.values.reduce(0) { $0 + $1.count }
         guard total > 0 else { return "No Jarvis commands recorded yet." }
 

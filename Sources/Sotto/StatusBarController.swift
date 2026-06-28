@@ -104,7 +104,7 @@ final class MenuBarPill: NSObject {
 
 @MainActor final class StatusBarController: NSObject, NSMenuDelegate {
     private let item: NSStatusItem
-    private let statusMenuItem = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
+    private let statusMenuItem = NSMenuItem(title: String(localized: "menu.starting", defaultValue: "Starting…", bundle: .module), action: nil, keyEquivalent: "")
     private let transcriptMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let intelligenceStatusMenuItem = NSMenuItem(title: "Apple Intelligence: ready", action: nil, keyEquivalent: "")
     private let polishMenuItem: NSMenuItem
@@ -118,13 +118,14 @@ final class MenuBarPill: NSObject {
 
     private var history: [String] = []
     private let historyMenu = NSMenu()
-    private let historyMenuItem = NSMenuItem(title: "Recent Transcripts", action: nil, keyEquivalent: "")
+    private let historyMenuItem = NSMenuItem(title: String(localized: "menu.recentTranscripts", defaultValue: "Recent Transcripts", bundle: .module), action: nil, keyEquivalent: "")
 
     var lastTranscript: String = "" {
         didSet {
             let preview = lastTranscript.prefix(60)
-            transcriptMenuItem.title = "Last: \(preview)\(lastTranscript.count > 60 ? "…" : "")"
-            transcriptMenuItem.toolTip = "Click to copy full transcript to clipboard"
+            let lastPrefix = String(localized: "status.lastTranscriptPrefix", defaultValue: "Last:", bundle: .module)
+            transcriptMenuItem.title = "\(lastPrefix) \(preview)\(lastTranscript.count > 60 ? "…" : "")"
+            transcriptMenuItem.toolTip = String(localized: "menu.copyTooltip", defaultValue: "Click to copy full transcript to clipboard", bundle: .module)
             transcriptMenuItem.isHidden = lastTranscript.isEmpty
 
             if !lastTranscript.isEmpty {
@@ -140,13 +141,16 @@ final class MenuBarPill: NSObject {
     }
 
     var intelligenceStatus: String = "" {
-        didSet { intelligenceStatusMenuItem.title = "Apple Intelligence: \(intelligenceStatus)" }
+        didSet {
+            let prefix = String(localized: "status.appleIntelligencePrefix", defaultValue: "Apple Intelligence:", bundle: .module)
+            intelligenceStatusMenuItem.title = "\(prefix) \(intelligenceStatus)"
+        }
     }
 
     init(polishEnabled: Bool) {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        polishMenuItem = NSMenuItem(title: "AI Polish", action: nil, keyEquivalent: "")
-        dictateMenuItem = NSMenuItem(title: "🎤 Start Dictation", action: #selector(startDictate), keyEquivalent: "d")
+        polishMenuItem = NSMenuItem(title: String(localized: "menu.aiPolish", defaultValue: "AI Polish", bundle: .module), action: nil, keyEquivalent: "")
+        dictateMenuItem = NSMenuItem(title: String(localized: "menu.startDictation", defaultValue: "🎤 Start Dictation", bundle: .module), action: #selector(startDictate), keyEquivalent: "d")
         super.init()
 
         item.button?.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Sotto / Jarvis")
@@ -183,25 +187,25 @@ final class MenuBarPill: NSObject {
         menu.addItem(.separator())
 
         // Settings Menu Item
-        let settingsMenuItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        let settingsMenuItem = NSMenuItem(title: String(localized: "menu.settings", defaultValue: "Settings…", bundle: .module), action: #selector(openSettings), keyEquivalent: ",")
         settingsMenuItem.target = self
         menu.addItem(settingsMenuItem)
 
         // Jarvis Help & Guide Menu Item
-        let guideMenuItem = NSMenuItem(title: "Jarvis Help & Guide…", action: #selector(openGuide), keyEquivalent: "?")
+        let guideMenuItem = NSMenuItem(title: String(localized: "menu.jarvisHelp", defaultValue: "Jarvis Help & Guide…", bundle: .module), action: #selector(openGuide), keyEquivalent: "?")
         guideMenuItem.target = self
         menu.addItem(guideMenuItem)
 
-        let consoleMenuItem = NSMenuItem(title: "Show Console", action: #selector(showConsole), keyEquivalent: "l")
+        let consoleMenuItem = NSMenuItem(title: String(localized: "menu.showConsole", defaultValue: "Show Console", bundle: .module), action: #selector(showConsole), keyEquivalent: "l")
         consoleMenuItem.target = self
         menu.addItem(consoleMenuItem)
 
-        let logMenuItem = NSMenuItem(title: "Open Log File", action: #selector(openLogFile), keyEquivalent: "")
+        let logMenuItem = NSMenuItem(title: String(localized: "menu.openLog", defaultValue: "Open Log File", bundle: .module), action: #selector(openLogFile), keyEquivalent: "")
         logMenuItem.target = self
         menu.addItem(logMenuItem)
         menu.addItem(.separator())
 
-        menu.addItem(NSMenuItem(title: "Quit Sotto", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: String(localized: "menu.quit", defaultValue: "Quit Sotto", bundle: .module), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         item.menu = menu
         intelligenceStatus = "ready"
 
@@ -253,15 +257,15 @@ final class MenuBarPill: NSObject {
     func update(for state: AppController.State) {
         switch state {
         case .loadingModel:
-            set(icon: "arrow.down.circle", text: "Loading model… (first run downloads ~600 MB)")
+            set(icon: "arrow.down.circle", text: String(localized: "status.loadingModel", defaultValue: "Loading model… (first run downloads ~600 MB)", bundle: .module))
         case .idle:
-            set(icon: "mic", text: "Ready")
+            set(icon: "mic", text: String(localized: "status.ready", defaultValue: "Ready", bundle: .module))
         case .recording:
-            set(icon: "mic.fill", text: "Listening…")
+            set(icon: "mic.fill", text: String(localized: "status.listening", defaultValue: "Listening…", bundle: .module))
         case .transcribing:
-            set(icon: "waveform", text: "Transcribing…")
+            set(icon: "waveform", text: String(localized: "status.transcribing", defaultValue: "Transcribing…", bundle: .module))
         case .polishing:
-            set(icon: "sparkles", text: "Polishing…")
+            set(icon: "sparkles", text: String(localized: "status.polishing", defaultValue: "Polishing…", bundle: .module))
         case .error(let message):
             set(icon: "exclamationmark.triangle", text: message)
         }
