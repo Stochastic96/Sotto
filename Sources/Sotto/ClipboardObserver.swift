@@ -6,7 +6,7 @@ import FoundationModels
 
 // MARK: - ClipboardObserver
 //
-// Watches NSPasteboard every 1.5 s. On change, classifies content deterministically —
+// Watches NSPasteboard every 3 s. On change, classifies content deterministically —
 // no AI tokens spent unless truly ambiguous. When something is actionable, it emits
 // .suggestionReady so EventHandler can show a HUD and the user can say "yes" or ignore.
 //
@@ -32,7 +32,7 @@ enum ClipboardObserver {
         var lastText = ""
 
         while true {
-            try? await Task.sleep(for: .seconds(1.5)) // 1.5 s
+            try? await Task.sleep(for: .seconds(3)) // 3 s — halves idle wakeups vs old 1.5 s
 
             let currentCount = NSPasteboard.general.changeCount
             guard currentCount != lastChangeCount else { continue }
@@ -115,43 +115,3 @@ enum ClipboardObserver {
         }
     }
 }
-
-// MARK: - Foundation Models: smart clipboard classification (used when deterministic fails)
-
-#if canImport(FoundationModels)
-@available(macOS 26.0, *)
-extension ClipboardObserver {
-
-    @Generable
-    struct ClipboardIntent {
-        @Guide(description: "A very short suggestion for what to do with the copied content. Empty string if nothing useful.")
-        let suggestion: String
-        @Guide(description: "An optional Jarvis command, e.g. 'summarize', 'translate', or empty.")
-        let command: String
-    }
-
-    /// Fallback for content that doesn't match deterministic patterns.
-    /// Only called when content is > 200 chars and not already classified.
-    static func intelligentSuggest(_ text: String) async -> (message: String, command: String?)? {
-        guard SystemLanguageModel.default.isAvailable else { return nil }
-        guard text.count > 200 && text.count < 2000 else { return nil }
-
-        let session = LanguageModelSession(instructions: """
-            You see text the user just copied. Suggest ONE short useful action or return empty strings.
-            Examples: "Summarize this?" / "Translate to English?" / "Fix grammar?"
-            Return empty strings for plain facts, numbers, names, or things with no clear action.
-            """)
-
-        guard let result = try? await session.respond(
-            to: "Copied text (first 300 chars): \(text.prefix(300))",
-            generating: ClipboardIntent.self,
-            options: GenerationOptions(temperature: 0)
-        ) else { return nil }
-
-        let suggestion = result.content.suggestion.trimmingCharacters(in: .whitespacesAndNewlines)
-        let command = result.content.command.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !suggestion.isEmpty else { return nil }
-        return (suggestion, command.isEmpty ? nil : command)
-    }
-}
-#endif

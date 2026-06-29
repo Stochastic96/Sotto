@@ -53,8 +53,6 @@ import SottoCore
     // Set while Jarvis is waiting for the answer to a clarifying ("ASK:") question.
     var pendingClarification = false
 
-    var intelligenceEngine: SottoIntelligence? { intelligence }
-
     func showHUD(_ text: String) {
         hud.show(text)
     }
@@ -68,6 +66,15 @@ import SottoCore
             stateEnteredAt = Date()
             statusBar.update(for: state)
             updateWakeDetector()
+            // Arm the watchdog only while in a transient state that can get stuck;
+            // cancel it the instant we leave, eliminating the free-running 5s poll.
+            switch state {
+            case .transcribing: armWatchdog(limit: 20)
+            case .polishing:    armWatchdog(limit: 45)
+            default:
+                watchdogTask?.cancel()
+                watchdogTask = nil
+            }
             if case .idle = state {
                 Task { await EventBus.shared.emit(.idleReady) }
             }
@@ -77,7 +84,7 @@ import SottoCore
     /// transient state (`.transcribing` / `.polishing`) that never completes can't
     /// permanently wedge dictation — the app self-heals back to `.idle`.
     private var stateEnteredAt = Date()
-    private var watchdogTimer: Timer?
+    private var watchdogTask: Task<Void, Never>?
 
     init() {
         if UserDefaults.standard.object(forKey: Self.polishDefaultsKey) == nil {
@@ -158,31 +165,6 @@ import SottoCore
             options: [.userInitiated, .latencyCritical],
             reason: "Sotto must respond instantly to global hotkeys and voice recording."
         )
-
-        // Stuck-state watchdog: if a transient state never completes (e.g. a speech
-        // engine that never returns, or a polish that hangs past its own timeout),
-        // force the app back to `.idle` so the next hotkey press works instead of
-        // showing "Still transcribing…" forever. Recording is intentionally exempt —
-        // push-to-talk may legitimately run long and already has its own 300s cap.
-        watchdogTimer?.invalidate()
-        watchdogTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            Task { @MainActor in
-                let stuckFor = Date().timeIntervalSince(self.stateEnteredAt)
-                let limit: TimeInterval
-                switch self.state {
-                case .transcribing: limit = 20   // transcribe has an 8s internal timeout
-                case .polishing:    limit = 45   // increased from 25 to allow for cold-start model load or complex tool loops
-                default:            return
-                }
-                if stuckFor > limit {
-                    print("[WATCHDOG] State \(self.state) stuck for \(Int(stuckFor))s (limit \(Int(limit))s); force-resetting to idle.")
-                    self.hud.hide()
-                    self.state = .idle
-                    self.soundBasso?.play()
-                }
-            }
-        }
 
         // Cache app context so ContextDetector.currentCached() is zero-cost between app switches.
         ContextDetector.startObservingAppSwitches()
@@ -625,6 +607,20 @@ import SottoCore
         return levels[max(0, index)]
     }
 
+    private func armWatchdog(limit: TimeInterval) {
+        watchdogTask?.cancel()
+        let enteredAt = stateEnteredAt
+        watchdogTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(limit))
+            guard let self, !Task.isCancelled else { return }
+            let stuckFor = Date().timeIntervalSince(enteredAt)
+            print("[WATCHDOG] State \(self.state) stuck for \(Int(stuckFor))s (limit \(Int(limit))s); force-resetting to idle.")
+            self.hud.hide()
+            self.state = .idle
+            self.soundBasso?.play()
+        }
+    }
+
     func updateWakeDetector() {
         if #available(macOS 10.15, *) {
             if case .idle = state, SettingsController.isHandsFreeEnabled {
@@ -709,24 +705,6 @@ import SottoCore
         
         self.window = window
     }
-}
-
-func hasRepetitiveLoops(_ text: String) -> Bool {
-    let words = text.components(separatedBy: .whitespacesAndNewlines)
-        .map { $0.trimmingCharacters(in: .punctuationCharacters).lowercased() }
-        .filter { !$0.isEmpty }
-    
-    guard words.count >= 15 else { return false }
-    
-    var ngrams: [String: Int] = [:]
-    for i in 0...(words.count - 5) {
-        let ngram = words[i..<(i + 5)].joined(separator: " ")
-        ngrams[ngram, default: 0] += 1
-        if ngrams[ngram]! >= 3 {
-            return true
-        }
-    }
-    return false
 }
 
 // MARK: - Jarvis Help & Guide Onboarding Extension

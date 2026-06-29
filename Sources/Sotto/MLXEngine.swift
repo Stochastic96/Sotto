@@ -1,5 +1,23 @@
 import Foundation
 
+// MARK: - TextGenerating Protocol
+
+/// Abstracts on-device LLM text generation.
+/// Conform to substitute a different model, a remote backend, or a test stub
+/// without touching callers in SottoIntelligence.
+protocol TextGenerating: Sendable {
+    func prepareIfNeeded() async -> Bool
+    func generate(
+        systemPrompt: String,
+        userPrompt: String,
+        history: [(user: String, assistant: String)],
+        temperature: Float,
+        maxTokens: Int,
+        onProgress: (@Sendable @MainActor (String) -> Void)?
+    ) async throws -> String
+    func unload() async
+}
+
 #if SOTTO_MLX
 import MLXLMCommon
 import MLXLLM
@@ -15,7 +33,7 @@ import Tokenizers
 ///
 /// When the MLX packages aren't built into the app this whole engine is a safe no-op
 /// (`prepareIfNeeded()` returns false) and callers fall back to Apple Intelligence.
-actor MLXEngine {
+actor MLXEngine: TextGenerating {
     static let shared = MLXEngine()
     private init() {}
 

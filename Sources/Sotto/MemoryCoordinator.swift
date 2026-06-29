@@ -1,18 +1,32 @@
 import Foundation
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
+
+#if canImport(FoundationModels)
+@available(macOS 26.0, *)
+@Generable
+struct ExtractionResult {
+    @Guide(description: "Any durable facts or preferences about the user. Translate into simple declarative statements starting with 'User...'.")
+    let facts: [String]
+    @Guide(description: "Technical terms, proper nouns, jargon, codebase names (like Sotto, Jarvis, MLX), command lines, or acronyms that should be added to the custom vocabulary dictionary for accurate spelling.")
+    let vocabulary: [String]
+}
+#endif
 
 /// Background coordinator that subscribes to the EventBus.
-/// Uses Apple Intelligence (via SottoIntelligence) to analyze user speech (.userSpoke)
+/// Uses Apple Intelligence (via direct LanguageModelSession) to analyze user speech (.userSpoke)
 /// and conversation turns (.conversationTurn) asynchronously.
 /// Automatically learns user preferences, personal facts, and technical jargon to improve dictation.
 actor MemoryCoordinator {
     static let shared = MemoryCoordinator()
     
     private var isListening = false
-    
-    struct ExtractionResult: Codable {
-        let facts: [String]
-        let vocabulary: [String]
-    }
+    // Throttle: raw dictation utterances fire .userSpoke on every press, which would double
+    // LLM inference load on 8 GB M1. Allow at most one extraction per 2 minutes for
+    // both .userSpoke and .conversationTurn events.
+    private var lastExtractionAt: Date = .distantPast
+    private let extractionInterval: TimeInterval = 120
     
     func start() {
         guard !isListening else { return }
@@ -29,6 +43,12 @@ actor MemoryCoordinator {
     private func handle(_ event: EventBus.Event) async {
         switch event {
         case .userSpoke(let text):
+            let now = Date()
+            guard now.timeIntervalSince(lastExtractionAt) >= extractionInterval else {
+                print("[MEMORY-COORDINATOR] Throttled (last extraction \(Int(now.timeIntervalSince(lastExtractionAt)))s ago)")
+                break
+            }
+            lastExtractionAt = now  // claim slot before spawning the background task
             Task(priority: .utility) {
                 // 3-second delay: lets the model finish any in-flight polish request
                 // before we fire another generation call, avoiding rate-limit / capability
@@ -38,6 +58,12 @@ actor MemoryCoordinator {
             }
 
         case .conversationTurn(let user, let assistant):
+            let now = Date()
+            guard now.timeIntervalSince(lastExtractionAt) >= extractionInterval else {
+                print("[MEMORY-COORDINATOR] Throttled (last extraction \(Int(now.timeIntervalSince(lastExtractionAt)))s ago)")
+                break
+            }
+            lastExtractionAt = now
             Task(priority: .utility) {
                 try? await Task.sleep(for: .seconds(3))
                 await self.extractFactsAndVocabulary(from: "User: \(user)\nJarvis: \(assistant)")
@@ -49,8 +75,11 @@ actor MemoryCoordinator {
     }
     
     private func extractFactsAndVocabulary(from text: String) async {
-        let refiner = await MainActor.run { AppController.shared?.intelligenceEngine }
-        guard let refiner else { return }
+        #if canImport(FoundationModels)
+        guard #available(macOS 26.0, *), SystemLanguageModel.default.isAvailable else { return }
+        
+        let instructions = "You are Jarvis's memory extractor. Extract facts and vocabulary."
+        let session = LanguageModelSession(instructions: instructions)
         
         let prompt = """
         Analyze the following text from the user's interaction with the Mac.
@@ -60,62 +89,59 @@ actor MemoryCoordinator {
         
         Input:
         "\(text)"
-        
-        Response MUST be a valid JSON object matching this schema. Do not include markdown tags (e.g. no ```json) or explanations:
-        {
-          "facts": ["declarative statement 1", "declarative statement 2"],
-          "vocabulary": ["term 1", "term 2"]
-        }
         """
         
         do {
-            let response = try await refiner.getCompletion(
-                systemPrompt: "You are Jarvis's memory extractor. Extract facts and vocabulary in pure JSON.",
-                userPrompt: prompt,
-                temperature: 0.1,
-                maxTokens: 250
+            let result = try await session.respond(
+                to: prompt,
+                generating: ExtractionResult.self,
+                options: GenerationOptions(temperature: 0.1)
             )
             
-            let cleaned = SottoIntelligence.cleanup(response)
-            guard let data = cleaned.data(using: .utf8) else { return }
+            let extracted = result.content
             
-            let decoder = JSONDecoder()
-            if let result = try? decoder.decode(ExtractionResult.self, from: data) {
-                // Save facts to UserProfile and SemanticMemory
-                for fact in result.facts {
-                    let key = fact.lowercased()
-                        .components(separatedBy: CharacterSet.alphanumerics.inverted)
-                        .filter { !$0.isEmpty }
-                        .prefix(4)
-                        .joined(separator: "_")
-                    if !key.isEmpty {
-                        UserProfile.remember(key: String(key), fact: fact)
-                        print("[MEMORY-COORDINATOR] Learned fact: \(fact)")
-                    }
-                }
-                
-                // Save new vocabulary words to custom vocabulary list
-                var currentVocab = UserDefaults.standard.stringArray(forKey: "sotto_learned_vocabulary") ?? []
-                var updated = false
-                
-                // Also get the standard custom vocabulary list to avoid duplicates
-                let standardVocab = SettingsController.customVocabulary
-                    .components(separatedBy: ",")
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            // Save facts to UserProfile and SemanticMemory
+            for fact in extracted.facts {
+                let key = fact.lowercased()
+                    .components(separatedBy: CharacterSet.alphanumerics.inverted)
                     .filter { !$0.isEmpty }
-                
-                for word in result.vocabulary {
-                    let cleanedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard cleanedWord.count >= 2 else { continue }
-                    if !currentVocab.contains(cleanedWord) && !standardVocab.contains(cleanedWord) {
-                        currentVocab.append(cleanedWord)
-                        updated = true
-                        print("[MEMORY-COORDINATOR] Learned vocabulary: \(cleanedWord)")
-                    }
+                    .prefix(4)
+                    .joined(separator: "_")
+                if !key.isEmpty {
+                    UserProfile.remember(key: String(key), fact: fact)
+                    print("[MEMORY-COORDINATOR] Learned fact: \(fact)")
                 }
-                
-                if updated {
-                    UserDefaults.standard.set(currentVocab, forKey: "sotto_learned_vocabulary")
+            }
+            
+            // Save new vocabulary words to custom vocabulary list
+            var currentVocab = UserDefaults.standard.stringArray(forKey: "sotto_learned_vocabulary") ?? []
+            var updated = false
+            
+            // Also get the standard custom vocabulary list to avoid duplicates
+            let standardVocab = SettingsController.customVocabulary
+                .components(separatedBy: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            
+            for word in extracted.vocabulary {
+                let cleanedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard cleanedWord.count >= 2 else { continue }
+                if !currentVocab.contains(cleanedWord) && !standardVocab.contains(cleanedWord) {
+                    currentVocab.append(cleanedWord)
+                    updated = true
+                    print("[MEMORY-COORDINATOR] Learned vocabulary: \(cleanedWord)")
+                }
+            }
+            
+            if updated {
+                UserDefaults.standard.set(currentVocab, forKey: "sotto_learned_vocabulary")
+                // Hop to the main actor to read the @MainActor-isolated AppController.shared,
+                // then kick refreshUserCaches() on the SottoIntelligence actor from there.
+                // Direct access from MemoryCoordinator (non-main actor) would violate isolation.
+                Task { @MainActor in
+                    if let intel = AppController.shared?.intelligence {
+                        await intel.refreshUserCaches()
+                    }
                 }
             }
         } catch {
@@ -123,5 +149,6 @@ actor MemoryCoordinator {
             // This is non-fatal — we just skip this extraction cycle silently.
             print("[MEMORY-COORDINATOR] Extraction skipped (\(error.localizedDescription))")
         }
+        #endif
     }
 }

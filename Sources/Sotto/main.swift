@@ -4,6 +4,7 @@ import Foundation
 private var globalCleanup: (() -> Void)?
 
 @main
+@MainActor
 struct SottoApp {
     private static var delegate: AppDelegate?
     
@@ -77,9 +78,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         let handler: @convention(c) (Int32) -> Void = { sig in
-            print("[SOTTO-MAIN] Intercepted signal \(sig). Executing cleanup...")
-            globalCleanup?()
-            exit(0)
+            // _Exit is async-signal-safe. exit() is NOT — it triggers C++ global
+            // destructors (MLX Scheduler dtor → Metal ObjC call) which try to acquire
+            // the ObjC runtime lock. If the signal fires while NSApplication.terminate:
+            // already holds that lock (e.g. during graceful quit), the recursive lock
+            // attempt causes SIGKILL. applicationWillTerminate handles cleanup anyway.
+            _Exit(0)
         }
         signal(SIGINT, handler)
         signal(SIGTERM, handler)

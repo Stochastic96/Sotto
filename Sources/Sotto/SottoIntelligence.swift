@@ -4,6 +4,27 @@ import SottoCore
 import FoundationModels
 #endif
 
+// MARK: - IntelligenceEngine Protocol
+
+/// The full public contract for Sotto's on-device AI layer.
+///
+/// Conform to substitute a different model, a remote backend, or a test stub.
+/// `SottoIntelligence` is the production conformance; a `MockIntelligence`
+/// can be injected in tests to verify dictation pipeline logic without hitting
+/// any real model.
+protocol IntelligenceEngine: AnyObject, Sendable {
+    /// Warms sessions and loads caches. Call once at launch before any `refine()`.
+    func preload() async
+    /// Releases in-memory sessions (e.g. on memory-pressure notifications).
+    func forceUnload() async
+    /// Invalidates cached vocabulary and style examples after a UserDefaults write.
+    func refreshUserCaches() async
+    /// General-purpose completion for planning, summarisation, and memory extraction.
+    func getCompletion(systemPrompt: String, userPrompt: String, temperature: Double, maxTokens: Int) async throws -> String
+    /// Hot-path dictation polish — uses the dedicated prewarmed session.
+    func refine(_ text: String, context: AppContext, history: [String], onProgress: (@Sendable @MainActor (String) -> Void)?) async throws -> String
+}
+
 struct DictationExample: Codable {
     let raw: String
     let polished: String
@@ -23,7 +44,7 @@ struct DictationExample: Codable {
 /// every time `getCompletion` was called with different instructions, silently destroying
 /// the prewarmed polish session and triggering "unsupportedCapability" errors on back-to-
 /// back requests (dictation → memory extraction). Two separate slots fix both problems.
-actor SottoIntelligence {
+actor SottoIntelligence: IntelligenceEngine {
     enum Status: Equatable {
         case notLoaded
         case downloading(Int) // percent

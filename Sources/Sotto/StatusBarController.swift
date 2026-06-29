@@ -103,7 +103,7 @@ final class MenuBarPill: NSObject {
 
 // MARK: - StatusBarController
 
-@MainActor final class StatusBarController: NSObject, NSMenuDelegate {
+@MainActor final class StatusBarController: NSObject {
     private var item: NSStatusItem?
     private var lastState: AppController.State?
     private let statusMenuItem = NSMenuItem(title: String(localized: "menu.starting", defaultValue: "Starting…", bundle: .module), action: nil, keyEquivalent: "")
@@ -154,75 +154,71 @@ final class MenuBarPill: NSObject {
         dictateMenuItem = NSMenuItem(title: String(localized: "menu.startDictation", defaultValue: "🎤 Start Dictation", bundle: .module), action: #selector(startDictate), keyEquivalent: "d")
         super.init()
 
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-            statusItem.button?.image = nil
-            statusItem.button?.title = "J"
-            statusItem.button?.font = .systemFont(ofSize: 14, weight: .bold)
+        let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.image = nil
+        statusItem.button?.title = "J"
+        statusItem.button?.font = .systemFont(ofSize: 14, weight: .bold)
 
-            let menu = NSMenu()
-            menu.delegate = self
-            self.statusMenuItem.isEnabled = false
-            menu.addItem(self.statusMenuItem)
-            self.transcriptMenuItem.isEnabled = true
-            self.transcriptMenuItem.target = self
-            self.transcriptMenuItem.action = #selector(self.copyLastTranscript)
-            self.transcriptMenuItem.isHidden = true
-            menu.addItem(self.transcriptMenuItem)
+        let menu = NSMenu()
+        self.statusMenuItem.isEnabled = false
+        menu.addItem(self.statusMenuItem)
+        self.transcriptMenuItem.isEnabled = true
+        self.transcriptMenuItem.target = self
+        self.transcriptMenuItem.action = #selector(self.copyLastTranscript)
+        self.transcriptMenuItem.isHidden = true
+        menu.addItem(self.transcriptMenuItem)
 
-            self.historyMenuItem.submenu = self.historyMenu
-            self.historyMenuItem.isHidden = true
-            menu.addItem(self.historyMenuItem)
-            menu.addItem(.separator())
+        self.historyMenuItem.submenu = self.historyMenu
+        self.historyMenuItem.isHidden = true
+        menu.addItem(self.historyMenuItem)
+        menu.addItem(.separator())
 
-            self.dictateMenuItem.target = self
-            menu.addItem(self.dictateMenuItem)
-            menu.addItem(.separator())
+        self.dictateMenuItem.target = self
+        menu.addItem(self.dictateMenuItem)
+        menu.addItem(.separator())
 
-            self.polishMenuItem.target = self
-            self.polishMenuItem.action = #selector(self.togglePolish(_:))
-            self.polishMenuItem.state = polishEnabled ? .on : .off
-            menu.addItem(self.polishMenuItem)
+        self.polishMenuItem.target = self
+        self.polishMenuItem.action = #selector(self.togglePolish(_:))
+        self.polishMenuItem.state = polishEnabled ? .on : .off
+        menu.addItem(self.polishMenuItem)
 
-            self.intelligenceStatusMenuItem.isEnabled = false
-            menu.addItem(self.intelligenceStatusMenuItem)
-            menu.addItem(.separator())
+        self.intelligenceStatusMenuItem.isEnabled = false
+        menu.addItem(self.intelligenceStatusMenuItem)
+        menu.addItem(.separator())
 
-            // Settings Menu Item
-            let settingsMenuItem = NSMenuItem(title: String(localized: "menu.settings", defaultValue: "Settings…", bundle: .module), action: #selector(self.openSettings), keyEquivalent: ",")
-            settingsMenuItem.target = self
-            menu.addItem(settingsMenuItem)
+        // Settings Menu Item
+        let settingsMenuItem = NSMenuItem(title: String(localized: "menu.settings", defaultValue: "Settings…", bundle: .module), action: #selector(self.openSettings), keyEquivalent: ",")
+        settingsMenuItem.target = self
+        menu.addItem(settingsMenuItem)
 
-            // Jarvis Help & Guide Menu Item
-            let guideMenuItem = NSMenuItem(title: String(localized: "menu.jarvisHelp", defaultValue: "Jarvis Help & Guide…", bundle: .module), action: #selector(self.openGuide), keyEquivalent: "?")
-            guideMenuItem.target = self
-            menu.addItem(guideMenuItem)
+        // Jarvis Help & Guide Menu Item
+        let guideMenuItem = NSMenuItem(title: String(localized: "menu.jarvisHelp", defaultValue: "Jarvis Help & Guide…", bundle: .module), action: #selector(self.openGuide), keyEquivalent: "?")
+        guideMenuItem.target = self
+        menu.addItem(guideMenuItem)
 
-            let consoleMenuItem = NSMenuItem(title: String(localized: "menu.showConsole", defaultValue: "Show Console", bundle: .module), action: #selector(self.showConsole), keyEquivalent: "l")
-            consoleMenuItem.target = self
-            menu.addItem(consoleMenuItem)
+        let consoleMenuItem = NSMenuItem(title: String(localized: "menu.showConsole", defaultValue: "Show Console", bundle: .module), action: #selector(self.showConsole), keyEquivalent: "l")
+        consoleMenuItem.target = self
+        menu.addItem(consoleMenuItem)
 
-            let logMenuItem = NSMenuItem(title: String(localized: "menu.openLog", defaultValue: "Open Log File", bundle: .module), action: #selector(self.openLogFile), keyEquivalent: "")
-            logMenuItem.target = self
-            menu.addItem(logMenuItem)
-            menu.addItem(.separator())
+        let logMenuItem = NSMenuItem(title: String(localized: "menu.openLog", defaultValue: "Open Log File", bundle: .module), action: #selector(self.openLogFile), keyEquivalent: "")
+        logMenuItem.target = self
+        menu.addItem(logMenuItem)
+        menu.addItem(.separator())
 
-            menu.addItem(NSMenuItem(title: String(localized: "menu.quit", defaultValue: "Quit Sotto", bundle: .module), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-            
-            statusItem.menu = menu
-            self.item = statusItem
+        menu.addItem(NSMenuItem(title: String(localized: "menu.quit", defaultValue: "Quit Sotto", bundle: .module), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        
+        statusItem.menu = menu
+        self.item = statusItem
 
-            print("[STATUSBAR-DEBUG] Created item: \(statusItem)")
-            print("[STATUSBAR-DEBUG] Item button: \(String(describing: statusItem.button))")
-            print("[STATUSBAR-DEBUG] Item button frame: \(String(describing: statusItem.button?.frame))")
-            print("[STATUSBAR-DEBUG] Item button window: \(String(describing: statusItem.button?.window))")
-            print("[STATUSBAR-DEBUG] Item button window isVisible: \(String(describing: statusItem.button?.window?.isVisible))")
+        print("[STATUSBAR-DEBUG] Created item: \(statusItem)")
+        print("[STATUSBAR-DEBUG] Item button: \(String(describing: statusItem.button))")
+        print("[STATUSBAR-DEBUG] Item button frame: \(String(describing: statusItem.button?.frame))")
+        print("[STATUSBAR-DEBUG] Item button window: \(String(describing: statusItem.button?.window))")
+        print("[STATUSBAR-DEBUG] Item button window isVisible: \(String(describing: statusItem.button?.window?.isVisible))")
 
-            // Re-apply latest state once registered
-            if let lastState = self.lastState {
-                self.update(for: lastState)
-            }
+        // Re-apply latest state once registered
+        if let lastState = self.lastState {
+            self.update(for: lastState)
         }
         intelligenceStatus = "ready"
     }
@@ -269,7 +265,7 @@ final class MenuBarPill: NSObject {
 
     func update(for state: AppController.State) {
         lastState = state
-        guard let _ = self.item else { return }
+        guard self.item != nil else { return }
         switch state {
         case .loadingModel:
             set(title: "J", text: String(localized: "status.loadingModel", defaultValue: "Loading model… (first run downloads ~600 MB)", bundle: .module))

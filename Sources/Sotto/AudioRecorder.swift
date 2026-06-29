@@ -3,9 +3,24 @@ import CoreAudio
 import AudioToolbox
 import os
 
+// MARK: - AudioCapturing Protocol
+
+/// Abstracts microphone capture for the dictation pipeline.
+/// Conform to swap in a test double that returns pre-recorded samples
+/// without requiring microphone hardware or permission prompts in tests.
+protocol AudioCapturing: AnyObject {
+    var currentRMS: Float { get }
+    func prewarm()
+    func onSilenceDetected(_ handler: @escaping () -> Void)
+    func start() throws
+    func stop() -> [Float]
+}
+
+// MARK: - AudioRecorder
+
 /// Captures microphone audio while the hotkey is held and converts it to
 /// 16 kHz mono Float32 — the format FluidAudio/Parakeet expects.
-final class AudioRecorder: @unchecked Sendable {
+final class AudioRecorder: @unchecked Sendable, AudioCapturing {
     private let engine = AVAudioEngine()
     private var samples: [Float] = []
     private let lock = OSAllocatedUnfairLock<Void>()
