@@ -1,6 +1,5 @@
 import Foundation
 import AppKit
-#if canImport(FoundationModels)
 import FoundationModels
 
 // Native Apple Foundation Models tools. Each wraps an existing Sotto skill
@@ -14,68 +13,53 @@ import FoundationModels
 //   blocking Process/AppleScript work here never stalls the UI.
 // - Tools return a short result string; the model summarizes it into one spoken line.
 
-@available(macOS 26.0, *)
-private func shellEscape(_ s: String) -> String {
-    s.replacingOccurrences(of: "\\", with: "\\\\")
-     .replacingOccurrences(of: "\"", with: "\\\"")
-}
-
 // MARK: - Constrained action enums
 // All action fields use @Generable enums so guided generation can ONLY produce
 // a valid case — free-form String args were the #1 cause of silent tool failures
 // (the model would return "100%" instead of "100", "lock_screen" instead of "lock").
 
 /// What to do with Spotify.
-@available(macOS 26.0, *)
 @Generable
 enum SpotifyAction {
     case play, pause, next, previous, playSong
 }
 
-@available(macOS 26.0, *)
 @Generable
 enum VolumeAction {
     case setLevel, mute, unmute
 }
 
-@available(macOS 26.0, *)
 @Generable
 enum BrightnessAction {
     case up, down
 }
 
-@available(macOS 26.0, *)
 @Generable
 enum PowerStateAction {
-    case lock, emptyTrash
+    case lock, emptyTrash, cleanRAM
 }
 
-@available(macOS 26.0, *)
 @Generable
 enum ClipboardAction {
     case read, write
 }
 
-@available(macOS 26.0, *)
 @Generable
 enum AppWindowAction {
     case listApps, listWindows, activateApp
 }
 
-@available(macOS 26.0, *)
 @Generable
 enum MemoryAction {
     case set, get, list
 }
 
-@available(macOS 26.0, *)
 @Generable
 enum TaskAction {
     case enqueue, list, clearDone
 }
 
 /// Control Spotify specifically (never Apple Music): play, pause, skip, or play a song.
-@available(macOS 26.0, *)
 struct SpotifyTool: Tool {
     let name = "control_spotify"
     let description = "Control Spotify ONLY (not Apple Music): play, pause, skip tracks, or search and play a specific song or artist."
@@ -105,7 +89,6 @@ struct SpotifyTool: Tool {
 }
 
 /// Set system output volume (0–100), or mute/unmute. Native — instant, no AppleScript.
-@available(macOS 26.0, *)
 struct VolumeTool: Tool {
     let name = "set_volume"
     let description = "Set the Mac's output volume or mute/unmute the speakers."
@@ -133,7 +116,6 @@ struct VolumeTool: Tool {
 }
 
 /// Nudge screen brightness up or down. Native — instant.
-@available(macOS 26.0, *)
 struct BrightnessTool: Tool {
     let name = "adjust_brightness"
     let description = "Increase or decrease the screen brightness."
@@ -158,7 +140,6 @@ struct BrightnessTool: Tool {
 }
 
 /// Open a URL in Chrome.
-@available(macOS 26.0, *)
 struct OpenWebsiteTool: Tool {
     let name = "open_website"
     let description = "Open a website URL in the browser."
@@ -180,7 +161,6 @@ struct OpenWebsiteTool: Tool {
 }
 
 /// Launch a macOS application by name. Falls back to Siri on launch failure.
-@available(macOS 26.0, *)
 struct OpenAppTool: SiriDelegatable {
     let name = "open_app"
     let description = "Launch a macOS application by name (e.g. Notes, Spotify, Safari)."
@@ -244,7 +224,6 @@ struct OpenAppTool: SiriDelegatable {
 }
 
 /// Create a note in Apple Notes.
-@available(macOS 26.0, *)
 struct CreateNoteTool: Tool {
     let name = "create_note"
     let description = "Create a note in Apple Notes with the given content."
@@ -263,7 +242,6 @@ struct CreateNoteTool: Tool {
 }
 
 /// Web search in the browser.
-@available(macOS 26.0, *)
 struct WebSearchTool: Tool {
     let name = "web_search"
     let description = "Search the web for a query and open the results in the browser."
@@ -286,7 +264,6 @@ struct WebSearchTool: Tool {
 /// Read what's currently on screen (native Vision OCR). This is the model's "eyes":
 /// after opening/searching, it calls this to SEE the page, then decides the next step
 /// (which link to click, whether a login is needed, etc.) — true multi-step handling.
-@available(macOS 26.0, *)
 struct ReadScreenTool: Tool {
     let name = "read_screen"
     let description = "Read the text currently visible on screen using OCR. Call this to see the page/app before deciding the next action (e.g. after a search, to find a link or button to click)."
@@ -318,7 +295,6 @@ struct ReadScreenTool: Tool {
 
 /// Click an on-screen element by its visible text/label (uses OCR + a synthetic click).
 /// Lets the agent press "first result", "Sign in", "Allow", etc. as a single step.
-@available(macOS 26.0, *)
 struct ClickElementTool: Tool {
     let name = "click_element"
     let description = "Click an on-screen button, link, or label by its visible text. Use after read_screen to act on what you saw."
@@ -338,7 +314,6 @@ struct ClickElementTool: Tool {
 /// Draft a NEW reusable skill (autonomous learning). Always saved DISABLED — the user
 /// must say "enable skill <name>" before it can run. Use when you notice a repeated
 /// multi-step task worth turning into a one-shot shortcut.
-@available(macOS 26.0, *)
 struct DraftSkillTool: Tool {
     let name = "draft_skill"
     let description = "Save a new reusable skill (a shell or AppleScript snippet) for a task the user does often. It is saved disabled and only runs after the user approves it."
@@ -364,7 +339,6 @@ struct DraftSkillTool: Tool {
 }
 
 /// Run a skill the user has already ENABLED. Refuses anything not approved.
-@available(macOS 26.0, *)
 struct RunSkillTool: Tool {
     let name = "run_skill"
     let description = "Run a previously enabled custom skill by name. Only enabled skills will run."
@@ -383,7 +357,6 @@ struct RunSkillTool: Tool {
 
 /// Recall what Jarvis has done recently and which skills await approval — so it can
 /// answer "what did you do today?" / "what have you learned?".
-@available(macOS 26.0, *)
 struct RecallHistoryTool: Tool {
     let name = "recall_history"
     let description = "Look up Jarvis's recent activity log and any skills awaiting approval, so you can summarize what was done or learned."
@@ -401,7 +374,6 @@ struct RecallHistoryTool: Tool {
 }
 
 /// System Status diagnostics (battery, Wifi, disk space)
-@available(macOS 26.0, *)
 struct SystemStatusTool: Tool {
     let name = "get_system_status"
     let description = "Get the Mac's system health status, including battery level, Wi-Fi SSID connection, and free disk space."
@@ -418,7 +390,6 @@ struct SystemStatusTool: Tool {
 }
 
 /// RAM Memory diagnostics
-@available(macOS 26.0, *)
 struct RAMMemoryStatusTool: Tool {
     let name = "get_ram_status"
     let description = "Get the Mac's RAM memory consumption details, and top memory consumers."
@@ -434,7 +405,6 @@ struct RAMMemoryStatusTool: Tool {
 }
 
 /// GPU Memory/utilization diagnostics
-@available(macOS 26.0, *)
 struct GPUStatusTool: Tool {
     let name = "get_gpu_status"
     let description = "Get the Mac's GPU model, Metal driver support, and active performance status."
@@ -448,7 +418,6 @@ struct GPUStatusTool: Tool {
 }
 
 /// geocode locations using Nominatim / OpenStreetMap
-@available(macOS 26.0, *)
 struct LocationGeocoderTool: Tool {
     let name = "geocode_location"
     let description = "Geocode a location or place name to find its coordinates, address, and display it in Google Maps."
@@ -476,7 +445,6 @@ struct LocationGeocoderTool: Tool {
 }
 
 /// Wikipedia Search Fact Lookup
-@available(macOS 26.0, *)
 struct WikipediaLookupTool: Tool {
     let name = "wikipedia_lookup"
     let description = "Search Wikipedia for a query and return a summary extract of the page."
@@ -506,7 +474,6 @@ struct WikipediaLookupTool: Tool {
 }
 
 /// Persistent memory / active goals
-@available(macOS 26.0, *)
 struct MemoryTool: Tool {
     let name = "manage_memory_goals"
     let description = "Manage persistent tasks, goals, or settings. Supports setting, getting, or listing keys."
@@ -543,7 +510,6 @@ struct MemoryTool: Tool {
 
 /// Send a prompt to the Claude desktop app's quick-entry popover (no full app window).
 /// Use for research / questions you want answered in Claude.
-@available(macOS 26.0, *)
 struct AskClaudeTool: Tool {
     let name = "ask_claude"
     let description = "Send a prompt to the Claude desktop app's quick-entry popover and start a chat there. Use when the user wants Claude to research or answer something."
@@ -563,7 +529,6 @@ struct AskClaudeTool: Tool {
 }
 
 /// Ask Siri / Apple Intelligence a question. Uses keyboard simulation to type to Siri.
-@available(macOS 26.0, *)
 struct AskSiriTool: Tool {
     let name = "ask_siri"
     let description = "Delegate to Siri — the preferred handler for: weather/forecasts, reminders, calendar events, alarms, timers, phone calls, FaceTime, iMessages, emails, and any Apple-native task. Always prefer this over specialized tools for these categories."
@@ -583,91 +548,10 @@ struct AskSiriTool: Tool {
     }
 }
 
-/// Create a reminder natively via EventKit. Falls back to Siri when permission is denied.
-@available(macOS 26.0, *)
-struct ReminderTool: SiriDelegatable {
-    let name = "create_reminder"
-    let description = "Create a reminder in the macOS Reminders app natively. Supports optional due date."
-
-    @Generable
-    struct Arguments {
-        @Guide(description: "The reminder's title/text.")
-        let title: String
-        @Guide(description: "Optional ISO8601 due date string, e.g., '2026-06-19T17:00:00+02:00'.")
-        let dueDate: String?
-    }
-
-    func siriQuery(for arguments: Arguments) -> String {
-        var q = "remind me to \(arguments.title)"
-        if let due = arguments.dueDate, !due.isEmpty { q += " at \(due)" }
-        return q
-    }
-
-    @MainActor
-    func call(arguments: Arguments) async throws -> String {
-        try await siriDelegatedCall(tool: self, arguments: arguments) {
-            let title = arguments.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            if title.isEmpty { return "Reminder title cannot be empty." }
-
-            var date: Date? = nil
-            if let dueStr = arguments.dueDate, !dueStr.isEmpty {
-                let formatter = ISO8601DateFormatter()
-                date = formatter.date(from: dueStr)
-            }
-
-            let success = await EventKitOrchestrator.createReminder(title: title, dueDate: date)
-            return success
-                ? "Reminder '\(title)' successfully created."
-                : "Failed to create reminder '\(title)'. Ensure permission is granted."
-        }
-    }
-}
-
-/// Create a calendar event natively via EventKit. Falls back to Siri when permission is denied.
-@available(macOS 26.0, *)
-struct CalendarTool: SiriDelegatable {
-    let name = "create_calendar_event"
-    let description = "Create an event/appointment in the default macOS calendar natively."
-
-    @Generable
-    struct Arguments {
-        @Guide(description: "The event summary or title.")
-        let title: String
-        @Guide(description: "ISO8601 start date/time, e.g., '2026-06-19T14:00:00+02:00'.")
-        let startDate: String
-        @Guide(description: "ISO8601 end date/time, e.g., '2026-06-19T15:00:00+02:00'.")
-        let endDate: String
-    }
-
-    func siriQuery(for arguments: Arguments) -> String {
-        "schedule \(arguments.title) from \(arguments.startDate) to \(arguments.endDate)"
-    }
-
-    @MainActor
-    func call(arguments: Arguments) async throws -> String {
-        try await siriDelegatedCall(tool: self, arguments: arguments) {
-            let title = arguments.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            if title.isEmpty { return "Calendar event title cannot be empty." }
-
-            let formatter = ISO8601DateFormatter()
-            guard let start = formatter.date(from: arguments.startDate),
-                  let end = formatter.date(from: arguments.endDate) else {
-                return "Failed to parse start or end date. Must be in ISO8601 format."
-            }
-
-            let success = await EventKitOrchestrator.createCalendarEvent(title: title, startDate: start, endDate: end)
-            return success
-                ? "Calendar event '\(title)' created from \(arguments.startDate) to \(arguments.endDate)."
-                : "Failed to create calendar event. Ensure permission is granted."
-        }
-    }
-}
-
 /// System control actions like locking the screen or emptying trash natively.
-@available(macOS 26.0, *)
 struct PowerStateTool: Tool {
     let name = "system_power_state"
-    let description = "Trigger system power/state actions: lock screen or empty trash natively."
+    let description = "Trigger system power/state actions: lock screen, empty trash, or purge/clean RAM (flushes inactive memory, requires admin password)."
 
     @Generable
     struct Arguments {
@@ -683,12 +567,14 @@ struct PowerStateTool: Tool {
         case .emptyTrash:
             NativeSystemOrchestrator.emptyTrash()
             return "Emptying trash."
+        case .cleanRAM:
+            let ok = NativeSystemOrchestrator.purgeRAM()
+            return ok ? "RAM purged — inactive memory flushed." : "Purge failed or was cancelled."
         }
     }
 }
 
 /// Diagnose internet connection, reachability status, and Wi-Fi connection natively.
-@available(macOS 26.0, *)
 struct NetworkDiagnosticsTool: Tool {
     let name = "network_diagnostics"
     let description = "Run native reachability checks and check internet connectivity status."
@@ -704,7 +590,6 @@ struct NetworkDiagnosticsTool: Tool {
 }
 
 /// Read or write clipboard/pasteboard contents natively.
-@available(macOS 26.0, *)
 struct ClipboardTool: Tool {
     let name = "manage_clipboard"
     let description = "Read or write text contents to the macOS system clipboard natively."
@@ -731,7 +616,6 @@ struct ClipboardTool: Tool {
 }
 
 /// Manage running applications and list visible window titles natively.
-@available(macOS 26.0, *)
 struct AppWindowTool: Tool {
     let name = "manage_apps_windows"
     let description = "List running applications, active window titles, or bring a running app to the foreground using its PID."
@@ -761,7 +645,6 @@ struct AppWindowTool: Tool {
 }
 
 /// Simulate key clicks and shortcuts natively.
-@available(macOS 26.0, *)
 struct KeySimulatorTool: Tool {
     let name = "simulate_keystroke"
     let description = "Simulate native keystrokes and keyboard shortcuts (e.g. Cmd+S, Cmd+W, tab, space, return, escape, arrow keys)."
@@ -812,27 +695,7 @@ struct KeySimulatorTool: Tool {
 }
 
 /// Current weather + today's high/low for a city. Free, no API key (Open-Meteo).
-@available(macOS 26.0, *)
-struct WeatherTool: Tool {
-    let name = "get_weather"
-    let description = "Get the current weather and today's high/low temperature for a city. Use for any weather question."
-
-    @Generable
-    struct Arguments {
-        @Guide(description: "The city name, e.g. 'Trier' or 'Berlin'. Leave empty to use the saved home city.")
-        let city: String?
-    }
-
-    func call(arguments: Arguments) async throws -> String {
-        var city = (arguments.city ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if city.isEmpty { city = UserDefaults.standard.string(forKey: "sotto_home_city") ?? "" }
-        guard !city.isEmpty else { return "Which city's weather do you want?" }
-        return await WeatherService.summary(city: city) ?? "Couldn't get the weather for \(city) right now."
-    }
-}
-
 /// Enqueue a background task to run when Sotto is free, or list pending/done tasks.
-@available(macOS 26.0, *)
 struct MicrotaskTool: Tool {
     let name = "manage_tasks"
     let description = "Enqueue a background task to run when Sotto is idle, or list/clear queued tasks. Use for things that don't need to happen right now — e.g. 'when you're free, check git status'."
@@ -882,10 +745,9 @@ struct MicrotaskTool: Tool {
 /// handing the small on-device model the whole catalog every call is the main reason
 /// Jarvis felt like a toy. So `routed(for:)` scores intent groups by keyword and returns
 /// only the most relevant ≤8 tools for each utterance; `all()` remains the safety net.
-@available(macOS 26.0, *)
 enum JarvisToolbox {
     static func all() -> [any Tool] {
-        // WeatherTool, ReminderTool, CalendarTool removed — Siri (AskSiriTool) is the
+        // Weather, reminders, and calendar aren't native tools — Siri (AskSiriTool) is the
         // authoritative handler for all of those. Keeping only tools that work reliably
         // without additional permissions or network keys.
         [
@@ -910,11 +772,12 @@ enum JarvisToolbox {
         let make: () -> [any Tool]
     }
 
-    private static let groups: [Group] = [
+    // Built once, read-only for the process lifetime; the `make` closures aren't
+    // @Sendable-audited but are never invoked concurrently (routing runs synchronously).
+    nonisolated(unsafe) private static let groups: [Group] = [
         Group(keywords: ["spotify", "music", "song", "play", "pause", "track", "artist", "skip", "tune", "album"],
               make: { [SpotifyTool()] }),
         // Weather always goes to Siri — real-time data, no API key needed, handles all locales.
-        // WeatherTool remains in all() as an offline fallback but is not routed directly.
         Group(keywords: ["weather", "temperature", "forecast", "rain", "raining", "cold", "hot", "sunny", "snow",
                          "wind", "outside", "umbrella", "humidity", "storm", "cloudy"],
               make: { [AskSiriTool()] }),
@@ -926,7 +789,7 @@ enum JarvisToolbox {
               make: { [OpenAppTool(), OpenWebsiteTool(), AppWindowTool()] }),
         Group(keywords: ["search", "google", "look up", "wikipedia", "who is", "what is", "define", "research", "claude", "explain", "news", "latest"],
               make: { [WebSearchTool(), WikipediaLookupTool(), AskClaudeTool()] }),
-        // Reminders, calendar, alarms — Siri only. ReminderTool/CalendarTool removed.
+        // Reminders, calendar, alarms — Siri only.
         Group(keywords: ["remind", "reminder", "calendar", "event", "appointment", "meeting", "schedule",
                          "alarm", "timer", "wake me"],
               make: { [AskSiriTool()] }),
@@ -934,7 +797,7 @@ enum JarvisToolbox {
               make: { [CreateNoteTool(), ClipboardTool()] }),
         Group(keywords: ["file", "spotlight", "pdf", "document", "find file", "folder"],
               make: { [SpotlightSearchTool()] }),
-        Group(keywords: ["lock", "trash", "empty", "sleep", "power"],
+        Group(keywords: ["lock", "trash", "empty", "sleep", "power", "purge", "clean ram", "free memory", "free ram"],
               make: { [PowerStateTool()] }),
         Group(keywords: ["read screen", "click", "button", "link", "on screen", "see", "page", "ocr", "screen"],
               make: { [ReadScreenTool(), ClickElementTool()] }),
@@ -1012,4 +875,3 @@ Group(keywords: ["siri", "ask siri", "tell siri", "message", "send message", "te
         return picked
     }
 }
-#endif

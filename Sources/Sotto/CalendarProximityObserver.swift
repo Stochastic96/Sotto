@@ -1,8 +1,6 @@
 import EventKit
 import Foundation
-#if canImport(FoundationModels)
 import FoundationModels
-#endif
 
 // MARK: - CalendarProximityObserver
 //
@@ -20,8 +18,11 @@ import FoundationModels
 
 enum CalendarProximityObserver {
 
-    private static let store = EKEventStore()
-    private static var warnedEventIDs = Set<String>()
+    // EKEventStore isn't Sendable-audited by the SDK, but it's documented safe for
+    // this single-shared-instance usage; warnedEventIDs is only ever touched from
+    // the single background Task this observer runs (start() below), never concurrently.
+    nonisolated(unsafe) private static let store = EKEventStore()
+    nonisolated(unsafe) private static var warnedEventIDs = Set<String>()
 
     static func start() {
         Task.detached(priority: .background) { await requestAndWatch() }
@@ -77,8 +78,7 @@ enum CalendarProximityObserver {
     // MARK: - Apple Intelligence briefing (on-device, private)
 
     private static func generateBriefing(for event: EKEvent, minutesAway: Int) async -> String? {
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *), SystemLanguageModel.default.isAvailable {
+        if SystemLanguageModel.default.isAvailable {
             let attendees = event.attendees?.compactMap { $0.name }.prefix(4).joined(separator: ", ") ?? "no attendees"
             let notes = event.notes ?? ""
             let location = event.location ?? ""
@@ -106,16 +106,12 @@ enum CalendarProximityObserver {
             let briefing = result.content.text.trimmingCharacters(in: .whitespacesAndNewlines)
             return briefing.isEmpty ? nil : briefing
         }
-        #endif
         return nil
     }
 
-    #if canImport(FoundationModels)
-    @available(macOS 26.0, *)
     @Generable
     struct EventBriefing {
         @Guide(description: "One sentence briefing about the upcoming event. E.g. 'Design review with Sarah in 7 minutes — open Figma?'")
         let text: String
     }
-    #endif
 }

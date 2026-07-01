@@ -1,18 +1,13 @@
-// swift-tools-version:5.10
+// swift-tools-version:6.4
 import PackageDescription
 
 let package = Package(
     name: "Sotto",
     defaultLocalization: "en",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v27)],
     dependencies: [
         .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.15.0"),
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts.git", from: "1.12.0"),
-        // On-device Qwen via MLX-Swift (no Python). The HuggingFace + Tokenizers
-        // packages back the MLXHuggingFace loader macros.
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm", from: "3.31.3"),
-        .package(url: "https://github.com/huggingface/swift-huggingface", branch: "main"),
-        .package(url: "https://github.com/huggingface/swift-transformers", branch: "main")
     ],
     targets: [
         .target(
@@ -25,19 +20,10 @@ let package = Package(
                 "SottoCore",
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
-                .product(name: "MLXLLM", package: "mlx-swift-lm"),
-                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
-                .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
-                .product(name: "HuggingFace", package: "swift-huggingface"),
-                .product(name: "Tokenizers", package: "swift-transformers")
             ],
             path: "Sources/Sotto",
             resources: [.process("Resources")],
-            swiftSettings: {
-                var settings: [SwiftSetting] = [.define("SOTTO_MLX")]
-                settings.append(.define("SOTTO_FM27"))
-                return settings
-            }()
+            swiftSettings: []
         ),
         .testTarget(
             name: "SottoTests",

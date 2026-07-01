@@ -1142,7 +1142,7 @@ enum CommandEngine {
             if t.contains(kw) { return false }
         }
 
-        // 1. Weather — covers synonyms that previously fell through to WeatherTool
+        // 1. Weather — routed straight to Siri, covers common phrasing synonyms
         if t.contains("weather") || t.contains("temperature") || t.contains("forecast") ||
            t.contains("outside today") || t.contains("raining") || t.contains("is it rain") ||
            t.contains("will it rain") || t.contains("will it snow") || t.contains("is it hot") ||

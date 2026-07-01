@@ -8,7 +8,7 @@ import SottoCore
 // capable path for an intent and, when that path is a pure-Swift *reflex*, executes
 // it directly — no Foundation Models session, no tokens, no model load.
 //
-// Anything that needs a higher tier (Apple Intelligence, MLX, cloud) returns nil so
+// Anything that needs a higher tier (Apple Intelligence) returns nil so
 // the caller falls through to the existing AI pipeline unchanged. The kernel never
 // "downgrades" an AI-tier intent into a guess; it only short-circuits work it can
 // prove is a reflex.

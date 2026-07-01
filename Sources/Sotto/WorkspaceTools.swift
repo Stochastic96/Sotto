@@ -1,6 +1,5 @@
 import Foundation
 import AppKit
-#if canImport(FoundationModels)
 import FoundationModels
 
 // MARK: - FocusSessionTool
@@ -8,7 +7,6 @@ import FoundationModels
 /// Start a focused work session: enables DND, quits distracting apps,
 /// opens the target project, sets a comfortable volume, and speaks a
 /// JARVIS-style confirmation in Hindi/English.
-@available(macOS 26.0, *)
 struct FocusSessionTool: Tool {
     let name = "start_focus_session"
     let description = "Start a focused work session: enables Do Not Disturb, quits distracting apps (Twitter, Discord, Slack, Messages), opens the specified project, and sets volume to 40%."
@@ -66,7 +64,6 @@ struct FocusSessionTool: Tool {
 /// Wrap up the workday: checks git status, summarises today's accomplishments
 /// using the on-device model, disables DND, saves a journal entry, and speaks
 /// the summary aloud.
-@available(macOS 26.0, *)
 struct EndWorkdayTool: Tool {
     let name = "end_workday"
     let description = "End the workday: checks git status, summarises today's accomplishments with the on-device model, disables Do Not Disturb, and saves a journal entry."
@@ -130,7 +127,6 @@ struct EndWorkdayTool: Tool {
 /// Switch the desktop environment to a named workflow mode.
 /// Each mode arranges apps, sets brightness/volume, and toggles DND
 /// to match the activity.
-@available(macOS 26.0, *)
 struct WorkspaceSwitchTool: Tool {
     let name = "switch_workspace"
     let description = "Switch the desktop environment to a workflow mode: development, writing, presentation, or entertainment. Each mode opens the right apps and configures volume, brightness, and Do Not Disturb."
@@ -216,4 +212,3 @@ struct WorkspaceSwitchTool: Tool {
     }
 }
 
-#endif

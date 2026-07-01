@@ -2,8 +2,11 @@ import Foundation
 import Network
 
 enum NetworkObserver {
-    private static var monitor: NWPathMonitor?
-    private static var isOnline = true
+    // Written only from the NWPathMonitor callback (a single serial background
+    // queue) and read from arbitrary callers — same pattern as the other *Observer
+    // types in this codebase, just made explicit for Swift 6 strict concurrency.
+    nonisolated(unsafe) private static var monitor: NWPathMonitor?
+    nonisolated(unsafe) private static var isOnline = true
 
     static func start() {
         let monitor = NWPathMonitor()

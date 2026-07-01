@@ -40,7 +40,7 @@ import SottoCore
     var recentTranscripts: [String] = []
     var lastActiveApp: NSRunningApplication?
     var appActivity: NSObjectProtocol?
-    var coordinator: AnyObject?
+    var coordinator: CoordinatorAgent?
     private var recordingTimeoutTask: Task<Void, Never>?
 
     enum Mode {
@@ -225,6 +225,7 @@ import SottoCore
             }
         }
 
+
         NotificationCenter.default.addObserver(
             forName: NSNotification.Name("SottoOpenGuide"),
             object: nil,
@@ -281,24 +282,20 @@ import SottoCore
             }
         }
 
-        if #available(macOS 26.0, *) {
-            self.coordinator = CoordinatorAgent()
-            let tools = JarvisToolbox.all().map { $0.name }.sorted()
-            print("[TOOLS] \(tools.count) available: \(tools.joined(separator: ", "))")
-            // Run availability diagnostics at startup to surface clear log output
-            // instead of silent failures later.
-            JarvisDiagnostics.reportAvailability()
-        }
+        self.coordinator = CoordinatorAgent()
+        let tools = JarvisToolbox.all().map { $0.name }.sorted()
+        print("[TOOLS] \(tools.count) available: \(tools.joined(separator: ", "))")
+        // Run availability diagnostics at startup to surface clear log output
+        // instead of silent failures later.
+        JarvisDiagnostics.reportAvailability()
 
         // Setup hands-free wake word detector
-        if #available(macOS 10.15, *) {
-            wakeDetector.onWakeWordDetected = { [weak self] in
-                guard let self = self else { return }
-                Task { @MainActor in
-                    print("[WAKE] Wake word detected! Triggering Jarvis hands-free.")
-                    self.currentMode = .jarvis
-                    self.beginRecording()
-                }
+        wakeDetector.onWakeWordDetected = { [weak self] in
+            guard let self = self else { return }
+            Task { @MainActor in
+                print("[WAKE] Wake word detected! Triggering Jarvis hands-free.")
+                self.currentMode = .jarvis
+                self.beginRecording()
             }
         }
 
@@ -309,15 +306,11 @@ import SottoCore
         //   JarvisAgent  — intent classifier + single-hop tool calls
         //   CoordinatorAgent — multi-turn Jarvis orchestration (was cold before, now warm)
         JarvisAgent.prewarm()
-        if #available(macOS 26.0, *) { CoordinatorAgent.prewarm() }
+        CoordinatorAgent.prewarm()
 
         // Cache the built-in mic device ID so the first recording press skips
         // the CoreAudio device-enumeration scan.
         recorder.prewarm()
-
-        // Load the in-process MLX Qwen model in the background so the first dictation
-        // doesn't pay the cold model-load cost. No-op when SOTTO_MLX is not compiled in.
-        Task { _ = await MLXEngine.shared.prepareIfNeeded() }
 
         // ── Kernel event bus + proactive observers ──────────────────────────
         // Each observer runs as a sleeping background Task — 0 CPU until an event fires.
@@ -535,7 +528,7 @@ import SottoCore
         // before transitioning state so we don't flash the "Transcribing" HUD.
         guard samples.count > 4800 else {
             state = .idle
-            hud.hide()
+            hud.showResult("Hold ⌘⇧K while speaking, then release", autoHideAfter: 2.0)
             return
         }
 
@@ -757,19 +750,11 @@ extension AppController {
         
         """
         
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
-            let tools = JarvisToolbox.all()
-            for (idx, tool) in tools.enumerated() {
-                text += "\(idx + 1). \(tool.name)\n"
-                text += "   Description: \(tool.description)\n\n"
-            }
-        } else {
-            text += "Native Apple Foundation Model tools require macOS 26.0 or later.\n"
+        let tools = JarvisToolbox.all()
+        for (idx, tool) in tools.enumerated() {
+            text += "\(idx + 1). \(tool.name)\n"
+            text += "   Description: \(tool.description)\n\n"
         }
-        #else
-        text += "Native Apple Foundation Model tools require macOS 26.0 or later.\n"
-        #endif
         
         text += """
         --------------------------------------------------

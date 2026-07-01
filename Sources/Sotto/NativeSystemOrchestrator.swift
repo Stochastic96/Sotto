@@ -31,6 +31,22 @@ struct NativeSystemOrchestrator {
         }
     }
 
+    /// Flushes inactive memory and the disk cache. Requires admin auth — macOS shows
+    /// a native password dialog via AppleScript's `with administrator privileges`.
+    @discardableResult
+    static func purgeRAM() -> Bool {
+        let appleScript = "do shell script \"purge\" with administrator privileges"
+        guard let script = NSAppleScript(source: appleScript) else { return false }
+        var error: NSDictionary?
+        script.executeAndReturnError(&error)
+        if let error = error {
+            print("[SYSTEM] purge failed: \(error)")
+            return false
+        }
+        print("[SYSTEM] RAM purged.")
+        return true
+    }
+
     /// Puts the Mac to sleep. No public Swift API exists, so this uses an in-process
     /// System Events command (no external script file, no shell).
     static func sleepDisplay() {

@@ -5,8 +5,10 @@ import AVFoundation
 /// Background listener that leverages macOS's native on-device Speech Recognizer
 /// to continuously listen for "Hey Jarvis", "Jarvis", or "Sotto" wake words.
 /// Runs completely offline on the Apple Neural Engine with close-to-zero CPU.
-@available(macOS 10.15, *)
-final class WakeWordDetector {
+// All mutable state is only ever touched from `queue` or via the completion
+// handlers/tasks this class itself schedules (never concurrently) — the same
+// synchronization discipline the code already relied on under Swift 5 mode.
+final class WakeWordDetector: @unchecked Sendable {
     private let speechRecognizer: SFSpeechRecognizer?
     private var audioEngine: AVAudioEngine?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?

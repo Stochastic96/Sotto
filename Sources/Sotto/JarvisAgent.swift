@@ -1,10 +1,8 @@
 import Foundation
-#if canImport(FoundationModels)
 import FoundationModels
-#endif
 
 /// Where a spoken utterance should be routed. Cheap to compute, drives the
-/// three-tier speed model (deterministic Swift → Apple FM → MLX/Grok).
+/// two-tier speed model (deterministic Swift → Apple Foundation Models).
 enum RoutedIntent: String, Sendable {
     case dictation   // plain text to type verbatim
     case command     // an action to perform on the Mac (tool-callable)
@@ -12,62 +10,47 @@ enum RoutedIntent: String, Sendable {
 }
 
 /// The on-device "brain": classifies intent and runs the native tool-calling agent
-/// via Apple's Foundation Models. Falls back gracefully when Apple Intelligence is
-/// unavailable (callers then use the MLX/Grok path).
+/// via Apple's Foundation Models.
 enum JarvisAgent {
 
     /// Whether the on-device model is usable right now.
     static func isAvailable() -> Bool {
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
-            return SystemLanguageModel.default.isAvailable
-        }
-        #endif
-        return false
+        SystemLanguageModel.default.isAvailable
     }
 
     static func availabilityError() -> String? {
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
-            switch SystemLanguageModel.default.availability {
-            case .available:
-                return nil
-            case .unavailable(let reason):
-                switch reason {
-                case .deviceNotEligible:
-                    return "This device does not support Apple Intelligence."
-                case .appleIntelligenceNotEnabled:
-                    return "Apple Intelligence is turned off. Please enable it in System Settings."
-                case .modelNotReady:
-                    return "The Apple Intelligence model is still downloading or not ready."
-                @unknown default:
-                    return "Apple Intelligence is unavailable."
-                }
+        switch SystemLanguageModel.default.availability {
+        case .available:
+            return nil
+        case .unavailable(let reason):
+            switch reason {
+            case .deviceNotEligible:
+                return "This device does not support Apple Intelligence."
+            case .appleIntelligenceNotEnabled:
+                return "Apple Intelligence is turned off. Please enable it in System Settings."
+            case .modelNotReady:
+                return "The Apple Intelligence model is still downloading or not ready."
+            @unknown default:
+                return "Apple Intelligence is unavailable."
             }
         }
-        #endif
-        return "Apple Intelligence is not supported on this version of macOS."
     }
 
-    /// Reduce first-token latency by warming the model at launch (we have the RAM now
-    /// that the MLX server isn't loaded). Retries once after 30 s in case the model
-    /// manager isn't ready at the exact moment of launch. Safe no-op if Apple Intelligence is off.
+    /// Reduce first-token latency by warming the model at launch. Retries once after
+    /// 30 s in case the model manager isn't ready at the exact moment of launch.
+    /// Safe no-op if Apple Intelligence is off.
     static func prewarm() {
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
-            Task {
-                guard SystemLanguageModel.default.isAvailable else { return }
-                LanguageModelSession().prewarm()
-                classifierSession.prewarm()
-                // Retry after 30 s — covers the common case where the model manager cancels
-                // the first prewarm because it hasn't finished initialising at cold launch.
-                try? await Task.sleep(for: .seconds(30))
-                guard SystemLanguageModel.default.isAvailable else { return }
-                LanguageModelSession().prewarm()
-                classifierSession.prewarm()
-            }
+        Task {
+            guard SystemLanguageModel.default.isAvailable else { return }
+            LanguageModelSession().prewarm()
+            classifierSession.prewarm()
+            // Retry after 30 s — covers the common case where the model manager cancels
+            // the first prewarm because it hasn't finished initialising at cold launch.
+            try? await Task.sleep(for: .seconds(30))
+            guard SystemLanguageModel.default.isAvailable else { return }
+            LanguageModelSession().prewarm()
+            classifierSession.prewarm()
         }
-        #endif
     }
 
     // MARK: - Routing (Tier 1 classifier)
@@ -84,27 +67,23 @@ enum JarvisAgent {
             return .question
         }
 
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *), SystemLanguageModel.default.isAvailable {
-            do {
-                // Reuse the prewarmed static session — zero construction cost per call
-                let result = try await classifierSession.respond(
-                    to: text,
-                    generating: Routing.self,
-                    options: GenerationOptions(temperature: 0)
-                )
-                switch result.content.intent {
-                case .command:  return .command
-                case .question: return .question
-                case .dictation: return .dictation
-                }
-            } catch {
-                print("[ROUTER] Apple classify failed: \(error.localizedDescription)")
-                return nil
+        guard SystemLanguageModel.default.isAvailable else { return nil }
+        do {
+            // Reuse the prewarmed static session — zero construction cost per call
+            let result = try await classifierSession.respond(
+                to: text,
+                generating: Routing.self,
+                options: GenerationOptions(temperature: 0)
+            )
+            switch result.content.intent {
+            case .command:  return .command
+            case .question: return .question
+            case .dictation: return .dictation
             }
+        } catch {
+            print("[ROUTER] Apple classify failed: \(error.localizedDescription)")
+            return nil
         }
-        #endif
-        return nil
     }
 
     // MARK: - Agent (native tool calling)
@@ -136,8 +115,6 @@ enum JarvisAgent {
 
     // Static warm session reused across all classify() calls — avoids the 200-400ms
     // cold-session cost on every utterance. Pure text classification; no tools loaded.
-    #if canImport(FoundationModels)
-    @available(macOS 26.0, *)
     private static let classifierSession: LanguageModelSession = {
         let s = LanguageModelSession(instructions: """
             Classify the user's utterance into exactly one intent:
@@ -148,32 +125,27 @@ enum JarvisAgent {
             """)
         return s
     }()
-    #endif
 
     /// Runs the tool-calling agent on a spoken command. Returns a short spoken reply.
-    /// Throws if Apple Intelligence is unavailable so the caller can fall back to MLX/Grok.
+    /// Throws if Apple Intelligence is unavailable.
     static func run(_ command: String) async throws -> String {
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *), SystemLanguageModel.default.isAvailable {
-            // Route to only the most relevant ≤8 tools — tool-selection accuracy drops when
-            // the small on-device model is handed the whole 27-tool catalog every call.
-            let tools = JarvisToolbox.routed(for: command)
-            print("[JARVIS] Routed \(tools.count) tools: \(tools.map { $0.name }.joined(separator: ", "))")
-            let session = LanguageModelSession(tools: tools, instructions: instructions)
-            let response = try await session.respond(to: command,
-                                                     options: GenerationOptions(temperature: 0.3))
-            return response.content
+        guard SystemLanguageModel.default.isAvailable else {
+            throw NSError(domain: "JarvisAgent", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "Apple Intelligence is unavailable on this machine."])
         }
-        #endif
-        throw NSError(domain: "JarvisAgent", code: -1,
-                      userInfo: [NSLocalizedDescriptionKey: "Apple Intelligence is unavailable on this machine."])
+        // Route to only the most relevant ≤8 tools — tool-selection accuracy drops when
+        // the small on-device model is handed the whole 27-tool catalog every call.
+        let tools = JarvisToolbox.routed(for: command)
+        print("[JARVIS] Routed \(tools.count) tools: \(tools.map { $0.name }.joined(separator: ", "))")
+        let session = LanguageModelSession(tools: tools, instructions: instructions)
+        let response = try await session.respond(to: command,
+                                                 options: GenerationOptions(temperature: 0.3))
+        return response.content
     }
 }
 
-#if canImport(FoundationModels)
 /// Constrained intent type — @Generable enum so guided generation can ONLY
 /// produce one of these three cases; no free-form string that could mismatch.
-@available(macOS 26.0, *)
 @Generable
 struct Routing {
     @Generable
@@ -182,4 +154,3 @@ struct Routing {
     @Guide(description: "The intent type of the utterance.")
     let intent: Intent
 }
-#endif

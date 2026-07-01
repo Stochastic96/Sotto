@@ -4,7 +4,7 @@ import Foundation
 //
 // Every skill registers itself here at startup. The kernel queries the registry
 // to find the cheapest capable path for any intent — deterministic first,
-// Foundation Models second, MLX third, cloud last.
+// Foundation Models second.
 //
 // This is the heart of the microkernel. It replaces hardcoded routing with
 // self-describing capabilities that the planner can discover and compare.

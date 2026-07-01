@@ -1,6 +1,5 @@
 import Foundation
 import AppKit
-#if canImport(FoundationModels)
 import FoundationModels
 
 // SpotlightSearchTool — instant file/app/document search via macOS Spotlight
@@ -11,7 +10,6 @@ import FoundationModels
 
 // ── Shared process helper ─────────────────────────────────────────────────
 
-@available(macOS 26.0, *)
 private func runProcess(_ launchPath: String, _ args: [String]) -> String {
     let p = Process()
     let pipe = Pipe()
@@ -26,7 +24,6 @@ private func runProcess(_ launchPath: String, _ args: [String]) -> String {
 
 // ── SpotlightSearchTool ───────────────────────────────────────────────────
 
-@available(macOS 26.0, *)
 struct SpotlightSearchTool: Tool {
     let name = "spotlight_search_files"
     let description = "Search for files, apps, or documents on this Mac using macOS Spotlight (mdfind). Returns a list of matching file paths instantly — no AI guessing needed."
@@ -73,7 +70,6 @@ struct SpotlightSearchTool: Tool {
 
 // ── OpenSpotlightResultTool ───────────────────────────────────────────────
 
-@available(macOS 26.0, *)
 struct OpenSpotlightResultTool: Tool {
     let name = "open_spotlight_result"
     let description = "Find the first Spotlight match for a query and open it with the system default application. Combines search + open in one step."
@@ -111,4 +107,3 @@ struct OpenSpotlightResultTool: Tool {
     }
 }
 
-#endif // canImport(FoundationModels)

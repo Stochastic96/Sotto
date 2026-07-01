@@ -34,6 +34,7 @@ enum NativeActions {
         case "sleep":        NativeSystemOrchestrator.sleepDisplay();  return ""
         case "lock":         NativeSystemOrchestrator.lockScreen();    return ""
         case "empty_trash":  NativeSystemOrchestrator.emptyTrash();    return ""
+        case "purge_ram":    NativeSystemOrchestrator.purgeRAM();      return "RAM purged."
 
         // System status & diagnostics
         case "system_status":

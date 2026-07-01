@@ -1,7 +1,5 @@
 import Foundation
-#if canImport(FoundationModels)
 import FoundationModels
-#endif
 
 /// A durable, resumable bulk job. The point is to finish large work an 8 GB on-device
 /// model could never fit in one context: the engine processes the source in small batches,
@@ -20,10 +18,8 @@ public struct LongTask: Codable {
     public var createdAt: Date
 }
 
-#if canImport(FoundationModels)
 /// Structured per-batch decision — guided generation guarantees a valid `[Int]`, so the
 /// model can't hallucinate a malformed answer.
-@available(macOS 26.0, *)
 @Generable
 struct PromoBatchDecision {
     @Guide(description: "Zero-based indexes of the emails in the numbered list that are promotional/marketing (newsletters, sales, deals, ads) and safe to move to Trash.")
@@ -32,7 +28,6 @@ struct PromoBatchDecision {
 
 /// Tool that kicks off a durable background bulk job (e.g. inbox clean-up) and returns
 /// immediately with a status line. The job resumes across launches via LongTaskEngine.
-@available(macOS 26.0, *)
 struct StartLongTaskTool: Tool {
     let name = "start_long_task"
     let description = "Start a durable background bulk job (e.g. 'clean all promotional emails'). Returns immediately; the job runs in the background and speaks a summary when done."
@@ -47,7 +42,6 @@ struct StartLongTaskTool: Tool {
         return LongTaskEngine.start(goal: arguments.goal)
     }
 }
-#endif
 
 public enum LongTaskEngine {
     private static let batchSize = 20
@@ -159,8 +153,7 @@ public enum LongTaskEngine {
     /// Decide which messages in a batch are promotional. Model-primary (Apple Intelligence,
     /// guided generation), with a high-precision keyword heuristic as the fallback.
     private static func classifyPromotional(_ batch: [MailMessage]) async -> [Int] {
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *), SystemLanguageModel.default.isAvailable {
+        if SystemLanguageModel.default.isAvailable {
             let session = LanguageModelSession(instructions: """
                 You sort emails. Promotional = newsletters, sales, deals, ads, marketing blasts.
                 NOT promotional = personal, work, financial, security, receipts, and transactional mail.
@@ -176,7 +169,6 @@ public enum LongTaskEngine {
                 return valid.map { batch[$0].id }
             }
         }
-        #endif
         return batch.filter { MailConnector.looksPromotional($0) }.map { $0.id }
     }
 

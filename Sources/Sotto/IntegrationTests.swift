@@ -2,74 +2,8 @@
 import Foundation
 import AppKit
 
-public func runFallbackIntegrationTest() async -> Bool {
-    print("[TEST] Running fallback integration test for macOS < 26.0...")
-    var currentInput = "read the screen, write a swift script to compute total disk space, and tell me the result"
-    var turnOutput = ""
-    
-    // Simulate Coordinator loop of at least two turns
-    for turn in 1...2 {
-        print("[TEST] Coordinator Turn \(turn) starting with: \(currentInput)")
-        if turn == 1 {
-            // Turn 1: AX Screen Parser
-            let screenMarkup = ScreenParser.captureActiveWindowTree()
-            print("[TEST] AX Screen Parser output (\(screenMarkup.count) characters):")
-            
-            // Log a sample of the screen tree to verify structured bounds
-            let lines = screenMarkup.split(separator: "\n")
-            for line in lines.prefix(5) {
-                print("  \(line)")
-            }
-            if lines.count > 5 {
-                print("  ... (\(lines.count - 5) more lines)")
-            }
-            
-            if screenMarkup.isEmpty {
-                print("❌ AX Screen Parser returned empty string.")
-                return false
-            }
-            print("✅ AX Screen Parser executed successfully.")
-            
-            currentInput = "Screen parsed successfully. Now run script."
-        } else if turn == 2 {
-            // Turn 2: Scripting Executor
-            let scriptCode = """
-            import Foundation
-            let fileManager = FileManager.default
-            if let attrs = try? fileManager.attributesOfFileSystem(forPath: "/"),
-               let space = attrs[.systemSize] as? Int64 {
-                print("Total disk space: \\(space) bytes")
-            }
-            """
-            print("[TEST] Scripting Executor running SwiftScriptRunner with script code...")
-            let result = await SwiftScriptRunner.run(scriptCode: scriptCode)
-            print("[TEST] SwiftScriptRunner result success: \(result.success), exitCode: \(result.exitCode)")
-            print("[TEST] SwiftScriptRunner stdout: \(result.stdout.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines))")
-            print("[TEST] SwiftScriptRunner stderr: \(result.stderr.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines))")
-            
-            if !result.success {
-                print("❌ SwiftScriptRunner failed to run: \(result.stderr)")
-                return false
-            }
-            
-            if !result.stdout.contains("Total disk space:") {
-                print("❌ SwiftScriptRunner output does not contain expected total disk space message: \(result.stdout)")
-                return false
-            }
-            
-            turnOutput = result.stdout.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-            print("✅ Scripting Executor executed successfully.")
-        }
-    }
-    
-    print("[TEST] Ingesting back script output: \(turnOutput)")
-    print("✅ Fallback integration test: PASSED")
-    return true
-}
-
-@available(macOS 26.0, *)
 public func runCoordinatorAgentIntegrationTest() async -> Bool {
-    print("[TEST] Running CoordinatorAgent integration test for macOS 26.0+...")
+    print("[TEST] Running CoordinatorAgent integration test...")
     CoordinatorAgent.isMockMode = true
     let agent = CoordinatorAgent()
     do {
@@ -93,7 +27,6 @@ public func runCoordinatorAgentIntegrationTest() async -> Bool {
 /// must name a real registered capability. This is the safety the future `@Skill` macro
 /// would enforce at compile time — until then, it fails the test suite the moment a new
 /// tool is added without its registry entry, so the two never silently drift apart.
-@available(macOS 26.0, *)
 public func runCapabilityConsistencyCheck() async -> Bool {
     print("[TEST] Running capability/registry consistency check...")
     await CapabilityRegistry.shared.seedBuiltins()
@@ -156,17 +89,12 @@ public func runDynamicSkillTriggerTest() -> Bool {
 
 public func runSottoIntegrationTests() async -> Bool {
     print("=== STARTING SOTTO INTEGRATION TESTS ===")
-    var success: Bool
-    if #available(macOS 26.0, *) {
-        success = await runCoordinatorAgentIntegrationTest()
-        if success { success = await runCapabilityConsistencyCheck() }
-        if success { success = runDynamicSkillTriggerTest() }
-        if success {
-            print("[TEST] Verifying JarvisEvaluation runner (forceMock)...")
-            success = await JarvisEvaluation.run(forceMock: true)
-        }
-    } else {
-        success = await runFallbackIntegrationTest()
+    var success = await runCoordinatorAgentIntegrationTest()
+    if success { success = await runCapabilityConsistencyCheck() }
+    if success { success = runDynamicSkillTriggerTest() }
+    if success {
+        print("[TEST] Verifying JarvisEvaluation runner (forceMock)...")
+        success = await JarvisEvaluation.run(forceMock: true)
     }
     if success {
         print("=== ALL INTEGRATION TESTS PASSED ===")

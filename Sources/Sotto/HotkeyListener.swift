@@ -1,5 +1,5 @@
 import AppKit
-import KeyboardShortcuts
+@preconcurrency import KeyboardShortcuts
 
 extension KeyboardShortcuts.Name {
     static let toggleDictation = Self(

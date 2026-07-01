@@ -2,20 +2,11 @@ import Foundation
 import AppKit
 import ApplicationServices
 
-public struct AXNode: Codable {
-    public let role: String
-    public let title: String?
-    public let value: String?
-    public let identifier: String?
-    public let x: Double
-    public let y: Double
-    public let width: Double
-    public let height: Double
-}
-
 public class ScreenParser {
-    private static var elementCache: [Int: AXUIElement] = [:]
-    private static var nextId = 1
+    // AX-tree parsing only ever happens synchronously on the main thread (UI
+    // automation), never concurrently — same assumption the code already made.
+    nonisolated(unsafe) private static var elementCache: [Int: AXUIElement] = [:]
+    nonisolated(unsafe) private static var nextId = 1
 
     /// Non-standard convenience attribute synthesized from position + size below.
     private static let frameAttr = "AXFrame"

@@ -10,7 +10,7 @@ import AVFoundation
 ///
 /// To add a new engine: create a type conforming to `TranscriptionBackend` and
 /// return an instance from `Transcriber.makeBackend()`. No other changes needed.
-protocol TranscriptionBackend {
+protocol TranscriptionBackend: Sendable {
     func prepare() async throws
     /// `samples` must be 16 kHz mono Float32.
     func transcribe(_ samples: [Float]) async throws -> String
@@ -18,7 +18,8 @@ protocol TranscriptionBackend {
 
 // MARK: - Parakeet (FluidAudio / ANE, fully offline)
 
-private final class ParakeetBackend: TranscriptionBackend {
+// Only ever touched serially through the owning Transcriber actor.
+private final class ParakeetBackend: TranscriptionBackend, @unchecked Sendable {
     private var manager: AsrManager?
 
     func prepare() async throws {
@@ -137,7 +138,7 @@ private struct AppleSpeechBackend: TranscriptionBackend {
 /// Routes transcription to the active backend selected in SettingsController.
 /// Adding a new engine requires only a new `TranscriptionBackend` conformance
 /// and a case in `makeBackend()` — `prepare()` and `transcribe()` stay unchanged.
-final class Transcriber {
+actor Transcriber {
     enum TranscriberError: LocalizedError {
         case notReady
         case speechRecognizerNotAvailable

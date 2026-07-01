@@ -1,10 +1,6 @@
 import Foundation
-#if canImport(FoundationModels)
 import FoundationModels
-#endif
 
-#if canImport(FoundationModels)
-@available(macOS 26.0, *)
 @Generable
 struct ExtractionResult {
     @Guide(description: "Any durable facts or preferences about the user. Translate into simple declarative statements starting with 'User...'.")
@@ -12,7 +8,6 @@ struct ExtractionResult {
     @Guide(description: "Technical terms, proper nouns, jargon, codebase names (like Sotto, Jarvis, MLX), command lines, or acronyms that should be added to the custom vocabulary dictionary for accurate spelling.")
     let vocabulary: [String]
 }
-#endif
 
 /// Background coordinator that subscribes to the EventBus.
 /// Uses Apple Intelligence (via direct LanguageModelSession) to analyze user speech (.userSpoke)
@@ -75,9 +70,8 @@ actor MemoryCoordinator {
     }
     
     private func extractFactsAndVocabulary(from text: String) async {
-        #if canImport(FoundationModels)
-        guard #available(macOS 26.0, *), SystemLanguageModel.default.isAvailable else { return }
-        
+        guard SystemLanguageModel.default.isAvailable else { return }
+
         let instructions = "You are Jarvis's memory extractor. Extract facts and vocabulary."
         let session = LanguageModelSession(instructions: instructions)
         
@@ -149,6 +143,5 @@ actor MemoryCoordinator {
             // This is non-fatal — we just skip this extraction cycle silently.
             print("[MEMORY-COORDINATOR] Extraction skipped (\(error.localizedDescription))")
         }
-        #endif
     }
 }

@@ -10,7 +10,7 @@ import Foundation
 ///
 /// No changes to `checkZeroLatencyShortcut` are needed — the chain
 /// picks up new matchers automatically.
-protocol CommandMatcher {
+protocol CommandMatcher: Sendable {
     func match(_ text: String) -> CommandEngine.ZeroLatencyShortcut?
 }
 

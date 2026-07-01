@@ -1,6 +1,5 @@
 import Foundation
 import AppKit
-#if canImport(FoundationModels)
 import FoundationModels
 
 // Coding-assistant tools for Jarvis. Each tool wraps a FoundationModels session
@@ -11,7 +10,6 @@ import FoundationModels
 // MARK: - ExplainCodeTool
 
 /// Ask the on-device model to explain a snippet of code in 2-3 sentences.
-@available(macOS 26.0, *)
 struct ExplainCodeTool: Tool {
     let name = "explain_code"
     let description = "Explain what a code snippet does in 2-3 concise sentences suitable for speaking aloud."
@@ -46,7 +44,6 @@ struct ExplainCodeTool: Tool {
 
 // MARK: - GenerateGitCommitTool
 
-@available(macOS 26.0, *)
 @Generable
 struct CommitMessage {
     @Guide(description: "A concise git commit message in the imperative mood, under 72 characters, no trailing period.")
@@ -54,7 +51,6 @@ struct CommitMessage {
 }
 
 /// Generate a git commit message from staged (or HEAD) diff output.
-@available(macOS 26.0, *)
 struct GenerateGitCommitTool: Tool {
     let name = "generate_git_commit"
     let description = "Generate a concise git commit message based on the staged diff of a project. Uses the configured workspace path when no path is supplied."
@@ -96,7 +92,6 @@ struct GenerateGitCommitTool: Tool {
 // MARK: - FindBugTool
 
 /// Ask the on-device model to identify the most critical bug in a code snippet.
-@available(macOS 26.0, *)
 struct FindBugTool: Tool {
     let name = "find_bug"
     let description = "Find the most critical bug or issue in a code snippet and suggest a fix. Returns a spoken-length result."
@@ -125,7 +120,6 @@ struct FindBugTool: Tool {
 
 // MARK: - ExplainErrorTool
 
-@available(macOS 26.0, *)
 @Generable
 struct ErrorExplanation {
     @Guide(description: "Plain-English explanation of what caused the error.")
@@ -135,7 +129,6 @@ struct ErrorExplanation {
 }
 
 /// Translate a compiler or runtime error message into plain English with a fix suggestion.
-@available(macOS 26.0, *)
 struct ExplainErrorTool: Tool {
     let name = "explain_error"
     let description = "Explain a Swift or macOS error message in plain English and suggest the most likely fix. Returns a spoken-length result."
@@ -165,4 +158,3 @@ struct ExplainErrorTool: Tool {
     }
 }
 
-#endif // canImport(FoundationModels)

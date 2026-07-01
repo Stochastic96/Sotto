@@ -4,7 +4,9 @@ import Foundation
 ///   - your voice audio (16 kHz mono WAV) → for voice cloning + STT fine-tune later
 ///   - raw transcript → Jarvis response pairs → for LoRA fine-tune + prompting
 /// Append-only JSONL so a crash never corrupts history. Lives in sotto-data/dataset/.
-final class DatasetLogger {
+// All stored state is immutable (`let` URLs); every method does its own file I/O
+// with no shared mutable state, so this is safe to share across threads.
+final class DatasetLogger: @unchecked Sendable {
     static let shared = DatasetLogger()
 
     private let baseDir: URL

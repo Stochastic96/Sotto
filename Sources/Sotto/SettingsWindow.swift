@@ -15,6 +15,11 @@ enum TranscriptionEngine: String, CaseIterable {
     }
 }
 
+// UI-building/window-management side is MainActor (all AppKit calls belong there);
+// the UserDefaults-backed static accessors below are marked `nonisolated` since
+// they're plain, thread-safe reads/writes with no shared mutable class state, and
+// are read from actor contexts elsewhere (SottoIntelligence, MorningBriefTool, etc.).
+@MainActor
 final class SettingsController: NSObject, NSTextFieldDelegate {
     private var window: NSWindow?
     private var workspaceField: NSTextField?
@@ -22,23 +27,23 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
     private let testSynthesizer = AVSpeechSynthesizer()
     
     // UserDefaults keys
-    static let pttKey = "sotto_pushToTalk"
-    static let handsFreeKey = "sotto_handsFree"
-    static let directInsertKey = "sotto_directInsert"
-    static let systemPromptKey = "sotto_systemPrompt"
-    static let vocabularyKey = "sotto_vocabulary"
-    static let workspacePathKey = "sotto_workspacePath"
-    static let engineKey = "sotto_transcriptionEngine"
-    static let agentModeKey = "sotto_agentMode"
-    static let voiceFeedbackEnabledKey = "sotto_voiceFeedbackEnabled"
-    static let voiceIdentifierKey = "sotto_voiceIdentifier"
-    static let speechRateKey = "sotto_speechRate"
-    static let speechPitchKey = "sotto_speechPitch"
+    nonisolated static let pttKey = "sotto_pushToTalk"
+    nonisolated static let handsFreeKey = "sotto_handsFree"
+    nonisolated static let directInsertKey = "sotto_directInsert"
+    nonisolated static let systemPromptKey = "sotto_systemPrompt"
+    nonisolated static let vocabularyKey = "sotto_vocabulary"
+    nonisolated static let workspacePathKey = "sotto_workspacePath"
+    nonisolated static let engineKey = "sotto_transcriptionEngine"
+    nonisolated static let agentModeKey = "sotto_agentMode"
+    nonisolated static let voiceFeedbackEnabledKey = "sotto_voiceFeedbackEnabled"
+    nonisolated static let voiceIdentifierKey = "sotto_voiceIdentifier"
+    nonisolated static let speechRateKey = "sotto_speechRate"
+    nonisolated static let speechPitchKey = "sotto_speechPitch"
     /// Sotto's brain is Apple Foundation Models (on-device, no network).
     /// Kept as a constant so existing call sites keep working without a provider picker.
-    static let apiProvider = "apple"
+    nonisolated static let apiProvider = "apple"
 
-    static var sottoDataURL: URL {
+    nonisolated static var sottoDataURL: URL {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser
         
@@ -65,7 +70,7 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         return appSupport
     }
 
-    static var sottoLogURL: URL {
+    nonisolated static var sottoLogURL: URL {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser
         
@@ -93,48 +98,44 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         return appSupport.appendingPathComponent("sotto.log")
     }
 
-    static var isPushToTalk: Bool {
+    nonisolated static var isPushToTalk: Bool {
         UserDefaults.standard.object(forKey: pttKey) as? Bool ?? true
     }
 
-    static var isHandsFreeEnabled: Bool {
+    nonisolated static var isHandsFreeEnabled: Bool {
         UserDefaults.standard.object(forKey: handsFreeKey) as? Bool ?? false
     }
     
-    static var isDirectInsert: Bool {
+    nonisolated static var isDirectInsert: Bool {
         UserDefaults.standard.bool(forKey: directInsertKey)
     }
 
-    static var customSystemPrompt: String {
+    nonisolated static var customSystemPrompt: String {
         UserDefaults.standard.string(forKey: systemPromptKey) ?? ""
     }
     
-    static var modelIdentifier: String {
-        UserDefaults.standard.string(forKey: "sotto_mlx_model_identifier") ?? "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
-    }
-    
-    static var customVocabulary: String {
+    nonisolated static var customVocabulary: String {
         UserDefaults.standard.string(forKey: vocabularyKey) ?? ""
     }
     
-    static var workspacePath: String {
+    nonisolated static var workspacePath: String {
         UserDefaults.standard.string(forKey: workspacePathKey) ?? "~/projects"
     }
     
-    static var transcriptionEngine: TranscriptionEngine {
+    nonisolated static var transcriptionEngine: TranscriptionEngine {
         let raw = UserDefaults.standard.string(forKey: engineKey) ?? TranscriptionEngine.appleSpeech.rawValue
         return TranscriptionEngine(rawValue: raw) ?? .appleSpeech
     }
     
-    static var isAgentMode: Bool {
+    nonisolated static var isAgentMode: Bool {
         UserDefaults.standard.object(forKey: agentModeKey) as? Bool ?? true
     }
     
-    static var isVoiceFeedbackEnabled: Bool {
+    nonisolated static var isVoiceFeedbackEnabled: Bool {
         UserDefaults.standard.object(forKey: voiceFeedbackEnabledKey) as? Bool ?? true
     }
     
-    static var voiceIdentifier: String {
+    nonisolated static var voiceIdentifier: String {
         let stored = UserDefaults.standard.string(forKey: voiceIdentifierKey)
         let excludedKeywords = ["cello", "novelty", "bell", "organ", "zarvox", "bubbles", "hysterical", "whisper", "bad_news", "trinoids", "deranged", "pipe", "reed"]
         if let st = stored {
@@ -147,11 +148,11 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         return "com.apple.voice.super-compact.en-GB.Daniel"
     }
     
-    static var speechRate: Float {
+    nonisolated static var speechRate: Float {
         UserDefaults.standard.object(forKey: speechRateKey) as? Float ?? AVSpeechUtteranceDefaultSpeechRate
     }
     
-    static var speechPitch: Float {
+    nonisolated static var speechPitch: Float {
         UserDefaults.standard.object(forKey: speechPitchKey) as? Float ?? 1.0
     }
     

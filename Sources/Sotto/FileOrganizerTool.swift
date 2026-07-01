@@ -1,6 +1,5 @@
 import Foundation
 import AppKit
-#if canImport(FoundationModels)
 import FoundationModels
 
 // FileOrganizerTool — tidies ~/Downloads into category subfolders, skipping
@@ -12,10 +11,10 @@ import FoundationModels
 
 // ── Shared helpers ────────────────────────────────────────────────────────
 
-@available(macOS 26.0, *)
-private let fm = FileManager.default
+// FileManager.default is documented thread-safe; the type itself just isn't
+// Sendable-audited by the SDK yet.
+nonisolated(unsafe) private let fm = FileManager.default
 
-@available(macOS 26.0, *)
 private func expandPath(_ path: String) -> String {
     if path.hasPrefix("~") {
         return (path as NSString).expandingTildeInPath
@@ -25,7 +24,6 @@ private func expandPath(_ path: String) -> String {
 
 // ── FileOrganizerTool ─────────────────────────────────────────────────────
 
-@available(macOS 26.0, *)
 struct FileOrganizerTool: Tool {
     let name = "organize_downloads"
     let description = "Organize ~/Downloads by moving files into subfolders by type: Archives, Images, Documents, Code, Apps, Videos. Skips files less than 1 day old."
@@ -125,7 +123,6 @@ struct FileOrganizerTool: Tool {
 
 // ── LargeFileFinderTool ───────────────────────────────────────────────────
 
-@available(macOS 26.0, *)
 struct LargeFileFinderTool: Tool {
     let name = "find_large_files"
     let description = "Recursively find the largest files in a directory (default ~/Downloads). Returns the top 10 files above a configurable size threshold."
@@ -201,5 +198,3 @@ struct LargeFileFinderTool: Tool {
         return lines.joined(separator: "\n")
     }
 }
-
-#endif // canImport(FoundationModels)

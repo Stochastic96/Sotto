@@ -1,20 +1,11 @@
 import Foundation
-#if canImport(FoundationModels)
 import FoundationModels
-#endif
 
-// Gated by SOTTO_FM27 because the macOS 27 FoundationModels APIs (DynamicProfile, Profile,
-// GenerationOptions.ToolCallingMode) require the Swift 6.4 toolchain. The currently
-// installed Command Line Tools / Xcode ship Swift 6.3.2, which cannot see these symbols even
-// though the SDK declares them — so the flag stays OFF until the toolchain updates, and the
-// Coordinator uses its hand-built macOS 26 session path. Flip it on in Package.swift then.
-#if canImport(FoundationModels) && SOTTO_FM27
-/// macOS 27+: expresses Jarvis's lanes as a native `LanguageModelSession.DynamicProfile`.
-/// Instructions, tools, temperature, and tool-calling mode all switch by lane — so the chat
-/// lane can FORBID tools (no accidental action on small talk) and the big-job lane can
-/// REQUIRE `start_long_task`, things the plain per-turn session can't enforce. On macOS 26
-/// the Coordinator falls back to building the session by hand (see `CoordinatorAgent`).
-@available(macOS 27.0, *)
+/// Expresses Jarvis's lanes as a native `LanguageModelSession.DynamicProfile`
+/// (macOS 27+ only — the deployment target for this app). Instructions, tools,
+/// temperature, and tool-calling mode all switch by lane — so the chat lane can
+/// FORBID tools (no accidental action on small talk) and the big-job lane can
+/// REQUIRE `start_long_task`, things a plain per-turn session can't enforce.
 struct JarvisProfile: LanguageModelSession.DynamicProfile {
     enum Mode: String { case chat, quick, bigJob }
 
@@ -77,4 +68,3 @@ struct JarvisProfile: LanguageModelSession.DynamicProfile {
         return .quick
     }
 }
-#endif

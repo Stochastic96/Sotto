@@ -1,6 +1,5 @@
 import Foundation
 import AppKit
-#if canImport(FoundationModels)
 import FoundationModels
 
 // MARK: - SiriDelegatable Protocol
@@ -22,7 +21,6 @@ import FoundationModels
 ///
 /// Sotto never routes to Siri when the native call succeeds, so the privacy
 /// and offline guarantees are preserved on the happy path.
-@available(macOS 26.0, *)
 protocol SiriDelegatable: Tool {
     /// Produces the natural-language Siri prompt that achieves the same goal
     /// as calling this tool with `arguments`.
@@ -37,7 +35,6 @@ protocol SiriDelegatable: Tool {
 /// "permission" — the convention used by all Jarvis native tools. On any other
 /// result the value is returned unchanged, so Siri is never involved on the
 /// happy path.
-@available(macOS 26.0, *)
 @MainActor
 func siriDelegatedCall<T: SiriDelegatable>(
     tool: T,
@@ -53,4 +50,3 @@ func siriDelegatedCall<T: SiriDelegatable>(
     await SiriBridge.send(query)
     return "Couldn't do it natively — routed to Siri: \"\(query)\""
 }
-#endif

@@ -2,9 +2,7 @@ import Foundation
 import AppKit
 import os
 import SottoCore
-#if canImport(FoundationModels)
 import FoundationModels
-#endif
 
 // MARK: - Benchmark Metrics
 public struct LatencyStats: Sendable {
@@ -273,14 +271,8 @@ public enum JarvisEvaluation {
         print("\n[SUITE] Evaluating Keyword Tool Routing...")
         for (i, tc) in routingTests.enumerated() {
             let start = CFAbsoluteTimeGetCurrent()
-            let routedTools: [String]
-            
-            if #available(macOS 26.0, *) {
-                routedTools = JarvisToolbox.routed(for: tc.input).map { $0.name }
-            } else {
-                routedTools = []
-            }
-            
+            let routedTools = JarvisToolbox.routed(for: tc.input).map { $0.name }
+
             let end = CFAbsoluteTimeGetCurrent()
             let timeMs = (end - start) * 1000
             

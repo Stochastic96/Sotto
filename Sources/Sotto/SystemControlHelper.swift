@@ -152,7 +152,9 @@ struct SystemControlHelper {
     private typealias SetBrightnessFunc = @convention(c) (CGDirectDisplayID, Float) -> Int32
     private typealias GetBrightnessFunc = @convention(c) (CGDirectDisplayID, UnsafeMutablePointer<Float>) -> Int32
     
-    private static var setBrightnessPtr: SetBrightnessFunc? = {
+    // Resolved once via dlopen/dlsym and never reassigned — a `let`, so Swift 6
+    // treats it as immutable shared state rather than a concurrency hazard.
+    private static let setBrightnessPtr: SetBrightnessFunc? = {
         guard let handle = dlopen("/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices", RTLD_NOW) else {
             return nil
         }
@@ -161,8 +163,8 @@ struct SystemControlHelper {
         }
         return nil
     }()
-    
-    private static var getBrightnessPtr: GetBrightnessFunc? = {
+
+    private static let getBrightnessPtr: GetBrightnessFunc? = {
         guard let handle = dlopen("/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices", RTLD_NOW) else {
             return nil
         }

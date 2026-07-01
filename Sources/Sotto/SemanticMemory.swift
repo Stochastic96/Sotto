@@ -24,7 +24,8 @@ enum SemanticMemory {
     }
 
     // Built-in sentence embedding; nil if the OS asset isn't available (recall then no-ops).
-    private static let embedder: NLEmbedding? = NLEmbedding.sentenceEmbedding(for: .english)
+    // Only ever touched from the `io` serial queue (see comment below).
+    nonisolated(unsafe) private static let embedder: NLEmbedding? = NLEmbedding.sentenceEmbedding(for: .english)
 
     // MARK: - Embedding
 

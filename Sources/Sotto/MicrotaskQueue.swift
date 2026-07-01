@@ -1,7 +1,5 @@
 import Foundation
-#if canImport(FoundationModels)
 import FoundationModels
-#endif
 
 // MARK: - MicrotaskQueue
 //
@@ -62,18 +60,16 @@ protocol MicrotaskExecutor: Sendable {
 /// Default executor: routes each task's goal through CoordinatorAgent.
 struct CoordinatorTaskExecutor: MicrotaskExecutor {
     func execute(_ task: Microtask) async -> (output: String?, error: String?) {
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *), SystemLanguageModel.default.isAvailable {
-            do {
-                let agent = CoordinatorAgent()
-                let result = try await agent.handleTurn(userInput: task.goal)
-                return (result, nil)
-            } catch {
-                return (nil, error.localizedDescription)
-            }
+        guard SystemLanguageModel.default.isAvailable else {
+            return (nil, "Apple Intelligence unavailable — task will retry when model is ready.")
         }
-        #endif
-        return (nil, "Apple Intelligence unavailable — task will retry when model is ready.")
+        do {
+            let agent = CoordinatorAgent()
+            let result = try await agent.handleTurn(userInput: task.goal)
+            return (result, nil)
+        } catch {
+            return (nil, error.localizedDescription)
+        }
     }
 }
 

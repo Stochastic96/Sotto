@@ -1,7 +1,11 @@
 import AppKit
 import Foundation
 
-private var globalCleanup: (() -> Void)?
+// Set once at launch (MainActor), read once from the async-signal-safe handler below.
+// No concurrent mutation ever actually occurs — the C signal handler can't be
+// expressed as actor-isolated, so this opts out of the (correct, but inapplicable
+// here) compiler check rather than fighting it with unsound actor-hopping.
+nonisolated(unsafe) private var globalCleanup: (() -> Void)?
 
 @main
 @MainActor

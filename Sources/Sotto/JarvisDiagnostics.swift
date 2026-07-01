@@ -1,7 +1,5 @@
 import Foundation
-#if canImport(FoundationModels)
 import FoundationModels
-#endif
 
 // MARK: - JarvisDiagnostics
 //
@@ -26,7 +24,6 @@ enum JarvisDiagnostics {
     /// Call after any Foundation Models error or misbehavior.
     /// Writes a structured JSON attachment to sotto-data/diagnostics/
     /// that the user can attach to a Feedback Assistant report.
-    @available(macOS 26.0, *)
     static func record(
         session: AnyObject?,
         error: Error? = nil,
@@ -34,7 +31,6 @@ enum JarvisDiagnostics {
         description: String,
         category: FeedbackCategory = .modelError
     ) {
-        #if canImport(FoundationModels)
         guard let lmSession = session as? LanguageModelSession else { return }
 
         let issue = LanguageModelFeedback.Issue(
@@ -54,29 +50,23 @@ enum JarvisDiagnostics {
         let filename = "feedback_\(Int(Date().timeIntervalSince1970)).json"
         try? data.write(to: dir.appendingPathComponent(filename))
         print("[DIAGNOSTICS] Feedback logged: \(filename) — attach to Feedback Assistant to report this model issue to Apple.")
-        #endif
     }
 
     /// Call when a model response is good — helps Apple tune the model for Sotto's patterns.
-    @available(macOS 26.0, *)
     static func recordPositive(session: AnyObject?, input: String) {
-        #if canImport(FoundationModels)
         guard let lmSession = session as? LanguageModelSession else { return }
         let data = lmSession.logFeedbackAttachment(sentiment: .positive, issues: [])
         let dir = SettingsController.sottoDataURL.appendingPathComponent("diagnostics")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let filename = "feedback_pos_\(Int(Date().timeIntervalSince1970)).json"
         try? data.write(to: dir.appendingPathComponent(filename))
-        #endif
     }
 
     // MARK: - Capability check
 
     /// Returns true if the system model supports tool calling on this device.
     /// Call this at startup to surface clear diagnostic info instead of silent failures.
-    @available(macOS 26.0, *)
     static func reportAvailability() {
-        #if canImport(FoundationModels)
         let model = SystemLanguageModel.default
         switch model.availability {
         case .available:
@@ -93,9 +83,6 @@ enum JarvisDiagnostics {
                 print("[DIAGNOSTICS] Apple Intelligence: ❌ unavailable for an unknown reason")
             }
         }
-        #else
-        print("[DIAGNOSTICS] FoundationModels framework not available on this build target.")
-        #endif
     }
 
     // MARK: - Feedback categories
@@ -107,8 +94,6 @@ enum JarvisDiagnostics {
         case didNotFollowIntent // model ignored or misunderstood the instruction
         case toolCallLoop       // model called tools repeatedly without resolving
 
-        #if canImport(FoundationModels)
-        @available(macOS 26.0, *)
         var toFoundationModels: LanguageModelFeedback.Issue.Category {
             switch self {
             case .modelError:         return .incorrect
@@ -118,21 +103,6 @@ enum JarvisDiagnostics {
             case .toolCallLoop:       return .unhelpful
             }
         }
-        #endif
     }
 }
-
-// MARK: - Integrate diagnostics into SottoIntelligence error handling
-
-extension SottoIntelligence {
-    /// Call after a successful polish/completion to submit positive feedback,
-    /// helping Apple tune the on-device model for dictation polish patterns.
-    @available(macOS 26.0, *)
-    func submitPositiveFeedback(for session: AnyObject, input: String) {
-        Task.detached(priority: .background) {
-            JarvisDiagnostics.recordPositive(session: session, input: input)
-        }
-    }
-}
-
 

@@ -1,8 +1,5 @@
 import AppKit
 import Foundation
-#if canImport(FoundationModels)
-import FoundationModels
-#endif
 
 // MARK: - ClipboardObserver
 //

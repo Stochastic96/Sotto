@@ -3,7 +3,7 @@ import CoreWLAN
 import IOKit.ps
 
 struct SystemDiagnostics {
-    
+
     // --- Wifi SSID ---
     static func getWifiSSID() -> String {
         let client = CWInterface()
@@ -68,7 +68,10 @@ struct SystemDiagnostics {
             return RAMStat(totalGB: totalGB, freeGB: 0, usedPercent: 0, wiredGB: 0, activeGB: 0, compressedGB: 0)
         }
         
-        let pageSize = Double(vm_kernel_page_size)
+        // getpagesize() (POSIX, thread-safe function call) rather than reading the
+        // mutable C global `vm_kernel_page_size` directly — equivalent on Apple
+        // Silicon and avoids a Swift 6 strict-concurrency global-mutable-state error.
+        let pageSize = Double(getpagesize())
         let freePages = Double(stats.free_count + stats.speculative_count)
         let freeGB = (freePages * pageSize) / (1024.0 * 1024.0 * 1024.0)
         let wiredGB = (Double(stats.wire_count) * pageSize) / (1024.0 * 1024.0 * 1024.0)

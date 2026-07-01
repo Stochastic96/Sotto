@@ -38,6 +38,7 @@ final class AudioRecorder: @unchecked Sendable, AudioCapturing {
     var currentRMS: Float {
         lock.withLock { _currentRMS }
     }
+    private var configChangeObserver: NSObjectProtocol?
 
     private let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
@@ -45,6 +46,39 @@ final class AudioRecorder: @unchecked Sendable, AudioCapturing {
         channels: 1,
         interleaved: false
     )!
+
+    init() {
+        observeAudioRouteChanges()
+    }
+
+    deinit {
+        if let obs = configChangeObserver {
+            NotificationCenter.default.removeObserver(obs)
+        }
+    }
+
+    // When a speaker or headphone is connected/disconnected, AVAudioEngine's internal
+    // hardware state becomes invalid. If we don't reset before the next start(), the
+    // engine crashes. Observing AVAudioEngineConfigurationChange lets us tear down the
+    // stale state safely between recordings.
+    private func observeAudioRouteChanges() {
+        configChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            print("[AUDIO] Hardware route changed — invalidating cached audio config.")
+            if self.engine.isRunning {
+                self.engine.inputNode.removeTap(onBus: 0)
+                self.engine.stop()
+            }
+            // Discard stale device ID and converter; they'll be rebuilt on next start().
+            self.cachedBuiltInMicID = nil
+            self.cachedConverter = nil
+            self.cachedHwFormat = nil
+        }
+    }
 
     func onSilenceDetected(_ handler: @escaping () -> Void) {
         self.silenceDetectedHandler = handler

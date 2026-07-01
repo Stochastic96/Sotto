@@ -1,9 +1,7 @@
 import Foundation
 import AppKit
 import EventKit
-#if canImport(FoundationModels)
 import FoundationModels
-#endif
 
 // MARK: - MorningBriefTool
 //
@@ -18,8 +16,6 @@ import FoundationModels
 //
 // Registration: add MorningBriefTool() to JarvisToolbox.all() in JarvisTools.swift.
 
-#if canImport(FoundationModels)
-@available(macOS 26.0, *)
 struct MorningBriefTool: Tool {
     let name = "morning_brief"
     let description = "Deliver a spoken morning brief: today's calendar events, reminders, battery state, weather, and recent tasks. Takes no arguments."
@@ -35,14 +31,20 @@ struct MorningBriefTool: Tool {
 
     // MARK: - call
 
-    func call(arguments: Arguments) async throws -> String {
-        // One EKEventStore per invocation — EKEventStore is not Sendable, so we keep it
-        // local and pass it explicitly to avoid data races when async let fans out.
+    // EKEventStore isn't Sendable-audited by the SDK, but Apple documents it as
+    // safe for concurrent read access; box it so `async let` can fan out to both
+    // fetch functions below without tripping Swift 6 region isolation.
+    private final class EventStoreBox: @unchecked Sendable {
         let store = EKEventStore()
+    }
+
+    func call(arguments: Arguments) async throws -> String {
+        // One EKEventStore per invocation, boxed for the reason above.
+        let storeBox = EventStoreBox()
 
         // ── 1. Gather all data concurrently ───────────────────────────────────
-        async let calendarText  = fetchCalendarEvents(store: store)
-        async let remindersText = fetchReminders(store: store)
+        async let calendarText  = fetchCalendarEvents(storeBox: storeBox)
+        async let remindersText = fetchReminders(storeBox: storeBox)
         async let weatherText   = fetchWeather()
 
         let calendar  = await calendarText
@@ -102,7 +104,8 @@ struct MorningBriefTool: Tool {
 
     // MARK: - EventKit helpers
 
-    private func fetchCalendarEvents(store: EKEventStore) async -> String {
+    private func fetchCalendarEvents(storeBox: EventStoreBox) async -> String {
+        let store = storeBox.store
         guard (try? await store.requestFullAccessToEvents()) == true else {
             return "calendar access denied"
         }
@@ -127,7 +130,8 @@ struct MorningBriefTool: Tool {
         return lines.joined(separator: "; ")
     }
 
-    private func fetchReminders(store: EKEventStore) async -> String {
+    private func fetchReminders(storeBox: EventStoreBox) async -> String {
+        let store = storeBox.store
         guard (try? await store.requestFullAccessToReminders()) == true else {
             return "reminders access denied"
         }
@@ -160,4 +164,3 @@ struct MorningBriefTool: Tool {
         return "weather unavailable"
     }
 }
-#endif

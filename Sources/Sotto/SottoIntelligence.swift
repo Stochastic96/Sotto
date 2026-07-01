@@ -1,8 +1,6 @@
 import Foundation
 import SottoCore
-#if canImport(FoundationModels)
 import FoundationModels
-#endif
 
 // MARK: - IntelligenceEngine Protocol
 
@@ -58,6 +56,10 @@ actor SottoIntelligence: IntelligenceEngine {
     // @available on a stored property (Swift restriction). Re-cast inside guarded methods.
     private var polishSession: AnyObject?
     private var polishTurnCount = 0
+    // Instructions the cached polishSession was actually built with — lets
+    // getOrCreatePolishSession() detect a live change to the user's custom prompt
+    // (Settings ▸ Custom Instructions) and rebuild rather than serving a stale session.
+    private var polishInstructions: String = SottoIntelligence.instructions
 
     // Cached hot-path values — avoids a UserDefaults read + JSON decode on every refine() call.
     // Invalidated by refreshUserCaches() whenever the underlying defaults change.
@@ -102,15 +104,15 @@ actor SottoIntelligence: IntelligenceEngine {
     /// Prewarm the dedicated polish session at launch — zero cold-start cost on first dictation.
     func preload() async {
         refreshUserCaches()
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *), SystemLanguageModel.default.isAvailable {
-            let session = LanguageModelSession(instructions: Self.instructions)
+        if SystemLanguageModel.default.isAvailable {
+            let instructions = Self.currentInstructions()
+            let session = LanguageModelSession(instructions: instructions)
             session.prewarm()
             polishSession = session
             polishTurnCount = 0
+            polishInstructions = instructions
             print("[INTELLIGENCE] Polish session prewarmed.")
         }
-        #endif
         onStatus(.ready)
     }
 
@@ -122,21 +124,29 @@ actor SottoIntelligence: IntelligenceEngine {
 
     // MARK: - Session management
 
-    #if canImport(FoundationModels)
-    /// Returns the warm polish session, recreating it after 12 turns to bound transcript growth.
-    @available(macOS 26.0, *)
+    /// The active polish instructions: the user's custom prompt (Settings ▸ Custom
+    /// Instructions) if set, otherwise the built-in default.
+    private static func currentInstructions() -> String {
+        let custom = SettingsController.customSystemPrompt
+        return custom.isEmpty ? Self.instructions : custom
+    }
+
+    /// Returns the warm polish session, recreating it after 12 turns (to bound transcript
+    /// growth) or immediately if the user's custom instructions changed since it was built.
     private func getOrCreatePolishSession() -> LanguageModelSession {
-        if let session = polishSession as? LanguageModelSession, polishTurnCount < 12 {
+        let instructions = Self.currentInstructions()
+        if let session = polishSession as? LanguageModelSession,
+           polishTurnCount < 12, polishInstructions == instructions {
             polishTurnCount += 1
             return session
         }
-        let session = LanguageModelSession(instructions: Self.instructions)
+        let session = LanguageModelSession(instructions: instructions)
         session.prewarm()
         polishSession = session
         polishTurnCount = 1
+        polishInstructions = instructions
         return session
     }
-    #endif
 
     // MARK: - Core respond helper
 
@@ -154,43 +164,35 @@ actor SottoIntelligence: IntelligenceEngine {
         maxTokens: Int,
         onProgress: (@Sendable @MainActor (String) -> Void)? = nil
     ) async throws -> String {
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
-            guard let lmSession = session as? LanguageModelSession else {
-                throw NSError(domain: "SottoApple", code: -14,
-                              userInfo: [NSLocalizedDescriptionKey: "Internal: session type mismatch."])
-            }
-            let genOptions = GenerationOptions(temperature: temperature, maximumResponseTokens: maxTokens)
-            do {
-                if let onProgress {
-                    // Stream snapshots — each element is the FULL accumulated text so far.
-                    // Plain streamResponse (no ContextOptions) works on all Apple Silicon.
-                    let stream = lmSession.streamResponse(to: prompt, options: genOptions)
-                    var lastText = ""
-                    for try await snapshot in stream {
-                        let text = snapshot.content
-                        lastText = text
-                        let cleaned = Self.cleanup(text)
-                        if !cleaned.isEmpty { await onProgress(cleaned) }
-                    }
-                    return lastText
-                } else {
-                    return try await lmSession.respond(to: prompt, options: genOptions).content
-                }
-            } catch let genErr as LanguageModelSession.GenerationError {
-                throw Self.mapGenerationError(genErr)
-            } catch {
-                // Propagate LanguageModelError (rate-limit, assetsUnavailable, etc.) as-is.
-                throw error
-            }
+        guard let lmSession = session as? LanguageModelSession else {
+            throw NSError(domain: "SottoApple", code: -14,
+                          userInfo: [NSLocalizedDescriptionKey: "Internal: session type mismatch."])
         }
-        #endif
-        throw NSError(domain: "SottoApple", code: -13,
-                      userInfo: [NSLocalizedDescriptionKey: "Apple Intelligence requires macOS 26 or later."])
+        let genOptions = GenerationOptions(temperature: temperature, maximumResponseTokens: maxTokens)
+        do {
+            if let onProgress {
+                // Stream snapshots — each element is the FULL accumulated text so far.
+                // Plain streamResponse (no ContextOptions) works on all Apple Silicon.
+                let stream = lmSession.streamResponse(to: prompt, options: genOptions)
+                var lastText = ""
+                for try await snapshot in stream {
+                    let text = snapshot.content
+                    lastText = text
+                    let cleaned = Self.cleanup(text)
+                    if !cleaned.isEmpty { await onProgress(cleaned) }
+                }
+                return lastText
+            } else {
+                return try await lmSession.respond(to: prompt, options: genOptions).content
+            }
+        } catch let genErr as LanguageModelError {
+            throw Self.mapGenerationError(genErr)
+        } catch {
+            // Propagate LanguageModelError (rate-limit, assetsUnavailable, etc.) as-is.
+            throw error
+        }
     }
 
-    #if canImport(FoundationModels)
-    @available(macOS 26.0, *)
     private static func assertAppleAvailable() throws {
         switch SystemLanguageModel.default.availability {
         case .available:
@@ -207,70 +209,32 @@ actor SottoIntelligence: IntelligenceEngine {
         }
     }
 
-    @available(macOS 26.0, *)
-    private static func mapGenerationError(_ genErr: LanguageModelSession.GenerationError) -> NSError {
+    /// Maps the macOS 27 unified `LanguageModelError` to a user-facing message.
+    private static func mapGenerationError(_ genErr: LanguageModelError) -> NSError {
         let message: String
         switch genErr {
-        case .exceededContextWindowSize:
+        case .contextSizeExceeded:
             message = "prompt exceeds the on-device context window limit."
+        case .rateLimited:
+            message = "Apple Intelligence is rate-limiting requests right now."
         case .guardrailViolation:
             message = "Apple Intelligence safety guardrails blocked this content."
+        case .refusal:
+            message = "the model declined to respond to this request."
+        case .unsupportedCapability(let detail):
+            message = "this request needs a capability the on-device model doesn't declare (\(detail.capability))."
+        case .unsupportedTranscriptContent:
+            message = "the conversation contains content the model can't process."
+        case .unsupportedGenerationGuide:
+            message = "the requested output format isn't supported."
         case .unsupportedLanguageOrLocale:
             message = "the on-device model doesn't support this language."
-        default:
+        case .timeout:
+            message = "the on-device model timed out."
+        @unknown default:
             message = genErr.localizedDescription
         }
         return NSError(domain: "SottoApple", code: -12, userInfo: [NSLocalizedDescriptionKey: "Apple Intelligence: \(message)"])
-    }
-    #endif
-
-    // MARK: - MLX Qwen fallback
-
-    /// Generate via the warm in-process MLX Qwen engine, or nil if it isn't usable.
-    private func mlxFallback(
-        system: String,
-        user: String,
-        temperature: Double,
-        maxTokens: Int,
-        onProgress: (@Sendable @MainActor (String) -> Void)? = nil
-    ) async -> String? {
-        #if SOTTO_MLX
-        guard await MLXEngine.shared.prepareIfNeeded() else { return nil }
-        return try? await MLXEngine.shared.generate(
-            systemPrompt: system, userPrompt: user,
-            temperature: Float(temperature), maxTokens: maxTokens,
-            onProgress: onProgress)
-        #else
-        return nil
-        #endif
-    }
-
-    private func mlxFallbackRefine(
-        system: String,
-        text: String,
-        context: AppContext,
-        temperature: Double,
-        maxTokens: Int,
-        onProgress: (@Sendable @MainActor (String) -> Void)? = nil
-    ) async -> String? {
-        #if SOTTO_MLX
-        guard await MLXEngine.shared.prepareIfNeeded() else { return nil }
-        
-        var history: [(user: String, assistant: String)] = []
-        history.append(("um so like we should probably merge this branch immediately", "We should probably merge this branch immediately"))
-        history.append(("actually i think the code is correct but uh we need to check the logs first", "Actually, I think the code is correct, but we need to check the logs first"))
-        history.append(("well uh the total memory is like 8 gigabytes on my mac", "The total memory is 8 gigabytes on my mac"))
-        
-        return try? await MLXEngine.shared.generate(
-            systemPrompt: system,
-            userPrompt: text,
-            history: history,
-            temperature: Float(temperature),
-            maxTokens: maxTokens,
-            onProgress: onProgress)
-        #else
-        return nil
-        #endif
     }
 
     // MARK: - Public API
@@ -279,17 +243,9 @@ actor SottoIntelligence: IntelligenceEngine {
     /// Always uses a FRESH session — never touches the prewarmed polish session.
     /// This prevents cross-contamination between the polish transcript and other prompts.
     func getCompletion(systemPrompt: String, userPrompt: String, temperature: Double = 0.5, maxTokens: Int = 800) async throws -> String {
-        if let mlx = await mlxFallback(system: systemPrompt, user: userPrompt, temperature: temperature, maxTokens: maxTokens) {
-            return mlx
-        }
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
-            try Self.assertAppleAvailable()
-            let freshSession = LanguageModelSession(instructions: systemPrompt)
-            return try await appleRespond(session: freshSession, prompt: userPrompt, temperature: temperature, maxTokens: maxTokens)
-        }
-        #endif
-        throw NSError(domain: "SottoApple", code: -13, userInfo: [NSLocalizedDescriptionKey: "Apple Intelligence requires macOS 26 or later."])
+        try Self.assertAppleAvailable()
+        let freshSession = LanguageModelSession(instructions: systemPrompt)
+        return try await appleRespond(session: freshSession, prompt: userPrompt, temperature: temperature, maxTokens: maxTokens)
     }
 
     /// Hot path: polish a dictated utterance using the dedicated prewarmed polish session.
@@ -354,33 +310,11 @@ actor SottoIntelligence: IntelligenceEngine {
         // Calculate maxTokens dynamically based on input word count so long speech is not truncated.
         let dynamicMaxTokens = min(1200, max(300, Int(Double(wordCount) * 1.5)))
 
-        // Run on the small in-process MLX Qwen (0.5B) FIRST
-        let custom = SettingsController.customSystemPrompt
-        let instructions = custom.isEmpty ? Self.instructions : custom
-        print("[POLISH] Attempting polish via MLX Qwen...")
-        if let mlx = await mlxFallbackRefine(
-            system: instructions,
-            text: text,
-            context: context,
-            temperature: 0.3,
-            maxTokens: dynamicMaxTokens,
-            onProgress: onProgress
-        ) {
-            print("[POLISH] Polish succeeded via MLX Qwen.")
-            return finalize(mlx, fallback: text)
-        }
-
         // Use the dedicated prewarmed polish session. On any failure, return the raw
         // transcript so dictation is never silently lost.
         do {
-            #if canImport(FoundationModels)
-            guard #available(macOS 26.0, *) else {
-                print("[POLISH] MLX failed/unavailable and Apple Intelligence is unavailable on this macOS version. Returning raw text.")
-                return text
-            }
             try Self.assertAppleAvailable()
             let session = getOrCreatePolishSession()
-            print("[POLISH] MLX failed/unavailable. Falling back to Apple Intelligence...")
             let reply = try await appleRespond(
                 session: session,
                 prompt: buildPrompt(includeExamples: true),
@@ -389,9 +323,6 @@ actor SottoIntelligence: IntelligenceEngine {
                 onProgress: onProgress
             )
             return finalize(reply, fallback: text)
-            #else
-            return text
-            #endif
         } catch {
             print("[POLISH] Apple Intelligence polish failed (\(error.localizedDescription)); returning raw transcript.")
             onStatus(.failed("Polish unavailable: \(error.localizedDescription)"))

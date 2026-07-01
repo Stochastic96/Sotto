@@ -90,12 +90,12 @@ extension AppController {
         // 4. Native Apple Intelligence agent (tool calling) — the catch-all brain.
         var agentError: Error? = nil
         if SettingsController.apiProvider.lowercased() == "apple",
-           #available(macOS 26.0, *), JarvisAgent.isAvailable() {
+           JarvisAgent.isAvailable() {
             state = .polishing
             hud.show("✨  Jarvis…")
             do {
                 let reply: String
-                if let coord = self.coordinator as? CoordinatorAgent {
+                if let coord = self.coordinator {
                     reply = Self.sanitizeReply(try await coord.handleTurn(userInput: raw))
                 } else {
                     reply = Self.sanitizeReply(try await JarvisAgent.run(raw))
@@ -187,7 +187,7 @@ extension AppController {
     /// Continues the Jarvis session with the user's answer to a clarifying question, reusing
     /// the same multi-turn transcript so prior context is preserved.
     func continueClarification(answer: String, samples: [Float]) async {
-        guard #available(macOS 26.0, *), let coord = self.coordinator as? CoordinatorAgent else {
+        guard let coord = self.coordinator else {
             state = .idle; hud.hide(); return
         }
         state = .polishing
@@ -215,7 +215,7 @@ extension AppController {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return "What would you like me to do?" }
         print("[INTENT] Jarvis request (App Intents/Shortcuts): '\(clean)'")
-        if #available(macOS 26.0, *), let coord = self.coordinator as? CoordinatorAgent {
+        if let coord = self.coordinator {
             do {
                 let reply = Self.sanitizeReply(try await coord.handleTurn(userInput: clean))
                 DatasetLogger.shared.log(mode: "jarvis-intent", app: nil, rawTranscript: clean, response: reply, kind: "agent", samples: nil)
@@ -383,13 +383,12 @@ extension AppController {
         // External commands (sotto:// URL scheme) run through the native Apple agent.
         if !processedText.isEmpty,
            SettingsController.apiProvider.lowercased() == "apple",
-           #available(macOS 26.0, *),
            JarvisAgent.isAvailable() {
             self.state = .polishing
             self.hud.show("✨  Jarvis…")
             do {
                 let reply: String
-                if let coord = self.coordinator as? CoordinatorAgent {
+                if let coord = self.coordinator {
                     reply = Self.sanitizeReply(try await coord.handleTurn(userInput: processedText))
                 } else {
                     reply = Self.sanitizeReply(try await JarvisAgent.run(processedText))
