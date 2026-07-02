@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 import AppKit
 import os
@@ -419,3 +420,4 @@ public enum JarvisEvaluation {
         print("---------------------------------")
     }
 }
+#endif

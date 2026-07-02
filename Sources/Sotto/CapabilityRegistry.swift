@@ -165,7 +165,6 @@ extension CapabilityRegistry {
 
             // ── Spotlight tier (instant, 0 tokens, 0 AI) ──────────────────────
             .init(name: "spotlight_search_files", description: "Search files using Spotlight", keywords: ["search","find","file","document","where","locate","look"], latencyMs: 50, tier: .reflex, requiresNetwork: false),
-            .init(name: "open_spotlight_result",  description: "Find and open a file by name",  keywords: ["open","find","file","document"],                           latencyMs: 100, tier: .reflex),
 
             // ── App launch is a pure NSWorkspace call — reflex tier, 0 tokens. ──
             // Low latency so the cheapest-path tiebreak picks it over the Spotlight

@@ -1,6 +1,21 @@
 import Foundation
 import FoundationModels
 
+@Generable
+public struct TurnOutcome: Sendable {
+    @Guide(description: "A final response or answer to the user's request. Choose this when you can fulfill the user's intent or have performed the actions. Leave empty if clarifying.")
+    public let reply: String?
+    
+    @Guide(description: "A clarifying question to the user. Choose this when you are genuinely unsure and need to ask the user a question before proceeding. Leave empty if you can reply.")
+    public let clarifyingQuestion: String?
+}
+
+@Generable
+public struct SwiftScript: Sendable {
+    @Guide(description: "The complete, valid, compiling raw Swift script body. Do NOT wrap in markdown code fences or include explanations. Only the Swift code itself.")
+    public let code: String
+}
+
 // MARK: - Delegation Tools
 
 struct DelegateOSControlTool: Tool {
@@ -119,21 +134,16 @@ public actor CoordinatorAgent {
     // multi-turn transcript. Actor isolation replaces the need for explicit locking.
     private var session: LanguageModelSession?
 
+    /// Shared instance — used by `MicrotaskQueue` and `AppController` so background tasks
+    /// don't each pay a fresh session-init cost.
+    public static let shared = CoordinatorAgent()
     public init() {}
 
-    /// Warm a session at launch so the first Jarvis command has no cold-start penalty.
-    /// Mirrors JarvisAgent.prewarm() — one prewarm per session-type is sufficient.
+    /// Bootstrap the CommandLearner hint cache. The plain-session prewarm was removed:
+    /// actual turns use `LanguageModelSession(profile:)`, not a bare session, so warming
+    /// a plain session wastes ANE time and contributes to CriticalMemoryPressure bursts.
     public static func prewarm() {
-        // Bootstrap CommandLearner so hint cache is warm before the first Jarvis turn.
         Task { await CommandLearner.shared.bootstrap() }
-        Task {
-            guard SystemLanguageModel.default.isAvailable else { return }
-            LanguageModelSession().prewarm()
-            try? await Task.sleep(for: .seconds(30))
-            guard SystemLanguageModel.default.isAvailable else { return }
-            LanguageModelSession().prewarm()
-            print("[COORDINATOR] Prewarmed Apple Intelligence session.")
-        }
     }
 
     /// Persona + guardrails (shared with `JarvisAgent`) plus the lane guidance, the learned
@@ -192,8 +202,12 @@ public actor CoordinatorAgent {
 
         // Follow-up answer to a clarifying question: continue the SAME session.
         if isFollowUp, let session = self.session {
-            let response = try await session.respond(to: userInput, options: GenerationOptions(temperature: 0.3))
-            return response.content
+            let response = try await session.respond(to: userInput, generating: TurnOutcome.self, options: GenerationOptions(temperature: 0.3))
+            let outcome = response.content
+            if let question = outcome.clarifyingQuestion, !question.isEmpty {
+                return kClarificationPrefix + " " + question
+            }
+            return outcome.reply ?? ""
         }
 
         let conversation = await ConversationMemory.shared.digest()
@@ -212,9 +226,10 @@ public actor CoordinatorAgent {
             // cycle limit — without maximumResponseTokens AND a timeout, a model with no
             // city for get_weather can loop asking for clarification indefinitely.
             let opts = GenerationOptions(temperature: 0.3, maximumResponseTokens: 512)
-            let reply: String = try await withThrowingTaskGroup(of: String.self) { group in
+            let outcome: TurnOutcome = try await withThrowingTaskGroup(of: TurnOutcome.self) { group in
                 group.addTask {
-                    try await session.respond(to: userInput, options: opts).content
+                    let res = try await session.respond(to: userInput, generating: TurnOutcome.self, options: opts)
+                    return res.content
                 }
                 group.addTask {
                     try await Task.sleep(for: .seconds(40))
@@ -228,11 +243,19 @@ public actor CoordinatorAgent {
                 group.cancelAll()
                 return result
             }
+            let reply: String
+            if let question = outcome.clarifyingQuestion, !question.isEmpty {
+                reply = kClarificationPrefix + " " + question
+            } else {
+                reply = outcome.reply ?? ""
+            }
             let toolHint = CommandLearner.inferTool(from: reply)
             Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
             return reply
         } catch {
             print("[COORDINATOR] DynamicProfile failed (\(error.localizedDescription)); retrying tool-free.")
+            self.session = nil
+            await Task.yield()
             // Log feedback for DynamicProfile failures so Apple can improve model stability.
             JarvisDiagnostics.record(
                 session: self.session,
@@ -246,7 +269,14 @@ public actor CoordinatorAgent {
             // DynamicProfile hiccup or timeout doesn't leave Jarvis silent for the turn.
             let lean = LanguageModelSession(instructions: JarvisAgent.instructions)
             self.session = lean
-            let reply = try await lean.respond(to: userInput, options: GenerationOptions(temperature: 0.3)).content
+            let response = try await lean.respond(to: userInput, generating: TurnOutcome.self, options: GenerationOptions(temperature: 0.3))
+            let outcome = response.content
+            let reply: String
+            if let question = outcome.clarifyingQuestion, !question.isEmpty {
+                reply = kClarificationPrefix + " " + question
+            } else {
+                reply = outcome.reply ?? ""
+            }
             let toolHint = CommandLearner.inferTool(from: reply)
             Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
             return reply
@@ -404,8 +434,8 @@ public actor ScriptingExecutorAgent {
         } else {
             do {
                 let session = getOrCreateSession()
-                let res = try await session.respond(to: task, options: GenerationOptions(temperature: 0.1))
-                response = res.content
+                let res = try await session.respond(to: task, generating: SwiftScript.self, options: GenerationOptions(temperature: 0.1))
+                response = res.content.code
             } catch {
                 return "Scripting Executor Agent generation failed: \(error.localizedDescription)"
             }

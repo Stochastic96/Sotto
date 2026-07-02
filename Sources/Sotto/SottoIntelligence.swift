@@ -97,6 +97,8 @@ actor SottoIntelligence: IntelligenceEngine {
         4. Maintain the original language (English or German).
         5. Do NOT wrap the output in quotes.
         6. Do NOT summarize, truncate, or omit any meaningful content from the input. Keep all original words and facts unless they are disfluencies or filler words.
+        7. Do NOT add any fact, name, number, or claim that was not spoken. Polishing means cleaning up how it was said, never adding what wasn't said.
+        8. For longer dictation covering more than one distinct thought, break it into short paragraphs at natural topic boundaries instead of one run-on block. If the speaker is clearly enumerating items ("first... second... also...", "one, two, three"), format them as a list. Short, single-thought dictation stays a single line — do not force structure onto it.
         """
 
     // MARK: - Lifecycle
@@ -254,7 +256,7 @@ actor SottoIntelligence: IntelligenceEngine {
         switch context.style {
         case .chat: styleHint = "Style: casual chat message, no trailing period."
         case .verbatim: styleHint = "Style: stay as close to the original wording as possible."
-        case .prose: styleHint = "Style: clear written prose."
+        case .prose: styleHint = "Style: clear, professional written prose — the quality of a well-edited email or document, not a raw transcript. Turn run-on spoken sentences into properly punctuated ones. Break distinct thoughts into separate sentences or paragraphs."
         }
 
         var contextBlock = styleHint
@@ -289,6 +291,9 @@ actor SottoIntelligence: IntelligenceEngine {
         
         Input speech: "well uh the total memory is like 8 gigabytes on my mac"
         Polished: "The total memory is 8 gigabytes on my mac"
+
+        Input speech: "so first we need to update the schema and then uh we need to backfill the old rows and then also we should add an index"
+        Polished: "First, we need to update the schema. Then we need to backfill the old rows. We should also add an index."
         """
 
         func buildPrompt(includeExamples: Bool) -> String {

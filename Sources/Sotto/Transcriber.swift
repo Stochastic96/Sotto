@@ -36,9 +36,156 @@ private final class ParakeetBackend: TranscriptionBackend, @unchecked Sendable {
     }
 }
 
-// MARK: - Apple Speech (SFSpeechRecognizer)
+// MARK: - Apple Native Dictation (SpeechAnalyzer / DictationTranscriber, macOS 26+)
 
-private struct AppleSpeechBackend: TranscriptionBackend {
+/// Native on-device dictation via the modern `SpeechAnalyzer` + `DictationTranscriber`
+/// stack — the same engine class Apple's own Dictation and Notes use. Replaces the
+/// legacy `SFSpeechRecognizer` path: no delegate-callback race (the bug the old 8s
+/// watchdog in `LegacyAppleSpeechBackend` existed to paper over), contextual-vocabulary
+/// injection at the ASR layer instead of only post-hoc in the polish prompt, and an
+/// explicit on-device asset install step instead of an implicit one.
+///
+/// Falls back to `LegacyAppleSpeechBackend` if the modern path fails to prepare or
+/// transcribe (e.g. asset install fails without network) — this is the user's daily
+/// dictation driver, so a brand-new OS-beta API gets a safety net rather than a hard
+/// failure.
+private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sendable {
+    // 16 kHz mono — the same fixed capture format AudioRecorder already produces for
+    // Parakeet. `prepareToAnalyze(in:)` tells the analyzer to expect buffers in this
+    // exact format so no extra AnalyzerInputConverter plumbing is needed.
+    private static let format = AVAudioFormat(
+        commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false
+    )!
+
+    private var transcriber: DictationTranscriber?
+    private var analyzer: SpeechAnalyzer?
+    private let legacyFallback = LegacyAppleSpeechBackend()
+    private var useLegacy = false
+
+    func prepare() async throws {
+        let status = SFSpeechRecognizer.authorizationStatus()
+        if status == .notDetermined {
+            let authorized = await withCheckedContinuation { continuation in
+                SFSpeechRecognizer.requestAuthorization { s in
+                    continuation.resume(returning: s == .authorized)
+                }
+            }
+            if !authorized { throw Transcriber.TranscriberError.permissionDenied }
+        } else if status != .authorized {
+            throw Transcriber.TranscriberError.permissionDenied
+        }
+
+        guard transcriber == nil else { return }
+
+        do {
+            let resolved = await DictationTranscriber.supportedLocale(equivalentTo: .current)
+                ?? Locale(identifier: "en-US")
+            let t = DictationTranscriber(locale: resolved, preset: .longDictation)
+
+            if await AssetInventory.status(forModules: [t]) != .installed {
+                print("[TRANSCRIBER] Installing on-device dictation model for \(resolved.identifier)…")
+                if let request = try await AssetInventory.assetInstallationRequest(supporting: [t]) {
+                    try await request.downloadAndInstall()
+                }
+            }
+
+            let a = SpeechAnalyzer(
+                modules: [t],
+                options: .init(priority: .userInitiated, modelRetention: .lingering)
+            )
+            try await a.prepareToAnalyze(in: Self.format)
+
+            self.transcriber = t
+            self.analyzer = a
+            self.useLegacy = false
+            print("[TRANSCRIBER] Native DictationTranscriber ready (\(resolved.identifier)).")
+        } catch {
+            print("[TRANSCRIBER] Native dictation unavailable (\(error.localizedDescription)); falling back to legacy Apple Speech.")
+            useLegacy = true
+            try await legacyFallback.prepare()
+        }
+    }
+
+    func transcribe(_ samples: [Float]) async throws -> String {
+        // `prepare()` only runs once at launch (AppController.loadModel), not before every
+        // press — so if a prior transcribe() invalidated the cached analyzer after a
+        // failure, rebuild it here rather than staying permanently degraded to legacy.
+        if !useLegacy, transcriber == nil {
+            try? await prepare()
+        }
+        guard !useLegacy, let transcriber, let analyzer else {
+            return try await legacyFallback.transcribe(samples)
+        }
+
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: Self.format, frameCapacity: AVAudioFrameCount(samples.count)) else {
+            throw Transcriber.TranscriberError.notReady
+        }
+        buffer.frameLength = buffer.frameCapacity
+        if let channel = buffer.floatChannelData {
+            samples.withUnsafeBufferPointer { ptr in
+                guard let base = ptr.baseAddress else { return }
+                channel[0].update(from: base, count: samples.count)
+            }
+        }
+
+        // Contextual vocabulary at the ASR layer — correct spellings land in the
+        // transcript itself instead of relying on the polish prompt to fix them after.
+        let context = AnalysisContext()
+        let vocab = Self.contextualVocabulary()
+        if !vocab.isEmpty { context.contextualStrings[.general] = vocab }
+
+        do {
+            try await analyzer.setContext(context)
+
+            let input = AnalyzerInput(buffer: buffer)
+            let stream = AsyncStream<AnalyzerInput> { continuation in
+                continuation.yield(input)
+                continuation.finish()
+            }
+
+            async let collected: String = {
+                var finalText = ""
+                for try await result in transcriber.results where result.isFinal {
+                    finalText += String(result.text.characters)
+                }
+                return finalText
+            }()
+
+            _ = try await analyzer.analyzeSequence(stream)
+            try await analyzer.finalizeAndFinishThroughEndOfInput()
+
+            return try await collected
+        } catch {
+            print("[TRANSCRIBER] Native dictation transcribe failed (\(error.localizedDescription)); falling back to legacy Apple Speech for this utterance and invalidating the cached analyzer so the next press rebuilds it fresh.")
+            // Don't set useLegacy = true here — that's reserved for a structurally
+            // unavailable modern path (permission/asset failure in prepare()). A transcribe-
+            // level failure gets a clean rebuild attempt on the next press instead of
+            // permanently degrading every future dictation to the legacy path.
+            self.transcriber = nil
+            self.analyzer = nil
+            try? await legacyFallback.prepare()
+            return try await legacyFallback.transcribe(samples)
+        }
+    }
+
+    /// Custom vocabulary (Settings) + learned jargon, same sources `SottoIntelligence`
+    /// injects into the polish prompt — fed here too so ASR gets them right at the source.
+    private static func contextualVocabulary() -> [String] {
+        let custom = SettingsController.customVocabulary
+            .components(separatedBy: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let learned = UserDefaults.standard.stringArray(forKey: "sotto_learned_vocabulary") ?? []
+        return Array(Set(custom + learned)).prefix(100).map { $0 }
+    }
+}
+
+// MARK: - Legacy Apple Speech (SFSpeechRecognizer) — fallback only
+
+/// Kept as the safety net `NativeDictationBackend` falls back to, and to keep
+/// `LegacyAppleSpeechBackend` buildable standalone if the modern stack ever needs
+/// bypassing entirely. Not user-selectable on its own.
+private struct LegacyAppleSpeechBackend: TranscriptionBackend {
     func prepare() async throws {
         let status = SFSpeechRecognizer.authorizationStatus()
         guard status != .authorized else { return }
@@ -159,6 +306,9 @@ actor Transcriber {
     private var activeBackend: (any TranscriptionBackend)?
     // Cached so switching back to .offlineAI doesn't re-download the model.
     private var parakeetBackend: ParakeetBackend?
+    // Cached so repeated dictation presses reuse the warm, `.lingering`-retained
+    // SpeechAnalyzer/DictationTranscriber instead of re-installing the asset each time.
+    private var nativeDictationBackend: NativeDictationBackend?
 
     func prepare() async throws {
         let setting = SettingsController.transcriptionEngine
@@ -179,10 +329,13 @@ actor Transcriber {
         case .offlineAI:
             let backend = parakeetBackend ?? ParakeetBackend()
             parakeetBackend = backend
+            nativeDictationBackend = nil  // release the lingering model when switching away
             return backend
         case .appleSpeech:
             parakeetBackend = nil  // release model weights when switching away
-            return AppleSpeechBackend()
+            let backend = nativeDictationBackend ?? NativeDictationBackend()
+            nativeDictationBackend = backend
+            return backend
         }
     }
 }

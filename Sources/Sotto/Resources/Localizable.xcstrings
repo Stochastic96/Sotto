@@ -2,12 +2,12 @@
   "sourceLanguage" : "en",
   "strings" : {
     "engine.appleSpeech" : {
-      "comment" : "Display name for Apple's built-in Siri dictation engine",
+      "comment" : "Display name for Apple's native on-device SpeechAnalyzer/DictationTranscriber engine",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Apple Native Dictation (Siri)"
+            "value" : "Apple Native Dictation (on-device)"
           }
         }
       }

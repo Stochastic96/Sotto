@@ -31,7 +31,6 @@ struct SottoApp {
             }
             exit(testSuccess ? 0 : 1)
         }
-        #endif
 
         if CommandLine.arguments.contains("--evaluate") || CommandLine.arguments.contains("--run-evaluation") {
             var finished = false
@@ -46,6 +45,7 @@ struct SottoApp {
             }
             exit(success ? 0 : 1)
         }
+        #endif
 
         // AppKit app loop runs on MainActor/MainThread
         let app = NSApplication.shared

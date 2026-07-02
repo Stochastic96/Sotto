@@ -4,9 +4,6 @@ import FoundationModels
 
 // SpotlightSearchTool — instant file/app/document search via macOS Spotlight
 // (mdfind CLI). Zero tokens, zero AI calls — results in ~50 ms.
-//
-// OpenSpotlightResultTool — finds the first Spotlight match and opens it
-// with NSWorkspace, so the user never has to type a path.
 
 // ── Shared process helper ─────────────────────────────────────────────────
 
@@ -65,45 +62,6 @@ struct SpotlightSearchTool: Tool {
         let capped = Array(paths.prefix(limit))
         let lines  = capped.map { "- \($0)" }.joined(separator: "\n")
         return "Found \(capped.count) file\(capped.count == 1 ? "" : "s"):\n\(lines)"
-    }
-}
-
-// ── OpenSpotlightResultTool ───────────────────────────────────────────────
-
-struct OpenSpotlightResultTool: Tool {
-    let name = "open_spotlight_result"
-    let description = "Find the first Spotlight match for a query and open it with the system default application. Combines search + open in one step."
-
-    @Generable
-    struct Arguments {
-        @Guide(description: "Search query to find the file to open, e.g. 'Budget 2024.xlsx' or 'Xcode'")
-        let query: String
-    }
-
-    func call(arguments: Arguments) async throws -> String {
-        let query = arguments.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else {
-            return "Error: query must not be empty."
-        }
-
-        // Try filename match first for precision, then full metadata search.
-        var raw = runProcess("/usr/bin/mdfind", ["-name", query])
-        if raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            raw = runProcess("/usr/bin/mdfind", [query])
-        }
-
-        let firstResult = raw
-            .components(separatedBy: "\n")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .first { !$0.isEmpty }
-
-        guard let path = firstResult else {
-            return "Not found: \(query)"
-        }
-
-        let url = URL(fileURLWithPath: path)
-        NSWorkspace.shared.open(url)
-        return "Opened: \(path)"
     }
 }
 

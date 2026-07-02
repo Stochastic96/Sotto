@@ -10,7 +10,7 @@ enum TranscriptionEngine: String, CaseIterable {
     var displayName: String {
         switch self {
         case .offlineAI: return String(localized: "engine.offlineAI", defaultValue: "Offline AI (Parakeet ANE)", bundle: .module)
-        case .appleSpeech: return String(localized: "engine.appleSpeech", defaultValue: "Apple Native Dictation (Siri)", bundle: .module)
+        case .appleSpeech: return String(localized: "engine.appleSpeech", defaultValue: "Apple Native Dictation (on-device)", bundle: .module)
         }
     }
 }

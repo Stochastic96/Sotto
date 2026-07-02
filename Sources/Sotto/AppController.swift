@@ -42,6 +42,7 @@ import SottoCore
     var appActivity: NSObjectProtocol?
     var coordinator: CoordinatorAgent?
     private var recordingTimeoutTask: Task<Void, Never>?
+    private var memoryPressureSource: (any DispatchSourceMemoryPressure)?
 
     enum Mode {
         case dictation
@@ -366,6 +367,7 @@ import SottoCore
         )
         self.hotkey = listener
         listener.start()
+        setupMemoryPressureObserver()
 
         Task { @MainActor in
             await self.loadModel()
@@ -622,6 +624,26 @@ import SottoCore
                 wakeDetector.stop()
             }
         }
+    }
+
+    private func setupMemoryPressureObserver() {
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        source.setEventHandler { [weak self] in
+            let event = source.data
+            print("[SYSTEM-MEMORY] OS warned of memory pressure: \(event)")
+            Task {
+                await OSControlAgent.shared.unload()
+                await WebResearcherAgent.shared.unload()
+                await ScriptingExecutorAgent.shared.unload()
+                if let intel = self?.intelligence {
+                    if event.contains(.critical) {
+                        await intel.forceUnload()
+                    }
+                }
+            }
+        }
+        source.resume()
+        self.memoryPressureSource = source
     }
 }
 
