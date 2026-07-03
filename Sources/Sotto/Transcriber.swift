@@ -74,6 +74,11 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
 
     private var transcriber: DictationTranscriber?
     private var analyzer: SpeechAnalyzer?
+    // The format the analyzer's module actually accepts. The Speech framework does NO audio
+    // conversion and preconditions on the module's required sample type (DictationTranscriber
+    // wants 16-bit Int PCM, not the recorder's Float32), so every buffer is converted to this
+    // before it's wrapped in an AnalyzerInput. Resolved via bestAvailableAudioFormat.
+    private var analyzerFormat: AVAudioFormat?
     private let legacyFallback = LegacyAppleSpeechBackend()
     private var useLegacy = false
 
@@ -104,22 +109,53 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
                 }
             }
 
+            // Ask the module which format it can analyze; fall back to the capture format
+            // only if the query fails (assets missing) — feeding an unsupported format trips
+            // a "sample data must be 16-bit signed integers" precondition inside the analyzer.
+            let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [t]) ?? Self.format
             let a = SpeechAnalyzer(
                 modules: [t],
                 options: .init(priority: .userInitiated, modelRetention: .lingering)
             )
-            try await a.prepareToAnalyze(in: Self.format)
+            try await a.prepareToAnalyze(in: format)
 
             self.transcriber = t
             self.analyzer = a
+            self.analyzerFormat = format
             self.useLegacy = false
-            print("[TRANSCRIBER] Native DictationTranscriber ready (\(resolved.identifier)).")
+            print("[TRANSCRIBER] Native DictationTranscriber ready (\(resolved.identifier), format: \(format.commonFormat.rawValue)@\(Int(format.sampleRate))Hz).")
         } catch {
             print("[TRANSCRIBER] Native dictation unavailable (\(error.localizedDescription)); falling back to legacy Apple Speech.")
             useLegacy = true
             try await legacyFallback.prepare()
         }
      }
+
+    // MARK: - Format conversion
+
+    /// Convert `buffer` to `format` using a caller-supplied converter (reused across a
+    /// streaming session to avoid per-buffer converter allocation). Returns nil on error.
+    fileprivate static func convertBuffer(_ buffer: AVAudioPCMBuffer, using converter: AVAudioConverter, to format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        let ratio = format.sampleRate / buffer.format.sampleRate
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 16
+        guard let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return nil }
+        var consumed = false
+        let status = converter.convert(to: out, error: nil) { _, outStatus in
+            if consumed { outStatus.pointee = .noDataNow; return nil }
+            consumed = true
+            outStatus.pointee = .haveData
+            return buffer
+        }
+        return status == .error ? nil : out
+    }
+
+    /// One-shot convert (builds its own converter). Returns the input unchanged when it
+    /// already matches `format`. Used by the batch path where conversion happens once.
+    fileprivate static func convert(_ buffer: AVAudioPCMBuffer, to format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        if buffer.format == format { return buffer }
+        guard let converter = AVAudioConverter(from: buffer.format, to: format) else { return nil }
+        return convertBuffer(buffer, using: converter, to: format)
+    }
 
     // MARK: - Streaming (live partials + final-transcript reuse)
 
@@ -227,7 +263,7 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
 
         let analysisTask = Task {
             do {
-                _ = try await analyzer.analyzeSequence(AnalyzerInputStream(audio))
+                _ = try await analyzer.analyzeSequence(AnalyzerInputStream(audio, convertingTo: self.analyzerFormat ?? Self.format))
             } catch {
                 print("[STREAM-ASR] Analysis error: \(error.localizedDescription)")
             }
@@ -293,10 +329,16 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
         let vocab = Self.contextualVocabulary()
         if !vocab.isEmpty { context.contextualStrings[.general] = vocab }
 
+        // Convert to the module's supported format (see analyzerFormat) — the analyzer does
+        // no conversion and preconditions on the sample type otherwise.
+        guard let analyzerBuffer = Self.convert(buffer, to: self.analyzerFormat ?? Self.format) else {
+            throw Transcriber.TranscriberError.notReady
+        }
+
         do {
             try await analyzer.setContext(context)
 
-            let input = AnalyzerInput(buffer: buffer)
+            let input = AnalyzerInput(buffer: analyzerBuffer)
             let stream = AsyncStream<AnalyzerInput> { continuation in
                 continuation.yield(input)
                 continuation.finish()
@@ -547,25 +589,43 @@ actor Transcriber {
 
 // MARK: - AnalyzerInputStream
 
-struct AnalyzerInputStream: AsyncSequence, Sendable {
+struct AnalyzerInputStream: AsyncSequence, @unchecked Sendable {
     typealias Element = AnalyzerInput
-    
+
     private let base: AsyncStream<SendableAudioBuffer>
-    
-    init(_ base: AsyncStream<SendableAudioBuffer>) {
+    private let targetFormat: AVAudioFormat
+
+    init(_ base: AsyncStream<SendableAudioBuffer>, convertingTo targetFormat: AVAudioFormat) {
         self.base = base
+        self.targetFormat = targetFormat
     }
-    
+
     struct AsyncIterator: AsyncIteratorProtocol {
         var baseIterator: AsyncStream<SendableAudioBuffer>.AsyncIterator
-        
+        let targetFormat: AVAudioFormat
+        // Built lazily from the first buffer's format and reused — the analyzer requires its
+        // module's format and does no conversion itself.
+        var converter: AVAudioConverter?
+
         mutating func next() async -> AnalyzerInput? {
             guard let wrapper = await baseIterator.next() else { return nil }
-            return AnalyzerInput(buffer: wrapper.buffer)
+            let buffer = wrapper.buffer
+            if buffer.format == targetFormat {
+                return AnalyzerInput(buffer: buffer)
+            }
+            if converter == nil {
+                converter = AVAudioConverter(from: buffer.format, to: targetFormat)
+            }
+            guard let converter,
+                  let converted = NativeDictationBackend.convertBuffer(buffer, using: converter, to: targetFormat) else {
+                // Best effort: feed the original rather than dropping audio silently.
+                return AnalyzerInput(buffer: buffer)
+            }
+            return AnalyzerInput(buffer: converted)
         }
     }
-    
+
     func makeAsyncIterator() -> AsyncIterator {
-        AsyncIterator(baseIterator: base.makeAsyncIterator())
+        AsyncIterator(baseIterator: base.makeAsyncIterator(), targetFormat: targetFormat, converter: nil)
     }
 }
