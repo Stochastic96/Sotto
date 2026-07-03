@@ -92,8 +92,13 @@ final class PermissionCoordinator {
 
     private func requestSpeechRecognition() async {
         guard SFSpeechRecognizer.authorizationStatus() == .notDetermined else { return }
-        await withCheckedContinuation { cont in
-            SFSpeechRecognizer.requestAuthorization { _ in cont.resume() }
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            // SFSpeechRecognizer invokes this completion on a background queue.
+            // Mark it @Sendable so it does NOT inherit this @MainActor type's
+            // isolation — otherwise Swift's dynamic isolation check traps
+            // (EXC_BREAKPOINT) when the closure runs off the main thread.
+            // CheckedContinuation.resume() is safe to call from any executor.
+            SFSpeechRecognizer.requestAuthorization { @Sendable _ in cont.resume() }
         }
     }
 

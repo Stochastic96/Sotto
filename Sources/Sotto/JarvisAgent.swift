@@ -42,13 +42,14 @@ enum JarvisAgent {
     static func prewarm() {
         Task {
             guard SystemLanguageModel.default.isAvailable else { return }
-            LanguageModelSession().prewarm()
+            // Only the long-lived classifier session is warmed. Prewarming a throwaway
+            // bare LanguageModelSession() bought nothing (run() builds per-command
+            // sessions anyway) and doubled the resident-model pressure on 8 GB.
             classifierSession.prewarm()
             // Retry after 30 s — covers the common case where the model manager cancels
             // the first prewarm because it hasn't finished initialising at cold launch.
             try? await Task.sleep(for: .seconds(30))
             guard SystemLanguageModel.default.isAvailable else { return }
-            LanguageModelSession().prewarm()
             classifierSession.prewarm()
         }
     }

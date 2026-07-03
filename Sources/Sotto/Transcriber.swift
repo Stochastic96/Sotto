@@ -143,20 +143,58 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
                 continuation.finish()
             }
 
-            async let collected: String = {
+            // Run the results collection in a separate task so we can cancel its infinite stream
+            // once analysis of the input sequence is complete.
+            let transcriptionTask = Task {
                 var finalText = ""
-                for try await result in transcriber.results where result.isFinal {
-                    finalText += String(result.text.characters)
+                do {
+                    for try await result in transcriber.results where result.isFinal {
+                        finalText += String(result.text.characters)
+                    }
+                } catch {
+                    // Catch CancellationError and return the partial we accumulated
                 }
                 return finalText
-            }()
+            }
+            defer {
+                transcriptionTask.cancel()
+            }
 
-            _ = try await analyzer.analyzeSequence(stream)
-            try await analyzer.finalizeAndFinishThroughEndOfInput()
+            let audioDuration = Double(samples.count) / 16000.0
+            let timeoutSeconds = max(8.0, audioDuration * 0.5)
+            print("[TRANSCRIBER] Native dictation: transcribing \(samples.count) samples (~\(String(format: "%.1f", audioDuration))s audio). Timeout set to \(String(format: "%.1f", timeoutSeconds))s.")
 
-            return try await collected
+            let text = try await withThrowingTaskGroup(of: String.self) { group in
+                group.addTask {
+                    _ = try await analyzer.analyzeSequence(stream)
+                    try await analyzer.finalizeAndFinishThroughEndOfInput()
+                    
+                    // Start a 2-second backstop task to cancel transcription if it hangs
+                    let backstopTask = Task {
+                        try? await Task.sleep(for: .seconds(2))
+                        if !Task.isCancelled {
+                            transcriptionTask.cancel()
+                        }
+                    }
+                    
+                    let text = await transcriptionTask.value
+                    backstopTask.cancel()
+                    return text
+                }
+                
+                group.addTask {
+                    try await Task.sleep(for: .seconds(timeoutSeconds))
+                    throw NSError(domain: "Transcriber", code: -99, userInfo: [NSLocalizedDescriptionKey: "Modern transcription timed out"])
+                }
+                
+                let first = try await group.next()!
+                group.cancelAll()
+                return first
+            }
+
+            return text
         } catch {
-            print("[TRANSCRIBER] Native dictation transcribe failed (\(error.localizedDescription)); falling back to legacy Apple Speech for this utterance and invalidating the cached analyzer so the next press rebuilds it fresh.")
+            print("[TRANSCRIBER] Native dictation transcribe failed/timed out (\(error.localizedDescription)); falling back to legacy Apple Speech for this utterance.")
             // Don't set useLegacy = true here — that's reserved for a structurally
             // unavailable modern path (permission/asset failure in prepare()). A transcribe-
             // level failure gets a clean rebuild attempt on the next press instead of
@@ -205,6 +243,9 @@ private struct LegacyAppleSpeechBackend: TranscriptionBackend {
         guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else {
             throw Transcriber.TranscriberError.speechRecognizerNotAvailable
         }
+        
+        let audioDuration = Double(samples.count) / 16000.0
+        let timeoutSeconds = max(8.0, audioDuration * 0.5)
 
         let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -264,7 +305,7 @@ private struct LegacyAppleSpeechBackend: TranscriptionBackend {
             }
 
             Task.detached {
-                try? await Task.sleep(for: .seconds(8))
+                try? await Task.sleep(for: .seconds(timeoutSeconds))
                 let resumeText: String? = state.withLock { s in
                     guard !s.finished else { return nil }
                     s.finished = true
@@ -272,7 +313,7 @@ private struct LegacyAppleSpeechBackend: TranscriptionBackend {
                 }
                 if let text = resumeText {
                     box.task?.cancel()
-                    print("[TRANSCRIBER] Apple Speech timed out after 8s; returning best partial (\(text.count) chars).")
+                    print("[TRANSCRIBER] Apple Speech timed out after \(String(format: "%.1f", timeoutSeconds))s; returning best partial (\(text.count) chars).")
                     continuation.resume(returning: text)
                 }
             }

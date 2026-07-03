@@ -325,7 +325,7 @@ final class HUDOverlay {
             message = text
         }
         NSAccessibility.post(
-            element: NSApp,
+            element: NSApplication.shared,
             notification: .announcementRequested,
             userInfo: [
                 NSAccessibility.NotificationUserInfoKey.announcement: message,

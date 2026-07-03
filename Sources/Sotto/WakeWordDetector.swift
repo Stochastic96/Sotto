@@ -62,8 +62,14 @@ final class WakeWordDetector: @unchecked Sendable {
         let recordingFormat = inputNode.outputFormat(forBus: 0)
 
         // Install audio tap to process microphone input
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
-            request.append(buffer)
+        do {
+            try inputNode.installTapCompat(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
+                request.append(buffer)
+            }
+        } catch {
+            print("[WAKE] Failed to install audio tap: \(error.localizedDescription)")
+            teardown()
+            return
         }
 
         engine.prepare()

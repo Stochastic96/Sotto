@@ -3,6 +3,18 @@ import CoreAudio
 import AudioToolbox
 import os
 
+extension AVAudioNode {
+    /// Bridge to the macOS 27 throwing replacement for the deprecated
+    /// `installTap(onBus:bufferSize:format:block:)`. The new method is
+    /// `NS_REFINED_FOR_SWIFT` but its Swift refinement is missing from the current
+    /// Xcode 27 beta SDK, so it only surfaces under its raw imported name
+    /// (`__installTap(...error:())`). When a later SDK ships the proper refinement,
+    /// delete this shim and call `try installTap(...)` directly at the two call sites.
+    func installTapCompat(onBus bus: AVAudioNodeBus, bufferSize: AVAudioFrameCount, format: AVAudioFormat?, block: @escaping AVAudioNodeTapBlock) throws {
+        try __installTap(onBus: bus, bufferSize: bufferSize, format: format, error: (), block: block)
+    }
+}
+
 // MARK: - AudioCapturing Protocol
 
 /// Abstracts microphone capture for the dictation pipeline.
@@ -141,7 +153,7 @@ final class AudioRecorder: @unchecked Sendable, AudioCapturing {
         // deinit, so there is no retain cycle. A [weak self] capture here produces a
         // Sendable warning in Swift 6 because Optional<AudioRecorder> isn't Sendable.
         input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 4096, format: hwFormat) { [self] buffer, _ in
+        try input.installTapCompat(onBus: 0, bufferSize: 4096, format: hwFormat) { [self] buffer, _ in
             append(buffer, using: converter)
         }
         engine.prepare()
@@ -176,8 +188,8 @@ final class AudioRecorder: @unchecked Sendable, AudioCapturing {
         guard status != .error, let channel = out.floatChannelData else { return }
 
         let count = Int(out.frameLength)
+        let triggerSilence: Bool
 
-        // VAD / Silence detection logic
         if count > 0 {
             var sum: Float = 0.0
             for i in 0..<count {
@@ -185,27 +197,34 @@ final class AudioRecorder: @unchecked Sendable, AudioCapturing {
                 sum += sample * sample
             }
             let rms = sqrt(sum / Float(count))
-            lock.withLock { self._currentRMS = rms }
-
-            if !SettingsController.isPushToTalk {
-                if rms < silenceThreshold {
-                    let duration = Double(count) / targetFormat.sampleRate
-                    silenceAccumulator += duration
-                    if silenceAccumulator >= maxSilenceDuration {
+            
+            triggerSilence = lock.withLock {
+                self._currentRMS = rms
+                
+                if !SettingsController.isPushToTalk {
+                    if rms < silenceThreshold {
+                        let duration = Double(count) / targetFormat.sampleRate
+                        silenceAccumulator += duration
+                        if silenceAccumulator >= maxSilenceDuration {
+                            silenceAccumulator = 0.0
+                            return true
+                        }
+                    } else {
                         silenceAccumulator = 0.0
-                        silenceDetectedHandler?()
                     }
-                } else {
-                    silenceAccumulator = 0.0
                 }
+                return false
             }
+        } else {
+            triggerSilence = false
         }
 
-        // Convert to [Float] (Sendable) BEFORE entering the lock — crossing the lock
-        // boundary with UnsafePointer<UnsafeMutablePointer<Float>?> triggers a Swift 6
-        // Sendable diagnostic because UnsafePointer is not Sendable.
         let newSamples = [Float](UnsafeBufferPointer(start: channel[0], count: count))
         lock.withLock { samples.append(contentsOf: newSamples) }
+        
+        if triggerSilence {
+            silenceDetectedHandler?()
+        }
     }
 
     // MARK: - Device discovery
@@ -282,23 +301,24 @@ final class AudioRecorder: @unchecked Sendable, AudioCapturing {
 
     private func setInputDevice(engine: AVAudioEngine, deviceID: AudioDeviceID) throws {
         let inputNode = engine.inputNode
-        guard let audioUnit = inputNode.audioUnit else {
-            throw NSError(domain: "AudioRecorder", code: -3, userInfo: [NSLocalizedDescriptionKey: "Input node audio unit is nil"])
-        }
+        try inputNode.withAudioUnit { audioUnit in
+            guard let audioUnit else {
+                throw NSError(domain: "AudioRecorder", code: -3, userInfo: [NSLocalizedDescriptionKey: "Input node audio unit is nil"])
+            }
+            var mDeviceID = deviceID
+            let size = UInt32(MemoryLayout<AudioDeviceID>.size)
+            let status = AudioUnitSetProperty(
+                audioUnit,
+                kAudioOutputUnitProperty_CurrentDevice,
+                kAudioUnitScope_Global,
+                0,
+                &mDeviceID,
+                size
+            )
 
-        var mDeviceID = deviceID
-        let size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        let status = AudioUnitSetProperty(
-            audioUnit,
-            kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global,
-            0,
-            &mDeviceID,
-            size
-        )
-
-        if status != noErr {
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: [NSLocalizedDescriptionKey: "AudioUnitSetProperty CurrentDevice failed with status \(status)"])
+            if status != noErr {
+                throw NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: [NSLocalizedDescriptionKey: "AudioUnitSetProperty CurrentDevice failed with status \(status)"])
+            }
         }
     }
 }

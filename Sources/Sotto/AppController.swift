@@ -486,6 +486,16 @@ import SottoCore
             hud.show("●  Listening  [0:00 / 5:00]")
             soundPop?.play()
 
+            // Prewarm ASR on the MainActor while the user is speaking.
+            // MainActor isolation is critical: running ASR initialization on a background cooperative thread
+            // causes SFUtilities.defaultClientID to fail its internal dispatch_assert_queue(dispatch_get_main_queue()) assertion and crash.
+            // Deliberately no LanguageModelSession().prewarm() here: the polish session is already
+            // warm in SottoIntelligence, and a throwaway per-press prewarm forces the ~2 GB base
+            // model resident on every keypress — a direct CriticalMemoryPressure trigger on 8 GB.
+            Task(priority: .userInitiated) { @MainActor in
+                try? await self.transcriber.prepare()
+            }
+
             // Waveform at 15fps (66ms). Skip silent frames — saves ~65% of main-thread
             // wakeups during the typical mostly-silent recording session.
             self.visualizerTimer?.invalidate()

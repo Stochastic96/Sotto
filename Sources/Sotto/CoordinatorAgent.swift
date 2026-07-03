@@ -214,18 +214,45 @@ public actor CoordinatorAgent {
         let instructions = buildInstructions(for: userInput, conversation: conversation)
         let routed = Array(JarvisToolbox.routed(for: userInput).prefix(5))
 
-        // Drive the session with a native DynamicProfile: instructions, tools, and
-        // tool-calling mode all switch by lane (chat/quick/bigJob — see JarvisProfile).
+        // Drive the session manually by constructing LanguageModelSession with custom instructions and tools
+        // matching the active lane. Bypasses LanguageModelSession(profile:) to prevent dyld Symbol not found crashes.
         let mode = JarvisProfile.classify(userInput)
-        print("[COORDINATOR] DynamicProfile lane: \(mode.rawValue)  (routed: \(routed.map { $0.name }.joined(separator: ", ")))")
-        let session = LanguageModelSession(profile: JarvisProfile(mode: mode, instructions: instructions, routedTools: routed))
+        print("[COORDINATOR] Lane: \(mode.rawValue)  (routed: \(routed.map { $0.name }.joined(separator: ", ")))")
+        
+        let temperature: Double
+        switch mode {
+        case .chat:
+            temperature = 0.7
+        case .bigJob:
+            temperature = 0.2
+        case .quick:
+            temperature = 0.3
+        }
+        
+        if mode == .bigJob {
+            await MainActor.run { StartLongTaskTool.wasCalled = false }
+        }
+        
+        let escalationTools: [any Tool] = [DelegateScriptingExecutorTool(), DelegateWebResearcherTool(), DelegateOSControlTool(), StartLongTaskTool()]
+        let session: LanguageModelSession
+        switch mode {
+        case .chat:
+            // Chat lane: warm, brief, no tools.
+            session = LanguageModelSession(instructions: instructions + "\n\nThis is small talk — reply warmly in ONE short line and use no tools.")
+        case .bigJob:
+            // BigJob lane: narrow to the long task tool and require it in instructions.
+            session = LanguageModelSession(tools: [StartLongTaskTool()], instructions: instructions + "\n\nThis is a large repetitive job. Call start_long_task with the full goal in plain language.")
+        case .quick:
+            // Quick lane: native routed tools + escalation tools.
+            session = LanguageModelSession(tools: routed + escalationTools, instructions: instructions)
+        }
         self.session = session
 
         do {
             // 40-second hard timeout: the DynamicProfile tool-calling loop has no built-in
             // cycle limit — without maximumResponseTokens AND a timeout, a model with no
             // city for get_weather can loop asking for clarification indefinitely.
-            let opts = GenerationOptions(temperature: 0.3, maximumResponseTokens: 512)
+            let opts = GenerationOptions(temperature: temperature, maximumResponseTokens: 512)
             let outcome: TurnOutcome = try await withThrowingTaskGroup(of: TurnOutcome.self) { group in
                 group.addTask {
                     let res = try await session.respond(to: userInput, generating: TurnOutcome.self, options: opts)
@@ -243,6 +270,49 @@ public actor CoordinatorAgent {
                 group.cancelAll()
                 return result
             }
+            
+            let wasCalled = await MainActor.run { StartLongTaskTool.wasCalled }
+            if mode == .bigJob && !wasCalled {
+                print("[COORDINATOR] bigJob turn completed but start_long_task was not called. Retrying once with a stronger prompt...")
+                let retryInstructions = instructions + "\n\nCRITICAL: You MUST call the start_long_task tool. Do not reply in prose without calling it."
+                let retrySession = LanguageModelSession(tools: [StartLongTaskTool()], instructions: retryInstructions)
+                do {
+                    let retryOutcome: TurnOutcome = try await withThrowingTaskGroup(of: TurnOutcome.self) { group in
+                        group.addTask {
+                            let res = try await retrySession.respond(to: userInput, generating: TurnOutcome.self, options: opts)
+                            return res.content
+                        }
+                        group.addTask {
+                            try await Task.sleep(for: .seconds(40))
+                            throw NSError(domain: "JarvisDP", code: -1,
+                                          userInfo: [NSLocalizedDescriptionKey: "DynamicProfile retry timed out after 40s"])
+                        }
+                        guard let result = try await group.next() else {
+                            throw NSError(domain: "JarvisDP", code: -2,
+                                          userInfo: [NSLocalizedDescriptionKey: "No result from DynamicProfile retry"])
+                        }
+                        group.cancelAll()
+                        return result
+                    }
+                    
+                    let retryWasCalled = await MainActor.run { StartLongTaskTool.wasCalled }
+                    if retryWasCalled {
+                        let reply = retryOutcome.reply ?? ""
+                        let toolHint = CommandLearner.inferTool(from: reply)
+                        Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
+                        return reply
+                    }
+                } catch {
+                    print("[COORDINATOR] Retry failed (\(error.localizedDescription)). Routing directly.")
+                }
+                
+                print("[COORDINATOR] Retry did not call start_long_task. Routing to LongTaskEngine directly.")
+                let directReply = LongTaskEngine.start(goal: userInput)
+                let toolHint = CommandLearner.inferTool(from: directReply)
+                Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
+                return directReply
+            }
+            
             let reply: String
             if let question = outcome.clarifyingQuestion, !question.isEmpty {
                 reply = kClarificationPrefix + " " + question
@@ -253,6 +323,13 @@ public actor CoordinatorAgent {
             Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
             return reply
         } catch {
+            if mode == .bigJob {
+                print("[COORDINATOR] bigJob failed in DynamicProfile. Routing directly to LongTaskEngine.")
+                let directReply = LongTaskEngine.start(goal: userInput)
+                let toolHint = CommandLearner.inferTool(from: directReply)
+                Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
+                return directReply
+            }
             print("[COORDINATOR] DynamicProfile failed (\(error.localizedDescription)); retrying tool-free.")
             self.session = nil
             await Task.yield()

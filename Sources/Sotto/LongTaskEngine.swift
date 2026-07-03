@@ -29,6 +29,9 @@ struct PromoBatchDecision {
 /// Tool that kicks off a durable background bulk job (e.g. inbox clean-up) and returns
 /// immediately with a status line. The job resumes across launches via LongTaskEngine.
 struct StartLongTaskTool: Tool {
+    @MainActor
+    public static var wasCalled = false
+
     let name = "start_long_task"
     let description = "Start a durable background bulk job (e.g. 'clean all promotional emails'). Returns immediately; the job runs in the background and speaks a summary when done."
 
@@ -39,6 +42,7 @@ struct StartLongTaskTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
+        await MainActor.run { Self.wasCalled = true }
         return LongTaskEngine.start(goal: arguments.goal)
     }
 }
