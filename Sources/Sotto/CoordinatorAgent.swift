@@ -63,41 +63,11 @@ struct DelegateScriptingExecutorTool: Tool {
     }
 }
 
-struct ReadScreenTreeTool: Tool {
-    let name = "read_screen_tree"
-    let description = "Read the interactive UI element tree of the active window. Returns element descriptions and their integer IDs. Call this before clicking or setting values."
 
-    @Generable
-    struct Arguments {}
-
-    func call(arguments: Arguments) async throws -> String {
-        let tree = ScreenParser.captureActiveWindowTree()
-        if tree.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "Screen capture unavailable. Ensure Screen Recording permission is granted and a window is active."
-        }
-        return tree
-    }
-}
-
-struct ClickScreenElementTool: Tool {
-    let name = "click_screen_element"
-    let description = "Click an interactive UI element by its integer ID obtained from read_screen_tree."
-
-    @Generable
-    struct Arguments {
-        @Guide(description: "The integer ID of the element to click.")
-        let id: Int
-    }
-
-    func call(arguments: Arguments) async throws -> String {
-        let success = ScreenParser.performClick(id: arguments.id)
-        return success ? "Successfully clicked element with ID \(arguments.id)." : "Failed to click element with ID \(arguments.id). Element not found or action failed."
-    }
-}
 
 struct SetScreenElementValueTool: Tool {
     let name = "set_screen_element_value"
-    let description = "Set a text value on an input element by its integer ID obtained from read_screen_tree."
+    let description = "Set a text value on an input element by its integer ID obtained from read_screen."
 
     @Generable
     struct Arguments {
@@ -212,7 +182,7 @@ public actor CoordinatorAgent {
 
         let conversation = await ConversationMemory.shared.digest()
         let instructions = buildInstructions(for: userInput, conversation: conversation)
-        let routed = Array(JarvisToolbox.routed(for: userInput).prefix(5))
+        let routed = Array(await JarvisToolbox.routed(for: userInput).prefix(5))
 
         // Drive the session manually by constructing LanguageModelSession with custom instructions and tools
         // matching the active lane. Bypasses LanguageModelSession(profile:) to prevent dyld Symbol not found crashes.
@@ -253,22 +223,9 @@ public actor CoordinatorAgent {
             // cycle limit — without maximumResponseTokens AND a timeout, a model with no
             // city for get_weather can loop asking for clarification indefinitely.
             let opts = GenerationOptions(temperature: temperature, maximumResponseTokens: 512)
-            let outcome: TurnOutcome = try await withThrowingTaskGroup(of: TurnOutcome.self) { group in
-                group.addTask {
-                    let res = try await session.respond(to: userInput, generating: TurnOutcome.self, options: opts)
-                    return res.content
-                }
-                group.addTask {
-                    try await Task.sleep(for: .seconds(40))
-                    throw NSError(domain: "JarvisDP", code: -1,
-                                  userInfo: [NSLocalizedDescriptionKey: "DynamicProfile timed out after 40s"])
-                }
-                guard let result = try await group.next() else {
-                    throw NSError(domain: "JarvisDP", code: -2,
-                                  userInfo: [NSLocalizedDescriptionKey: "No result from DynamicProfile"])
-                }
-                group.cancelAll()
-                return result
+            let outcome: TurnOutcome = try await withTimeout(seconds: 40, errorDomain: "JarvisDP", errorDescription: "DynamicProfile timed out after 40s") {
+                let res = try await session.respond(to: userInput, generating: TurnOutcome.self, options: opts)
+                return res.content
             }
             
             let wasCalled = await MainActor.run { StartLongTaskTool.wasCalled }
@@ -277,22 +234,9 @@ public actor CoordinatorAgent {
                 let retryInstructions = instructions + "\n\nCRITICAL: You MUST call the start_long_task tool. Do not reply in prose without calling it."
                 let retrySession = LanguageModelSession(tools: [StartLongTaskTool()], instructions: retryInstructions)
                 do {
-                    let retryOutcome: TurnOutcome = try await withThrowingTaskGroup(of: TurnOutcome.self) { group in
-                        group.addTask {
-                            let res = try await retrySession.respond(to: userInput, generating: TurnOutcome.self, options: opts)
-                            return res.content
-                        }
-                        group.addTask {
-                            try await Task.sleep(for: .seconds(40))
-                            throw NSError(domain: "JarvisDP", code: -1,
-                                          userInfo: [NSLocalizedDescriptionKey: "DynamicProfile retry timed out after 40s"])
-                        }
-                        guard let result = try await group.next() else {
-                            throw NSError(domain: "JarvisDP", code: -2,
-                                          userInfo: [NSLocalizedDescriptionKey: "No result from DynamicProfile retry"])
-                        }
-                        group.cancelAll()
-                        return result
+                    let retryOutcome: TurnOutcome = try await withTimeout(seconds: 40, errorDomain: "JarvisDP", errorDescription: "DynamicProfile retry timed out after 40s") {
+                        let res = try await retrySession.respond(to: userInput, generating: TurnOutcome.self, options: opts)
+                        return res.content
                     }
                     
                     let retryWasCalled = await MainActor.run { StartLongTaskTool.wasCalled }
@@ -396,14 +340,14 @@ public actor OSControlAgent {
 
     private static let instructions = "You are the OS Control Agent. Execute the requested system task using the available tools, then report what actually happened in one line."
 
-    private func getOrCreateSession(for task: String) -> LanguageModelSession {
+    private func getOrCreateSession(for task: String) async -> LanguageModelSession {
         // Reuse the real catalog's keyword routing so this agent always has working,
         // relevant tools (a hardcoded name list would drift out of sync with JarvisToolbox).
-        let tools = JarvisToolbox.routed(for: task)
         if let session, turnCount < 12 {
             turnCount += 1
             return session
         }
+        let tools = await JarvisToolbox.routed(for: task)
         let fresh = LanguageModelSession(tools: tools, instructions: Self.instructions)
         session = fresh
         turnCount = 1
@@ -411,7 +355,7 @@ public actor OSControlAgent {
     }
 
     public func run(task: String) async -> String {
-        let session = getOrCreateSession(for: task)
+        let session = await getOrCreateSession(for: task)
         do {
             let response = try await session.respond(to: task, options: GenerationOptions(temperature: 0.2))
             return response.content
@@ -440,8 +384,8 @@ public actor WebResearcherAgent {
 
     private static let instructions = """
         You are the Web Researcher Agent. Perform web search, screen parsing, and clicking using the provided tools.
-        1. Read the screen using read_screen_tree to get element IDs.
-        2. Click or set values using those integer IDs.
+        1. Read the screen using read_screen to get elements or element IDs.
+        2. Click or set values using those labels or integer IDs.
         3. Search Wikipedia for external information.
         4. Report your final answer directly when done or when you cannot proceed further.
         """
@@ -453,8 +397,8 @@ public actor WebResearcherAgent {
         }
         let tools: [any Tool] = [
             WikipediaLookupTool(),
-            ReadScreenTreeTool(),
-            ClickScreenElementTool(),
+            ReadScreenTool(),
+            ClickElementTool(),
             SetScreenElementValueTool()
         ]
         let fresh = LanguageModelSession(tools: tools, instructions: Self.instructions)

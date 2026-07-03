@@ -126,23 +126,6 @@ enum JarvisAgent {
             """)
         return s
     }()
-
-    /// Runs the tool-calling agent on a spoken command. Returns a short spoken reply.
-    /// Throws if Apple Intelligence is unavailable.
-    static func run(_ command: String) async throws -> String {
-        guard SystemLanguageModel.default.isAvailable else {
-            throw NSError(domain: "JarvisAgent", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Apple Intelligence is unavailable on this machine."])
-        }
-        // Route to only the most relevant ≤8 tools — tool-selection accuracy drops when
-        // the small on-device model is handed the whole 27-tool catalog every call.
-        let tools = JarvisToolbox.routed(for: command)
-        print("[JARVIS] Routed \(tools.count) tools: \(tools.map { $0.name }.joined(separator: ", "))")
-        let session = LanguageModelSession(tools: tools, instructions: instructions)
-        let response = try await session.respond(to: command,
-                                                 options: GenerationOptions(temperature: 0.3))
-        return response.content
-    }
 }
 
 /// Constrained intent type — @Generable enum so guided generation can ONLY

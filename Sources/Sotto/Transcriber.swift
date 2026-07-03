@@ -164,32 +164,21 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
             let timeoutSeconds = max(8.0, audioDuration * 0.5)
             print("[TRANSCRIBER] Native dictation: transcribing \(samples.count) samples (~\(String(format: "%.1f", audioDuration))s audio). Timeout set to \(String(format: "%.1f", timeoutSeconds))s.")
 
-            let text = try await withThrowingTaskGroup(of: String.self) { group in
-                group.addTask {
-                    _ = try await analyzer.analyzeSequence(stream)
-                    try await analyzer.finalizeAndFinishThroughEndOfInput()
-                    
-                    // Start a 2-second backstop task to cancel transcription if it hangs
-                    let backstopTask = Task {
-                        try? await Task.sleep(for: .seconds(2))
-                        if !Task.isCancelled {
-                            transcriptionTask.cancel()
-                        }
+            let text = try await withTimeout(seconds: timeoutSeconds, errorDomain: "Transcriber", errorDescription: "Modern transcription timed out") {
+                _ = try await analyzer.analyzeSequence(stream)
+                try await analyzer.finalizeAndFinishThroughEndOfInput()
+                
+                // Start a 2-second backstop task to cancel transcription if it hangs
+                let backstopTask = Task {
+                    try? await Task.sleep(for: .seconds(2))
+                    if !Task.isCancelled {
+                        transcriptionTask.cancel()
                     }
-                    
-                    let text = await transcriptionTask.value
-                    backstopTask.cancel()
-                    return text
                 }
                 
-                group.addTask {
-                    try await Task.sleep(for: .seconds(timeoutSeconds))
-                    throw NSError(domain: "Transcriber", code: -99, userInfo: [NSLocalizedDescriptionKey: "Modern transcription timed out"])
-                }
-                
-                let first = try await group.next()!
-                group.cancelAll()
-                return first
+                let text = await transcriptionTask.value
+                backstopTask.cancel()
+                return text
             }
 
             return text

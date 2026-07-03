@@ -266,21 +266,42 @@ struct WebSearchTool: Tool {
 /// (which link to click, whether a login is needed, etc.) — true multi-step handling.
 struct ReadScreenTool: Tool {
     let name = "read_screen"
-    let description = "Read the text currently visible on screen using OCR. Call this to see the page/app before deciding the next action (e.g. after a search, to find a link or button to click)."
+    let description = "Read the active window / screen contents. Returns the interactive UI element tree with IDs if available, falling back to raw OCR text."
 
     @Generable
     struct Arguments {
-        @Guide(description: "What you are looking for on screen, e.g. 'first search result' or 'login button'. Used to prioritize relevant lines.")
-        let lookingFor: String
+        @Guide(description: "What you are looking for on screen (e.g. 'first search result' or 'login button'). Used to filter OCR lines if falling back to OCR.")
+        let lookingFor: String?
     }
 
     func call(arguments: Arguments) async throws -> String {
+        // Try AX-tree first
+        let tree = ScreenParser.captureActiveWindowTree()
+        let trimmedTree = tree.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedTree.isEmpty {
+            return "Active Window UI Tree:\n\(trimmedTree)"
+        }
+        
+        // OCR fallback
         let text = await CommandEngine.ocrScreen()
-        if text.isEmpty { return "The screen has no readable text right now." }
-        // Keyword-biased truncation: lines containing the target float to the top so the
-        // relevant element is always within the ~1500-char context budget, even on dense pages.
+        if text.isEmpty {
+            return "No readable text or UI elements found on screen."
+        }
+        
+        let target = (arguments.lookingFor ?? "").lowercased()
         let lines = text.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        let target = arguments.lookingFor.lowercased()
+        
+        if target.isEmpty {
+            // No specific query: return first 1500 chars of OCR text
+            var result = ""
+            for line in lines {
+                guard (result + line).count < 1500 else { break }
+                result += line + "\n"
+            }
+            return "Screen text (OCR):\n\(result)"
+        }
+        
+        // Priority filter by query
         let scored: [(score: Int, line: String)] = lines.enumerated().map { idx, line in
             (line.lowercased().contains(target) ? 1000 - idx : -idx, line)
         }.sorted { $0.score > $1.score }
@@ -289,25 +310,33 @@ struct ReadScreenTool: Tool {
             guard (result + entry.line).count < 1500 else { break }
             result += entry.line + "\n"
         }
-        return "Screen text (looking for \(arguments.lookingFor)):\n\(result)"
+        return "Screen text (OCR fallback, looking for \(target)):\n\(result)"
     }
 }
 
-/// Click an on-screen element by its visible text/label (uses OCR + a synthetic click).
-/// Lets the agent press "first result", "Sign in", "Allow", etc. as a single step.
+/// Click an on-screen element by its visible text/label or its integer ID from the UI tree.
 struct ClickElementTool: Tool {
     let name = "click_element"
-    let description = "Click an on-screen button, link, or label by its visible text. Use after read_screen to act on what you saw."
+    let description = "Click an on-screen element by its integer ID (from read_screen UI tree) or its visible text label."
 
     @Generable
     struct Arguments {
-        @Guide(description: "The exact visible text of the button/link to click, e.g. 'Sign in' or the result's title.")
-        let label: String
+        @Guide(description: "The integer ID (e.g. '42') or the visible text label of the element to click.")
+        let target: String
     }
 
     func call(arguments: Arguments) async throws -> String {
-        let clicked = await CommandEngine.findAndClickText(arguments.label)
-        return clicked ? "Clicked '\(arguments.label)'." : "Couldn't find '\(arguments.label)' on screen."
+        let trimmed = arguments.target.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let id = Int(trimmed) {
+            // Try ID click first
+            if ScreenParser.performClick(id: id) {
+                return "Successfully clicked element with ID \(id)."
+            }
+        }
+        
+        // Fallback to text label click
+        let clicked = await CommandEngine.findAndClickText(trimmed)
+        return clicked ? "Clicked '\(trimmed)'." : "Could not find or click '\(trimmed)' on screen."
     }
 }
 
@@ -764,72 +793,10 @@ enum JarvisToolbox {
             FileOrganizerTool(), LargeFileFinderTool(),
             ExplainCodeTool(), GenerateGitCommitTool(), FindBugTool(), ExplainErrorTool(),
             MicrotaskTool(),
+            DelegateScriptingExecutorTool(), DelegateWebResearcherTool(), DelegateOSControlTool(),
+            StartLongTaskTool(),
         ]
     }
-
-    private struct Group {
-        let keywords: [String]
-        let make: () -> [any Tool]
-    }
-
-    // Built once, read-only for the process lifetime; the `make` closures aren't
-    // @Sendable-audited but are never invoked concurrently (routing runs synchronously).
-    nonisolated(unsafe) private static let groups: [Group] = [
-        Group(keywords: ["spotify", "music", "song", "play", "pause", "track", "artist", "skip", "tune", "album"],
-              make: { [SpotifyTool()] }),
-        // Weather always goes to Siri — real-time data, no API key needed, handles all locales.
-        Group(keywords: ["weather", "temperature", "forecast", "rain", "raining", "cold", "hot", "sunny", "snow",
-                         "wind", "outside", "umbrella", "humidity", "storm", "cloudy"],
-              make: { [AskSiriTool()] }),
-        Group(keywords: ["volume", "mute", "louder", "quieter", "sound", "brightness", "dim", "brighter"],
-              make: { [VolumeTool(), BrightnessTool()] }),
-        Group(keywords: ["battery", "wifi", "wi-fi", "disk", "ram", "memory", "status", "health", "internet", "network", "reachable", "connection", "gpu", "graphics"],
-              make: { [SystemStatusTool(), RAMMemoryStatusTool(), GPUStatusTool(), NetworkDiagnosticsTool()] }),
-        Group(keywords: ["open", "launch", "app", "website", "url", "browser", "window", "switch", "activate", "foreground"],
-              make: { [OpenAppTool(), OpenWebsiteTool(), AppWindowTool()] }),
-        Group(keywords: ["search", "google", "look up", "wikipedia", "who is", "what is", "define", "research", "claude", "explain", "news", "latest"],
-              make: { [WebSearchTool(), WikipediaLookupTool(), AskClaudeTool()] }),
-        // Reminders, calendar, alarms — Siri only.
-        Group(keywords: ["remind", "reminder", "calendar", "event", "appointment", "meeting", "schedule",
-                         "alarm", "timer", "wake me"],
-              make: { [AskSiriTool()] }),
-        Group(keywords: ["note", "clipboard", "copy", "paste"],
-              make: { [CreateNoteTool(), ClipboardTool()] }),
-        Group(keywords: ["file", "spotlight", "pdf", "document", "find file", "folder"],
-              make: { [SpotlightSearchTool()] }),
-        Group(keywords: ["lock", "trash", "empty", "sleep", "power", "purge", "clean ram", "free memory", "free ram"],
-              make: { [PowerStateTool()] }),
-        Group(keywords: ["read screen", "click", "button", "link", "on screen", "see", "page", "ocr", "screen"],
-              make: { [ReadScreenTool(), ClickElementTool()] }),
-        Group(keywords: ["location", "map", "where is", "geocode", "directions", "place", "address"],
-              make: { [LocationGeocoderTool()] }),
-        Group(keywords: ["keystroke", "press", "shortcut", "hotkey", "type"],
-              make: { [KeySimulatorTool()] }),
-        Group(keywords: ["skill", "learn", "routine", "goal", "remember", "recall", "history", "did you do", "have you",
-                         "list", "scripts", "macros", "capabilities", "all my", "what can",
-                         "task", "queue", "later", "when free", "background", "enqueue", "pending",
-                         "command", "asked", "ago"],
-              make: { [DraftSkillTool(), RunSkillTool(), RecallHistoryTool(), MemoryTool(), MicrotaskTool()] }),
-        Group(keywords: ["morning", "brief", "daily", "today", "summary", "wake"],
-              make: { [MorningBriefTool()] }),
-        Group(keywords: ["focus", "session", "dnd", "distract", "work", "start"],
-              make: { [FocusSessionTool()] }),
-        Group(keywords: ["end", "workday", "day", "done", "finish", "wrap"],
-              make: { [EndWorkdayTool()] }),
-        Group(keywords: ["workspace", "switch", "mode", "development", "writing", "presentation"],
-              make: { [WorkspaceSwitchTool()] }),
-        Group(keywords: ["organize", "downloads", "files", "sort", "clean"],
-              make: { [FileOrganizerTool()] }),
-        Group(keywords: ["large", "files", "storage", "space", "finder"],
-              make: { [LargeFileFinderTool()] }),
-        Group(keywords: ["explain", "code", "error", "bug", "find"],
-              make: { [ExplainCodeTool(), FindBugTool(), ExplainErrorTool()] }),
-        Group(keywords: ["git", "commit", "message", "changes", "push", "pull", "branch", "merge", "conflict", "status"],
-              make: { [GenerateGitCommitTool()] }),
-Group(keywords: ["siri", "ask siri", "tell siri", "message", "send message", "text", "email", "mail",
-                         "imessage", "call", "phone", "facetime", "whatsapp"],
-              make: { [AskSiriTool()] }),
-    ]
 
     /// Common general-purpose tools used when an utterance matches no group's keywords.
     private static func defaultSet() -> [any Tool] {
@@ -841,7 +808,7 @@ Group(keywords: ["siri", "ask siri", "tell siri", "message", "send message", "te
     /// choice sharp. Falls back to `defaultSet()` when nothing matches.
     /// CommandLearner hints are checked first — if this exact phrase has been used 3+ times
     /// the learned tool goes to position #1, skipping keyword scoring entirely for that slot.
-    static func routed(for command: String) -> [any Tool] {
+    static func routed(for command: String) async -> [any Tool] {
         let lower = command.lowercased()
 
         // Fast-path: CommandLearner knows the right tool for this phrase from past usage.
@@ -851,24 +818,45 @@ Group(keywords: ["siri", "ask siri", "tell siri", "message", "send message", "te
             learnedTool = found
         }
 
-        let scored = groups
-            .map { (score: $0.keywords.reduce(0) { $0 + (lower.contains($1) ? 1 : 0) }, group: $0) }
-            .filter { $0.score > 0 }
-            .sorted { $0.score > $1.score }
+        // Fetch all capabilities from registry
+        let caps = await CapabilityRegistry.shared.allCapabilities()
 
-        // Apple's Tool docs: "Limit the number of tools you use to three to five."
-        // Cap at 5 — selection accuracy drops beyond that with the on-device model.
+        // Score capabilities based on keyword matches
+        let scored = caps
+            .map { cap -> (score: Int, cap: CapabilityDescriptor) in
+                let score = cap.keywords.reduce(0) { sum, keyword in
+                    sum + (lower.contains(keyword.lowercased()) ? 1 : 0)
+                }
+                return (score: score, cap: cap)
+            }
+            .filter { $0.score > 0 }
+            .sorted {
+                if $0.score != $1.score {
+                    return $0.score > $1.score
+                }
+                if $0.cap.tier != $1.cap.tier {
+                    return $0.cap.tier < $1.cap.tier
+                }
+                return $0.cap.latencyMs < $1.cap.latencyMs
+            }
+
         var picked: [any Tool] = []
-        // Learned tool goes first so the model sees the correct one at position #1.
         if let learned = learnedTool { picked.append(learned) }
+        
+        let allTools = all()
+        
+        // If nothing scored, fallback to default set
         if scored.isEmpty {
             let defaults = defaultSet().filter { t in !picked.contains(where: { $0.name == t.name }) }
             picked.append(contentsOf: defaults.prefix(5 - picked.count))
             return picked
         }
+        
         for entry in scored {
-            for tool in entry.group.make() where picked.count < 5 && !picked.contains(where: { $0.name == tool.name }) {
-                picked.append(tool)
+            if let tool = allTools.first(where: { $0.name == entry.cap.name }) {
+                if picked.count < 5 && !picked.contains(where: { $0.name == tool.name }) {
+                    picked.append(tool)
+                }
             }
             if picked.count >= 5 { break }
         }

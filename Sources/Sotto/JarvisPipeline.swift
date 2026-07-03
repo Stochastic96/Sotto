@@ -102,7 +102,7 @@ extension AppController {
                 if let coord = self.coordinator {
                     reply = Self.sanitizeReply(try await coord.handleTurn(userInput: processedInput))
                 } else {
-                    reply = Self.sanitizeReply(try await JarvisAgent.run(processedInput))
+                    reply = "Jarvis is still starting. Please try again in a moment."
                 }
                 print("[JARVIS] Agent reply: '\(reply)'")
                 DatasetLogger.shared.log(mode: "jarvis-apple", app: lastActiveApp?.localizedName, rawTranscript: raw, response: reply, kind: "agent", samples: samples)
@@ -395,7 +395,7 @@ extension AppController {
                 if let coord = self.coordinator {
                     reply = Self.sanitizeReply(try await coord.handleTurn(userInput: processedText))
                 } else {
-                    reply = Self.sanitizeReply(try await JarvisAgent.run(processedText))
+                    reply = "Jarvis is still starting. Please try again in a moment."
                 }
                 DatasetLogger.shared.log(mode: "jarvis-url", app: self.lastActiveApp?.localizedName, rawTranscript: processedText, response: reply, kind: "agent", samples: nil)
                 TaskJournal.record(command: processedText, reply: reply)

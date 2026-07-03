@@ -133,7 +133,7 @@ public enum JarvisEvaluation {
 
     private static let routingTests = [
         RoutingTestCase(input: "open spotify and play some jazz music", expectedTool: "control_spotify"),
-        RoutingTestCase(input: "what is the weather like in New York today?", expectedTool: "get_weather"),
+        RoutingTestCase(input: "what is the weather like in New York today?", expectedTool: "ask_siri"),
         RoutingTestCase(input: "search google for the latest Apple Intelligence release date", expectedTool: "web_search"),
         RoutingTestCase(input: "what was the command i asked you to run a few minutes ago?", expectedTool: "recall_history"),
         RoutingTestCase(input: "lock the screen and put my computer to sleep", expectedTool: "system_power_state"),
@@ -272,7 +272,7 @@ public enum JarvisEvaluation {
         print("\n[SUITE] Evaluating Keyword Tool Routing...")
         for (i, tc) in routingTests.enumerated() {
             let start = CFAbsoluteTimeGetCurrent()
-            let routedTools = JarvisToolbox.routed(for: tc.input).map { $0.name }
+            let routedTools = await JarvisToolbox.routed(for: tc.input).map { $0.name }
 
             let end = CFAbsoluteTimeGetCurrent()
             let timeMs = (end - start) * 1000

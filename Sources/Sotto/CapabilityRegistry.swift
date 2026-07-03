@@ -126,6 +126,10 @@ actor CapabilityRegistry {
         capabilities.keys.sorted()
     }
 
+    func allCapabilities() -> [CapabilityDescriptor] {
+        Array(capabilities.values)
+    }
+
     func count() -> Int { capabilities.count }
 
     // MARK: - Private
@@ -178,25 +182,20 @@ extension CapabilityRegistry {
             .init(name: "set_volume",        keywords: ["volume","set","percent","mute","unmute"],          latencyMs: 400, tier: .foundationModel),
             .init(name: "adjust_brightness", keywords: ["brightness","brighter","dimmer"],                  latencyMs: 400, tier: .foundationModel),
             .init(name: "create_note",       keywords: ["note","create","save","write"],                    latencyMs: 400, tier: .foundationModel),
-            .init(name: "create_reminder",   keywords: ["reminder","remind","task","todo"],                 latencyMs: 400, tier: .foundationModel),
-            .init(name: "create_calendar_event", keywords: ["calendar","event","meeting","schedule"],       latencyMs: 400, tier: .foundationModel),
-            .init(name: "run_shortcut",      keywords: ["shortcut","run","automation"],                     latencyMs: 500, tier: .foundationModel),
             .init(name: "wikipedia_lookup",  keywords: ["who","what","wikipedia","fact","about"],           latencyMs: 500, tier: .foundationModel, requiresNetwork: true),
             .init(name: "geocode_location",  keywords: ["where","location","map","place","city"],           latencyMs: 500, tier: .foundationModel, requiresNetwork: true),
-            .init(name: "get_weather",       keywords: ["weather","temperature","forecast"],                latencyMs: 300, tier: .foundationModel, requiresNetwork: true),
             .init(name: "get_system_status", keywords: ["system","status","battery","wifi","disk"],         latencyMs: 200, tier: .foundationModel),
             .init(name: "get_ram_status",    keywords: ["ram","memory","usage"],                            latencyMs: 200, tier: .foundationModel),
             .init(name: "get_gpu_status",    keywords: ["gpu","graphics","card","metal"],                   latencyMs: 200, tier: .foundationModel),
             .init(name: "read_screen",       keywords: ["read","screen","see","show","what"],               latencyMs: 600, tier: .foundationModel),
             .init(name: "click_element",     keywords: ["click","press","tap","button"],                    latencyMs: 400, tier: .foundationModel),
-            .init(name: "search_memory",     keywords: ["remember","recall","memory","said","mentioned"],   latencyMs: 300, tier: .foundationModel),
-            .init(name: "manage_memory_goals", keywords: ["remember","goal","task","current","set"],        latencyMs: 300, tier: .foundationModel),
+            .init(name: "manage_memory_goals", keywords: ["remember","goal","task","current","set","recall","memory","said","mentioned"],        latencyMs: 300, tier: .foundationModel),
             .init(name: "draft_skill",       keywords: ["draft","skill","learn","automate"],                latencyMs: 800, tier: .foundationModel),
             .init(name: "run_skill",         keywords: ["run","execute","skill"],                           latencyMs: 200, tier: .foundationModel),
             .init(name: "ask_claude",        keywords: ["claude","ask","research","question"],              latencyMs: 2000, tier: .foundationModel, requiresNetwork: true),
             .init(name: "start_long_task",   keywords: ["all","bulk","every","inbox","email","clean"],      latencyMs: 1000, tier: .foundationModel, isResumable: true),
             .init(name: "manage_tasks",      keywords: ["task","queue","enqueue","background","microtask","schedule"], latencyMs: 200, tier: .foundationModel),
-
+ 
             // ── New tools (P1/P2 pipelines) ──────────────────────────────────
             .init(name: "morning_brief",       description: "Morning briefing",                          keywords: ["morning","brief","daily","today","wake","summary"],               latencyMs: 1500, tier: .foundationModel),
             .init(name: "start_focus_session", description: "Start a focus/DND session",                keywords: ["focus","session","dnd","distract","concentrate"],                  latencyMs: 800,  tier: .foundationModel),
@@ -208,8 +207,7 @@ extension CapabilityRegistry {
             .init(name: "generate_git_commit", description: "Generate git commit message",               keywords: ["git","commit","message","changes","staged"],                      latencyMs: 1000, tier: .foundationModel),
             .init(name: "find_bug",            description: "Find bugs in code",                         keywords: ["bug","find","issue","problem","wrong"],                           latencyMs: 800,  tier: .foundationModel),
             .init(name: "explain_error",       description: "Explain a compiler or runtime error",       keywords: ["error","explain","why","crash","failed"],                         latencyMs: 800,  tier: .foundationModel),
-            .init(name: "compose_workflow",    description: "Compose multi-step workflow",               keywords: ["compose","workflow","plan","setup","prepare","environment"],       latencyMs: 3000, tier: .foundationModel),
-
+ 
             // ── Previously undescribed tools (kept in sync by the drift guard in
             //    IntegrationTests.runCapabilityConsistencyCheck). NB: none of these may
             //    use the "open"/"launch" keywords or they'd out-compete open_app's reflex. ─
@@ -219,10 +217,12 @@ extension CapabilityRegistry {
             .init(name: "manage_clipboard",    description: "Read or write the clipboard",                           keywords: ["clipboard","copy","paste","copied","pasteboard"],         latencyMs: 20,  tier: .reflex),
             .init(name: "manage_apps_windows", description: "Switch, activate, list, or arrange app windows",        keywords: ["window","switch","activate","foreground","minimize","focus","tile"], latencyMs: 50, tier: .reflex),
             .init(name: "simulate_keystroke",  description: "Send a keyboard shortcut or keystroke",                 keywords: ["keystroke","press","hotkey","key","shortcut"],            latencyMs: 30,  tier: .reflex),
-            .init(name: "ask_siri",            description: "Open Siri and ask a question, compose messages, control closed Apple apps, or query real-time info", keywords: ["siri","ask","message","send","text","email","mail","imessage"], latencyMs: 1500, tier: .foundationModel),
-
-            // ── Scripting executor (delegates to ScriptingExecutorAgent via Foundation Models) ──
-            .init(name: "scripting_executor", keywords: ["script","code","generate","swift","compute"],    latencyMs: 3000, ramMB: 1500, tier: .foundationModel),
+            .init(name: "ask_siri",            description: "Open Siri and ask a question, compose messages, control closed Apple apps, or query real-time info", keywords: ["siri","ask","message","send","text","email","mail","imessage","weather","temperature","forecast","rain","raining","cold","hot","sunny","snow","wind","outside","umbrella","humidity","storm","cloudy","remind","reminder","task","todo","calendar","event","meeting","schedule","alarm","timer","wake me","facetime","whatsapp","call","phone","shortcut","shortcuts","automation"], latencyMs: 1500, tier: .foundationModel),
+ 
+            // ── Scripting executor / Web researcher / OS control delegation tools ──
+            .init(name: "delegate_to_scripting_executor", keywords: ["script","code","generate","swift","compute"],    latencyMs: 3000, ramMB: 1500, tier: .foundationModel),
+            .init(name: "delegate_to_web_researcher", keywords: ["research","web","google","search","browse","look","find","wikipedia","who","what","where","how"], latencyMs: 2000, tier: .foundationModel),
+            .init(name: "delegate_to_os_control", keywords: ["os","control","system","macos","settings","volume","brightness"], latencyMs: 1000, tier: .foundationModel),
         ]
         registerAll(builtins)
     }

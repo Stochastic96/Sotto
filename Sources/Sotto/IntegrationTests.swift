@@ -44,6 +44,16 @@ public func runCapabilityConsistencyCheck() async -> Bool {
         ok = false
     }
 
+    // Bidirectional check: every foundationModel or cloud capability in the registry must have a matching tool in the toolbox.
+    let foundationModelCaps = await CapabilityRegistry.shared.allCapabilities().filter { $0.tier >= .foundationModel }
+    let missingTools = foundationModelCaps.map { $0.name }.filter { !toolNames.contains($0) }
+    if missingTools.isEmpty {
+        print("✅ All \(foundationModelCaps.count) foundationModel/cloud capabilities have a matching tool in JarvisToolbox.")
+    } else {
+        print("❌ Capabilities in registry missing a Tool in JarvisToolbox: \(missingTools.joined(separator: ", "))")
+        ok = false
+    }
+
     // Every reflex the kernel binds must resolve to a registered reflex-tier capability.
     let reflexNames = await Kernel.shared.boundReflexNames()
     let badReflexes = reflexNames.filter { !registered.contains($0) }
