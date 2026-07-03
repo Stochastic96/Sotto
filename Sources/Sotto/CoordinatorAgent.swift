@@ -306,11 +306,20 @@ public actor CoordinatorAgent {
                     print("[COORDINATOR] Retry failed (\(error.localizedDescription)). Routing directly.")
                 }
                 
-                print("[COORDINATOR] Retry did not call start_long_task. Routing to LongTaskEngine directly.")
-                let directReply = LongTaskEngine.start(goal: userInput)
-                let toolHint = CommandLearner.inferTool(from: directReply)
-                Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
-                return directReply
+                let finalWasCalled = await MainActor.run { StartLongTaskTool.wasCalled }
+                if finalWasCalled {
+                    print("[COORDINATOR] Retry failed/timed out, but tool was already executed. Returning background starting reply.")
+                    let reply = "On it — cleaning up your inbox in the background. I'll let you know when it's done."
+                    let toolHint = CommandLearner.inferTool(from: reply)
+                    Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
+                    return reply
+                } else {
+                    print("[COORDINATOR] Retry did not call start_long_task. Routing to LongTaskEngine directly.")
+                    let directReply = LongTaskEngine.start(goal: userInput)
+                    let toolHint = CommandLearner.inferTool(from: directReply)
+                    Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
+                    return directReply
+                }
             }
             
             let reply: String
@@ -324,11 +333,20 @@ public actor CoordinatorAgent {
             return reply
         } catch {
             if mode == .bigJob {
-                print("[COORDINATOR] bigJob failed in DynamicProfile. Routing directly to LongTaskEngine.")
-                let directReply = LongTaskEngine.start(goal: userInput)
-                let toolHint = CommandLearner.inferTool(from: directReply)
-                Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
-                return directReply
+                let wasCalled = await MainActor.run { StartLongTaskTool.wasCalled }
+                if wasCalled {
+                    print("[COORDINATOR] bigJob failed/timed out, but start_long_task was already executed. Returning background starting reply.")
+                    let reply = "On it — cleaning up your inbox in the background. I'll let you know when it's done."
+                    let toolHint = CommandLearner.inferTool(from: reply)
+                    Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
+                    return reply
+                } else {
+                    print("[COORDINATOR] bigJob failed in DynamicProfile. Routing directly to LongTaskEngine.")
+                    let directReply = LongTaskEngine.start(goal: userInput)
+                    let toolHint = CommandLearner.inferTool(from: directReply)
+                    Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
+                    return directReply
+                }
             }
             print("[COORDINATOR] DynamicProfile failed (\(error.localizedDescription)); retrying tool-free.")
             self.session = nil

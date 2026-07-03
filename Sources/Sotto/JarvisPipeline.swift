@@ -43,9 +43,13 @@ extension AppController {
         }
         
         // 2. Grab the active selection when referenced.
+        var processedInput = raw
         if raw.lowercased().contains("selection") || raw.lowercased().contains("selected text") {
-            let sel = await injector.grabActiveSelection(targetPID: lastActiveApp?.processIdentifier)
-            print("[JARVIS] Grabbed selection: '\(sel ?? "none")'")
+            if let sel = await injector.grabActiveSelection(targetPID: lastActiveApp?.processIdentifier),
+               !sel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                processedInput += "\n\n[Active Selection]\n\(sel)"
+                print("[JARVIS] Appended active selection to input.")
+            }
         }
         
         // 3. Grab the active selection when referenced.
@@ -96,9 +100,9 @@ extension AppController {
             do {
                 let reply: String
                 if let coord = self.coordinator {
-                    reply = Self.sanitizeReply(try await coord.handleTurn(userInput: raw))
+                    reply = Self.sanitizeReply(try await coord.handleTurn(userInput: processedInput))
                 } else {
-                    reply = Self.sanitizeReply(try await JarvisAgent.run(raw))
+                    reply = Self.sanitizeReply(try await JarvisAgent.run(processedInput))
                 }
                 print("[JARVIS] Agent reply: '\(reply)'")
                 DatasetLogger.shared.log(mode: "jarvis-apple", app: lastActiveApp?.localizedName, rawTranscript: raw, response: reply, kind: "agent", samples: samples)
@@ -505,7 +509,7 @@ extension AppController {
                 if !city.isEmpty { return city }
             }
         }
-        let home = UserDefaults.standard.string(forKey: "sotto_home_city") ?? ""
+        let home = SettingsController.homeCity
         return home.isEmpty ? nil : home
     }
     

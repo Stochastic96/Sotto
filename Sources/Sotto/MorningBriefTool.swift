@@ -157,8 +157,9 @@ struct MorningBriefTool: Tool {
     }
 
     private func fetchWeather() async -> String {
-        let city = UserDefaults.standard.string(forKey: "jarvis_home_city") ?? "your city"
-        if let w = await WeatherService.summary(city: city) {
+        let city = SettingsController.homeCity
+        let queryCity = city.isEmpty ? "your city" : city
+        if let w = await WeatherService.summary(city: queryCity) {
             return w
         }
         return "weather unavailable"

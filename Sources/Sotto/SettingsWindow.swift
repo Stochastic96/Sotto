@@ -122,6 +122,10 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         UserDefaults.standard.string(forKey: workspacePathKey) ?? "~/projects"
     }
     
+    nonisolated static var homeCity: String {
+        UserDefaults.standard.string(forKey: "sotto_home_city") ?? ""
+    }
+    
     nonisolated static var transcriptionEngine: TranscriptionEngine {
         let raw = UserDefaults.standard.string(forKey: engineKey) ?? TranscriptionEngine.appleSpeech.rawValue
         return TranscriptionEngine(rawValue: raw) ?? .appleSpeech

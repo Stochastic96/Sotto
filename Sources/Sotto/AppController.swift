@@ -306,7 +306,9 @@ import SottoCore
         // Warm both Apple Intelligence sessions at launch:
         //   JarvisAgent  — intent classifier + single-hop tool calls
         //   CoordinatorAgent — multi-turn Jarvis orchestration (was cold before, now warm)
+#if DEBUG
         JarvisAgent.prewarm()
+#endif
         CoordinatorAgent.prewarm()
 
         // Cache the built-in mic device ID so the first recording press skips
