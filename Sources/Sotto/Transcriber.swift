@@ -14,6 +14,21 @@ protocol TranscriptionBackend: Sendable {
     func prepare() async throws
     /// `samples` must be 16 kHz mono Float32.
     func transcribe(_ samples: [Float]) async throws -> String
+    /// Begin a live streaming pass fed by `audio`. Returns a stream of display-only
+    /// partial transcripts, or nil when this backend can't stream (caller stays on batch).
+    /// The caller MUST finish the `audio` stream before calling `finishStreaming()`.
+    func startStreaming(feeding audio: AsyncStream<SendableAudioBuffer>) async throws -> AsyncStream<String>?
+    /// Finalize the active streaming pass and return its transcript.
+    /// nil → no active pass, or it failed/was empty; caller falls back to batch transcribe.
+    func finishStreaming() async -> String?
+    /// Tear down the active streaming pass without using its result.
+    func cancelStreaming() async
+}
+
+extension TranscriptionBackend {
+    func startStreaming(feeding audio: AsyncStream<SendableAudioBuffer>) async throws -> AsyncStream<String>? { nil }
+    func finishStreaming() async -> String? { nil }
+    func cancelStreaming() async {}
 }
 
 // MARK: - Parakeet (FluidAudio / ANE, fully offline)
@@ -104,9 +119,153 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
             useLegacy = true
             try await legacyFallback.prepare()
         }
+     }
+
+    // MARK: - Streaming (live partials + final-transcript reuse)
+
+    /// One live streaming pass. `transcriber.results` tolerates only ONE consumer, so the
+    /// backend owns the session and tears it down before any batch `transcribe()` runs.
+    final class StreamingSession: @unchecked Sendable {
+        let partials: AsyncStream<String>
+        private let analysisTask: Task<Void, Never>
+        private let collectorTask: Task<String, Never>
+        private let finalize: @Sendable () async throws -> Void
+        private let lock = NSLock()
+        private var terminated = false
+
+        init(partials: AsyncStream<String>,
+             analysisTask: Task<Void, Never>,
+             collectorTask: Task<String, Never>,
+             finalize: @escaping @Sendable () async throws -> Void) {
+            self.partials = partials
+            self.analysisTask = analysisTask
+            self.collectorTask = collectorTask
+            self.finalize = finalize
+        }
+
+        /// Drain the analyzer, finalize, and return the accumulated transcript.
+        /// The audio input stream must already be finished. nil → failed or empty;
+        /// the caller should batch-transcribe the recorded samples instead.
+        func finish() async -> String? {
+            guard beginTerminate() else { return nil }
+            do {
+                try await withTimeout(seconds: 10, errorDomain: "Transcriber",
+                                      errorDescription: "Streaming finalize timed out") { [analysisTask, finalize] in
+                    await analysisTask.value
+                    try await finalize()
+                }
+            } catch {
+                print("[STREAM-ASR] Finalize failed (\(error.localizedDescription)); discarding streaming result.")
+                collectorTask.cancel()
+                _ = await collectorTask.value
+                return nil
+            }
+            // results should end after finalize; the backstop covers the known hang case
+            // (same pattern as the batch path).
+            let backstop = Task { try? await Task.sleep(for: .seconds(2)); collectorTask.cancel() }
+            let text = await collectorTask.value
+            backstop.cancel()
+            return text.isEmpty ? nil : text
+        }
+
+        /// Tear down without using the result (batch path takes over, or an aborted press).
+        func cancel() {
+            guard beginTerminate() else { return }
+            collectorTask.cancel()
+            analysisTask.cancel()
+        }
+
+        private func beginTerminate() -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            if terminated { return false }
+            terminated = true
+            return true
+        }
+    }
+
+    private var activeStreamingSession: StreamingSession?
+
+    func startStreaming(feeding audio: AsyncStream<SendableAudioBuffer>) async throws -> AsyncStream<String>? {
+        // Never two sessions: a stale one (e.g. from an aborted short-tap) dies first.
+        activeStreamingSession?.cancel()
+        activeStreamingSession = nil
+
+        if transcriber == nil {
+            try await prepare()
+        }
+        guard !useLegacy, let transcriber, let analyzer else {
+            return nil
+        }
+
+        let context = AnalysisContext()
+        let vocab = Self.contextualVocabulary()
+        if !vocab.isEmpty { context.contextualStrings[.general] = vocab }
+        try await analyzer.setContext(context)
+
+        let (partialStream, partialContinuation) = AsyncStream<String>.makeStream()
+
+        // The single consumer of transcriber.results: accumulates final segments and
+        // yields display partials (finals so far + the current volatile hypothesis).
+        let collectorTask = Task<String, Never> {
+            var finalText = ""
+            do {
+                for try await result in transcriber.results {
+                    let text = String(result.text.characters)
+                    if result.isFinal {
+                        finalText += text
+                        partialContinuation.yield(finalText)
+                    } else if !text.isEmpty {
+                        partialContinuation.yield(finalText + text)
+                    }
+                }
+            } catch {
+                // CancellationError / analyzer error — keep what we accumulated.
+            }
+            partialContinuation.finish()
+            return finalText
+        }
+
+        let analysisTask = Task {
+            do {
+                _ = try await analyzer.analyzeSequence(AnalyzerInputStream(audio))
+            } catch {
+                print("[STREAM-ASR] Analysis error: \(error.localizedDescription)")
+            }
+        }
+
+        activeStreamingSession = StreamingSession(
+            partials: partialStream,
+            analysisTask: analysisTask,
+            collectorTask: collectorTask,
+            finalize: { try await analyzer.finalizeAndFinishThroughEndOfInput() }
+        )
+        return partialStream
+    }
+
+    func finishStreaming() async -> String? {
+        guard let session = activeStreamingSession else { return nil }
+        activeStreamingSession = nil
+        guard let text = await session.finish() else {
+            // After a failed/hung finalize the cached analyzer's state is unknown —
+            // rebuild on the next press instead of risking a wedged instance. (Also hit
+            // on an empty transcript; the rare rebuild there is a fair price for safety.)
+            self.transcriber = nil
+            self.analyzer = nil
+            return nil
+        }
+        return text
+    }
+
+    func cancelStreaming() async {
+        activeStreamingSession?.cancel()
+        activeStreamingSession = nil
     }
 
     func transcribe(_ samples: [Float]) async throws -> String {
+        // A leftover streaming session must die first — transcriber.results tolerates
+        // only one consumer, and a zombie collector would race this batch pass for text.
+        await cancelStreaming()
+
         // `prepare()` only runs once at launch (AppController.loadModel), not before every
         // press — so if a prior transcribe() invalidated the cached analyzer after a
         // failure, rebuild it here rather than staying permanently degraded to legacy.
@@ -354,6 +513,22 @@ actor Transcriber {
         return try await activeBackend.transcribe(samples)
     }
 
+    /// Begin a live streaming pass. Returns display partials, or nil when the active
+    /// backend can't stream — the caller simply stays on the batch path.
+    func startStreaming(feeding audio: AsyncStream<SendableAudioBuffer>) async throws -> AsyncStream<String>? {
+        guard let activeBackend else { return nil }
+        return try await activeBackend.startStreaming(feeding: audio)
+    }
+
+    /// Final transcript of the active streaming pass, or nil (→ batch-transcribe instead).
+    func finishStreaming() async -> String? {
+        await activeBackend?.finishStreaming()
+    }
+
+    func cancelStreaming() async {
+        await activeBackend?.cancelStreaming()
+    }
+
     private func makeBackend(for setting: TranscriptionEngine) -> any TranscriptionBackend {
         switch setting {
         case .offlineAI:
@@ -367,5 +542,30 @@ actor Transcriber {
             nativeDictationBackend = backend
             return backend
         }
+    }
+}
+
+// MARK: - AnalyzerInputStream
+
+struct AnalyzerInputStream: AsyncSequence, Sendable {
+    typealias Element = AnalyzerInput
+    
+    private let base: AsyncStream<SendableAudioBuffer>
+    
+    init(_ base: AsyncStream<SendableAudioBuffer>) {
+        self.base = base
+    }
+    
+    struct AsyncIterator: AsyncIteratorProtocol {
+        var baseIterator: AsyncStream<SendableAudioBuffer>.AsyncIterator
+        
+        mutating func next() async -> AnalyzerInput? {
+            guard let wrapper = await baseIterator.next() else { return nil }
+            return AnalyzerInput(buffer: wrapper.buffer)
+        }
+    }
+    
+    func makeAsyncIterator() -> AsyncIterator {
+        AsyncIterator(baseIterator: base.makeAsyncIterator())
     }
 }

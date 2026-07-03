@@ -25,6 +25,7 @@ enum HUDDisplayState: Equatable {
 @Observable final class HUDViewModel {
     var displayState: HUDDisplayState = .result(text: "", style: .info)
     var visible: Bool = false
+    var memoryLedgerText: String = ""
 }
 
 // MARK: - SwiftUI Root
@@ -69,9 +70,16 @@ struct HUDRootView: View {
                 .shadow(color: .black.opacity(0.25), radius: 14, x: 0, y: 6)
                 Spacer()
             }
+            
+            if !model.memoryLedgerText.isEmpty {
+                Text(model.memoryLedgerText)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary.opacity(0.8))
+                    .padding(.top, 4)
+            }
             Spacer()
         }
-        .frame(width: 600, height: 120)
+        .frame(width: 600, height: 140)
         .opacity(model.visible ? 1 : 0)
         .scaleEffect(model.visible ? 1.0 : 0.94)
         .offset(y: model.visible ? 0 : 15)
@@ -306,6 +314,10 @@ final class HUDOverlay {
 
     // ── Public API (unchanged from original) ────────────────────────────────
 
+    func setMemoryLedger(_ text: String) {
+        viewModel.memoryLedgerText = text
+    }
+
     func show(_ text: String) {
         hideTask?.cancel(); hideTask = nil
         let newState = classify(text)
@@ -409,7 +421,7 @@ final class HUDOverlay {
         let hosting = NSHostingView(rootView: HUDRootView(model: viewModel))
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 120),
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 140),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -429,7 +441,7 @@ final class HUDOverlay {
         guard let panel, let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let sf = screen.visibleFrame
         let pw: CGFloat = 600
-        let ph: CGFloat = 120
+        let ph: CGFloat = 140
 
         // Position at the bottom-center of the screen, floating 50pt above the bottom/dock
         let x = sf.minX + (sf.width - pw) / 2

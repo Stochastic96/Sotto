@@ -15,7 +15,12 @@ extension AVAudioNode {
     }
 }
 
-// MARK: - AudioCapturing Protocol
+final class SendableAudioBuffer: @unchecked Sendable {
+    let buffer: AVAudioPCMBuffer
+    init(_ buffer: AVAudioPCMBuffer) {
+        self.buffer = buffer
+    }
+}
 
 /// Abstracts microphone capture for the dictation pipeline.
 /// Conform to swap in a test double that returns pre-recorded samples
@@ -24,7 +29,7 @@ protocol AudioCapturing: AnyObject {
     var currentRMS: Float { get }
     func prewarm()
     func onSilenceDetected(_ handler: @escaping () -> Void)
-    func start() throws
+    func start(onBuffer: (@Sendable (SendableAudioBuffer) -> Void)?) throws
     func stop() -> [Float]
 }
 
@@ -51,6 +56,7 @@ final class AudioRecorder: @unchecked Sendable, AudioCapturing {
         lock.withLock { _currentRMS }
     }
     private var configChangeObserver: NSObjectProtocol?
+    private var onBufferCallback: (@Sendable (SendableAudioBuffer) -> Void)?
 
     private let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
@@ -105,11 +111,14 @@ final class AudioRecorder: @unchecked Sendable, AudioCapturing {
         }
     }
 
-    func start() throws {
+    func start(onBuffer: (@Sendable (SendableAudioBuffer) -> Void)? = nil) throws {
+        // onBufferCallback is read on the CoreAudio thread in append() — guard it with
+        // the same lock as the rest of the shared capture state.
         lock.withLock {
             samples.removeAll(keepingCapacity: true)
             _currentRMS = 0.0
             silenceAccumulator = 0.0
+            onBufferCallback = onBuffer
         }
 
         let input = engine.inputNode
@@ -165,6 +174,7 @@ final class AudioRecorder: @unchecked Sendable, AudioCapturing {
         engine.stop()
         return lock.withLock {
             _currentRMS = 0.0
+            onBufferCallback = nil
             return samples
         }
     }
@@ -220,8 +230,14 @@ final class AudioRecorder: @unchecked Sendable, AudioCapturing {
         }
 
         let newSamples = [Float](UnsafeBufferPointer(start: channel[0], count: count))
-        lock.withLock { samples.append(contentsOf: newSamples) }
-        
+        // Snapshot the callback under the lock, invoke it OUTSIDE — same rule as the
+        // silence handler: never call out to foreign code while holding the capture lock.
+        let onBuffer = lock.withLock { () -> (@Sendable (SendableAudioBuffer) -> Void)? in
+            samples.append(contentsOf: newSamples)
+            return onBufferCallback
+        }
+        onBuffer?(SendableAudioBuffer(out))
+
         if triggerSilence {
             silenceDetectedHandler?()
         }

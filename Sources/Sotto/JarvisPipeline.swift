@@ -239,6 +239,7 @@ extension AppController {
         let ms = (CFAbsoluteTimeGetCurrent() - start) * 1000
         print("[LANE] \(lane.rawValue) \(String(format: "%.0f", ms))ms — '\(raw.prefix(48))'")
         Task { await LaneStats.shared.record(lane: lane, ms: ms) }
+        AppController.shared?.updateMemoryLedger()
     }
     
     /// Executes a matched zero-latency shortcut (native actions / system info report).
@@ -250,7 +251,7 @@ extension AppController {
         let output: String
         if shortcut.command.hasPrefix("skill:") {
             let skillName = String(shortcut.command.dropFirst(6))
-            output = SkillStore.runEnabled(skillName)
+            output = await SkillStore.runEnabled(skillName)
         } else if shortcut.command.hasPrefix("native:") {
             let action = String(shortcut.command.dropFirst(7))
             output = await NativeActions.perform(action)

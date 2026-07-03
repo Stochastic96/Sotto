@@ -44,6 +44,14 @@ import SottoCore
     private var recordingTimeoutTask: Task<Void, Never>?
     private var memoryPressureSource: (any DispatchSourceMemoryPressure)?
 
+    // Live streaming ASR state for the current press. The buffer continuation is created
+    // synchronously in startRecording so the recorder tap never captures nil; partials are
+    // DISPLAY-ONLY — they never route or execute anything (half-spoken text must not act).
+    private var streamBufferContinuation: AsyncStream<SendableAudioBuffer>.Continuation?
+    private var streamingSetupTask: Task<Void, Never>?
+    private var partialsTask: Task<Void, Never>?
+    private var latestPartial: String = ""
+
     enum Mode {
         case dictation
         case jarvis
@@ -283,7 +291,10 @@ import SottoCore
             }
         }
 
-        self.coordinator = CoordinatorAgent()
+        // The SHARED instance, deliberately: the memory-pressure handler and
+        // MicrotaskQueue both target CoordinatorAgent.shared — a private instance here
+        // would keep its warm session invisible to (and safe from) pressure eviction.
+        self.coordinator = CoordinatorAgent.shared
         let tools = JarvisToolbox.all().map { $0.name }.sorted()
         print("[TOOLS] \(tools.count) available: \(tools.joined(separator: ", "))")
         // Run availability diagnostics at startup to surface clear log output
@@ -483,7 +494,45 @@ import SottoCore
 
         do {
             self.recordingStart = Date()
-            try recorder.start()
+            self.latestPartial = ""
+
+            // Show current memory status on the HUD (no-op unless the debug setting is on).
+            self.updateMemoryLedger()
+
+            // Live streaming ASR. The buffer stream is created SYNCHRONOUSLY so the
+            // recorder tap holds a real continuation from the very first frame —
+            // AsyncStream buffers until the backend starts consuming. The session comes
+            // up in the background; endRecording AWAITS streamingSetupTask before
+            // finishStreaming(), so a session can never appear mid-batch-transcription.
+            let (bufferStream, bufferContinuation) = AsyncStream<SendableAudioBuffer>.makeStream()
+            self.streamBufferContinuation = bufferContinuation
+            self.streamingSetupTask = Task { @MainActor in
+                do {
+                    guard let partials = try await self.transcriber.startStreaming(feeding: bufferStream) else {
+                        // Backend can't stream (Parakeet/legacy). Finish the buffer stream so
+                        // the recorder tap stops piling AVAudioPCMBuffers into an unbounded,
+                        // unconsumed AsyncStream for the whole recording — a real memory cost
+                        // on the 8 GB target since recorder.samples already holds the audio.
+                        self.streamBufferContinuation?.finish()
+                        self.streamBufferContinuation = nil
+                        return
+                    }
+                    // Recording may have ended while the session came up — the session
+                    // stays registered and endRecording's finishStreaming() consumes it;
+                    // we only skip the (now pointless) HUD partials loop.
+                    guard case .recording = self.state else { return }
+                    self.partialsTask = Task { @MainActor in
+                        for await partial in partials { self.latestPartial = partial }
+                    }
+                } catch {
+                    // Same reasoning: don't leave the tap feeding an unconsumed stream.
+                    self.streamBufferContinuation?.finish()
+                    self.streamBufferContinuation = nil
+                    print("[APP] Streaming ASR unavailable for this press: \(error.localizedDescription)")
+                }
+            }
+
+            try recorder.start(onBuffer: { bufferContinuation.yield($0) })
             state = .recording
             hud.show("●  Listening  [0:00 / 5:00]")
             soundPop?.play()
@@ -510,7 +559,12 @@ import SottoCore
                     let bars = self.waveform(for: rms)
                     let elapsed = Date().timeIntervalSince(self.recordingStart ?? Date())
                     let timeStr = String(format: "%d:%02d", Int(elapsed) / 60, Int(elapsed) % 60)
-                    self.hud.show("●  Listening  \(bars)  [\(timeStr) / 5:00]")
+                    // Live transcript preview from the streaming ASR partials — display
+                    // only; routing always waits for the final key-release transcript.
+                    let preview = self.latestPartial.isEmpty
+                        ? ""
+                        : "  “…\(String(self.latestPartial.suffix(42)))”"
+                    self.hud.show("●  Listening  \(bars)  [\(timeStr) / 5:00]\(preview)")
                 }
             }
 
@@ -538,9 +592,21 @@ import SottoCore
 
         let samples = recorder.stop()
 
+        // End the audio input and stop the partial preview — on every exit path.
+        streamBufferContinuation?.finish()
+        streamBufferContinuation = nil
+        partialsTask?.cancel()
+        partialsTask = nil
+        latestPartial = ""
+        let setupTask = streamingSetupTask
+        streamingSetupTask = nil
+
         // Ignore accidental taps shorter than ~0.3s of audio — check synchronously
         // before transitioning state so we don't flash the "Transcribing" HUD.
         guard samples.count > 4800 else {
+            // The streaming session (if it came up) is left registered: the next
+            // startStreaming()/transcribe() tears it down on the actor, which avoids
+            // racing a cancel against a rapid next press.
             state = .idle
             hud.showResult("Hold ⌘⇧K while speaking, then release", autoHideAfter: 2.0)
             return
@@ -556,7 +622,20 @@ import SottoCore
 
         Task { @MainActor in
             do {
-                var raw = try await self.transcriber.transcribe(samples)
+                // Settle the streaming session first: after this await it is either
+                // registered (finishStreaming consumes it) or failed (nil → batch). It
+                // costs nothing extra — a slow prepare() would stall batch ASR equally.
+                await setupTask?.value
+
+                // Prefer the streaming transcript: the audio was analyzed live while the
+                // user spoke, so this skips a second full ASR pass over the same speech.
+                var raw: String
+                if let streamed = await self.transcriber.finishStreaming() {
+                    print("[APP] Streaming transcript used (\(streamed.count) chars); batch ASR skipped.")
+                    raw = streamed
+                } else {
+                    raw = try await self.transcriber.transcribe(samples)
+                }
                 raw = VocabCorrector.apply(to: raw)
                 print("[APP] Raw transcript (after vocab correction): '\(raw)' (mode: \(mode))")
 
@@ -584,6 +663,27 @@ import SottoCore
                 self.state = .error("Transcription failed: \(error.localizedDescription)")
                 self.scheduleErrorRecovery()
             }
+        }
+    }
+
+    func updateMemoryLedger() {
+        // Debug instrumentation only — end users shouldn't see session bookkeeping.
+        guard SettingsController.showMemoryLedger else {
+            hud.setMemoryLedger("")
+            return
+        }
+        Task { @MainActor in
+            let state = await MemoryLedger.shared.fetchState()
+            var active: [String] = []
+            if state.polishWarm { active.append("polish") }
+            if state.coordinatorWarm { active.append("coord") }
+            if state.osControlWarm { active.append("os") }
+            if state.webResearcherWarm { active.append("research") }
+            if state.scriptingWarm { active.append("script") }
+            
+            let activeStr = active.isEmpty ? "none" : active.joined(separator: ",")
+            let ledgerText = "Warm: [\(activeStr)] | Evict: \(state.evictions)"
+            hud.setMemoryLedger(ledgerText)
         }
     }
 
@@ -647,6 +747,7 @@ import SottoCore
                 await OSControlAgent.shared.unload()
                 await WebResearcherAgent.shared.unload()
                 await ScriptingExecutorAgent.shared.unload()
+                await CoordinatorAgent.shared.unload()
                 if let intel = self?.intelligence {
                     if event.contains(.critical) {
                         await intel.forceUnload()

@@ -56,6 +56,8 @@ actor SottoIntelligence: IntelligenceEngine {
     // @available on a stored property (Swift restriction). Re-cast inside guarded methods.
     private var polishSession: AnyObject?
     private var polishTurnCount = 0
+
+    var isWarm: Bool { polishSession != nil }
     // Instructions the cached polishSession was actually built with — lets
     // getOrCreatePolishSession() detect a live change to the user's custom prompt
     // (Settings ▸ Custom Instructions) and rebuild rather than serving a stale session.
@@ -120,6 +122,9 @@ actor SottoIntelligence: IntelligenceEngine {
 
     /// Drop the polish session on memory pressure. Rebuilt transparently on next refine().
     func forceUnload() async {
+        if polishSession != nil {
+            await MainActor.run { MemoryLedger.shared.recordEviction() }
+        }
         polishSession = nil
         polishTurnCount = 0
     }

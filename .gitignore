@@ -33,3 +33,4 @@ screenshot2.png
 # Agent configurations
 .agents/
 
+build_error.txt

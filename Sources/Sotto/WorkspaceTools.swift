@@ -20,6 +20,7 @@ struct FocusSessionTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
+        Task { await CommandLearner.shared.recordToolCall(toolName: name, arguments: arguments) }
         let mins = arguments.minutes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "25"
             : arguments.minutes.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -138,6 +139,7 @@ struct WorkspaceSwitchTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
+        Task { await CommandLearner.shared.recordToolCall(toolName: name, arguments: arguments) }
         let mode = arguments.mode.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
 
         switch mode {

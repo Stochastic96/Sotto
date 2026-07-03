@@ -100,9 +100,22 @@ public actor CoordinatorAgent {
     // Test-only toggle, flipped once from single-threaded test setup, never mid-flight.
     nonisolated(unsafe) public static var isMockMode = false
 
+    // Spoken/HUD confirmation when a bigJob has been handed to the background engine.
+    // Kept task-agnostic on purpose — a hardcoded "cleaning up your inbox" line misdescribes
+    // every non-inbox bulk job (rename downloads, organize photos, …).
+    private static let backgroundJobReply = "On it — I'll take care of that in the background and let you know when it's done."
+
     // Retained across a clarification round-trip so the follow-up answer lands in the same
     // multi-turn transcript. Actor isolation replaces the need for explicit locking.
     private var session: LanguageModelSession?
+    public var isWarm: Bool { session != nil }
+
+    public func unload() {
+        if session != nil {
+            Task { @MainActor in MemoryLedger.shared.recordEviction() }
+        }
+        session = nil
+    }
 
     /// Shared instance — used by `MicrotaskQueue` and `AppController` so background tasks
     /// don't each pay a fresh session-init cost.
@@ -142,6 +155,10 @@ public actor CoordinatorAgent {
     }
 
     public func handleTurn(userInput: String, isFollowUp: Bool = false) async throws -> String {
+        // Attribute tool calls fired during this turn. Deliberately never cleared —
+        // tools record via fire-and-forget tasks that can land after the turn returns;
+        // the next turn simply overwrites the utterance.
+        await CommandLearner.shared.setCurrentUtterance(userInput)
         if Self.isMockMode {
             print("[MOCK-COORDINATOR] Starting mock turn loop for user input: '\(userInput)'")
             var currentInput = userInput
@@ -253,7 +270,7 @@ public actor CoordinatorAgent {
                 let finalWasCalled = await MainActor.run { StartLongTaskTool.wasCalled }
                 if finalWasCalled {
                     print("[COORDINATOR] Retry failed/timed out, but tool was already executed. Returning background starting reply.")
-                    let reply = "On it — cleaning up your inbox in the background. I'll let you know when it's done."
+                    let reply = Self.backgroundJobReply
                     let toolHint = CommandLearner.inferTool(from: reply)
                     Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
                     return reply
@@ -280,7 +297,7 @@ public actor CoordinatorAgent {
                 let wasCalled = await MainActor.run { StartLongTaskTool.wasCalled }
                 if wasCalled {
                     print("[COORDINATOR] bigJob failed/timed out, but start_long_task was already executed. Returning background starting reply.")
-                    let reply = "On it — cleaning up your inbox in the background. I'll let you know when it's done."
+                    let reply = Self.backgroundJobReply
                     let toolHint = CommandLearner.inferTool(from: reply)
                     Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
                     return reply
@@ -337,6 +354,7 @@ public actor OSControlAgent {
 
     private var session: LanguageModelSession?
     private var turnCount = 0
+    public var isWarm: Bool { session != nil }
 
     private static let instructions = "You are the OS Control Agent. Execute the requested system task using the available tools, then report what actually happened in one line."
 
@@ -366,6 +384,9 @@ public actor OSControlAgent {
 
     /// Free the resident session (e.g. on memory pressure on 8 GB Macs).
     public func unload() {
+        if session != nil {
+            Task { @MainActor in MemoryLedger.shared.recordEviction() }
+        }
         session = nil
         turnCount = 0
     }
@@ -381,6 +402,7 @@ public actor WebResearcherAgent {
 
     private var session: LanguageModelSession?
     private var turnCount = 0
+    public var isWarm: Bool { session != nil }
 
     private static let instructions = """
         You are the Web Researcher Agent. Perform web search, screen parsing, and clicking using the provided tools.
@@ -419,6 +441,9 @@ public actor WebResearcherAgent {
 
     /// Free the resident session (e.g. on memory pressure on 8 GB Macs).
     public func unload() {
+        if session != nil {
+            Task { @MainActor in MemoryLedger.shared.recordEviction() }
+        }
         session = nil
         turnCount = 0
     }
@@ -435,6 +460,7 @@ public actor ScriptingExecutorAgent {
 
     private var session: LanguageModelSession?
     private var turnCount = 0
+    public var isWarm: Bool { session != nil }
 
     private static let systemPrompt = """
         You are a Swift Script Generator. Generate a valid, compiling Swift script that performs the requested task and prints the result to standard output.
@@ -519,6 +545,9 @@ public actor ScriptingExecutorAgent {
 
     /// Free the resident session (e.g. on memory pressure on 8 GB Macs).
     public func unload() {
+        if session != nil {
+            Task { @MainActor in MemoryLedger.shared.recordEviction() }
+        }
         session = nil
         turnCount = 0
     }

@@ -33,10 +33,29 @@ extension AppController {
             hud.show("✨  Polishing…")
             let polishStart = CFAbsoluteTimeGetCurrent()
             let refinementTask = Task { [self, text] in
-                // Stream partial snapshots to the HUD so the user sees characters
-                // arriving live instead of waiting 2-4s for the whole result.
-                try await intel.refine(text, context: context, history: self.recentTranscripts) { @MainActor [weak self] partial in
-                    self?.hud.show("✨ \(partial.prefix(60))\(partial.count > 60 ? "…" : "")")
+                let chunks = Self.splitIntoChunks(text)
+                if chunks.count <= 1 {
+                    // Stream partial snapshots to the HUD so the user sees characters
+                    // arriving live instead of waiting 2-4s for the whole result.
+                    return try await intel.refine(text, context: context, history: self.recentTranscripts) { @MainActor [weak self] partial in
+                        self?.hud.show("✨ \(partial.prefix(60))\(partial.count > 60 ? "…" : "")")
+                    }
+                } else {
+                    var polishedChunks: [String] = []
+                    final class StringBox: @unchecked Sendable {
+                        var value = ""
+                    }
+                    let accumulated = StringBox()
+                    for chunk in chunks {
+                        let partialProgress: @Sendable @MainActor (String) -> Void = { @MainActor [weak self, accumulated] partial in
+                            let hudText = accumulated.value + (accumulated.value.isEmpty ? "" : "\n\n") + partial
+                            self?.hud.show("✨ \(hudText.prefix(60))\(hudText.count > 60 ? "…" : "")")
+                        }
+                        let polishedChunk = try await intel.refine(chunk, context: context, history: self.recentTranscripts, onProgress: partialProgress)
+                        polishedChunks.append(polishedChunk)
+                        accumulated.value += (accumulated.value.isEmpty ? "" : "\n\n") + polishedChunk
+                    }
+                    return polishedChunks.joined(separator: "\n\n")
                 }
             }
             let timeoutTask = Task {
@@ -78,6 +97,7 @@ extension AppController {
         let total = CFAbsoluteTimeGetCurrent() - pipelineStart
         print("[BENCHMARK] Dictation \(String(format: "%.0f", total * 1000))ms (polish: \(String(format: "%.0f", polishDuration * 1000))ms)")
         hud.show("✓ Done (\(String(format: "%.1f", total))s)")
+        self.updateMemoryLedger()
         state = .idle
         Task { try? await Task.sleep(for: .seconds(1.5)); hud.hide() }
     }
@@ -264,4 +284,68 @@ extension AppController {
         "too", "let", "lets", "because", "check", "make", "like", "how", "hey", "say",
         "tell", "ask", "open", "start", "stop", "thanks", "thank", "sure", "fine"
     ]
+    
+    static func splitIntoChunks(_ text: String, maxWordsPerChunk: Int = 80) -> [String] {
+        // Split by paragraph first
+        let paragraphs = text.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        var chunks: [String] = []
+        
+        for para in paragraphs {
+            let words = para.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+            if words.count <= maxWordsPerChunk {
+                chunks.append(para)
+            } else {
+                // Split by sentence boundaries within the paragraph
+                var currentChunk: [String] = []
+                var currentWordCount = 0
+                
+                var currentSentence = ""
+                for char in para {
+                    currentSentence.append(char)
+                    if char == "." || char == "?" || char == "!" {
+                        let trimmed = currentSentence.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmed.isEmpty {
+                            let sentenceWords = trimmed.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+                            if currentWordCount + sentenceWords.count > maxWordsPerChunk && !currentChunk.isEmpty {
+                                chunks.append(currentChunk.joined(separator: " "))
+                                currentChunk = [trimmed]
+                                currentWordCount = sentenceWords.count
+                            } else {
+                                currentChunk.append(trimmed)
+                                currentWordCount += sentenceWords.count
+                            }
+                        }
+                        currentSentence = ""
+                    }
+                }
+                let remainder = currentSentence.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !remainder.isEmpty {
+                    currentChunk.append(remainder)
+                }
+                if !currentChunk.isEmpty {
+                    chunks.append(currentChunk.joined(separator: " "))
+                }
+            }
+        }
+
+        // Hard fallback: a long UNPUNCTUATED transcript (legacy backend, raw ASR) has no
+        // sentence boundaries to split on and would come back as one giant chunk — which
+        // is exactly the context overflow chunking exists to prevent. Split it by word
+        // count; a mid-sentence seam is far cheaper than a truncated polish.
+        var bounded: [String] = []
+        for chunk in chunks {
+            let words = chunk.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+            if words.count <= maxWordsPerChunk + 20 {
+                bounded.append(chunk)
+            } else {
+                var start = 0
+                while start < words.count {
+                    let end = min(start + maxWordsPerChunk, words.count)
+                    bounded.append(words[start..<end].joined(separator: " "))
+                    start = end
+                }
+            }
+        }
+        return bounded
+    }
 }

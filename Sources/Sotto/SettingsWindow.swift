@@ -35,6 +35,7 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
     nonisolated static let workspacePathKey = "sotto_workspacePath"
     nonisolated static let engineKey = "sotto_transcriptionEngine"
     nonisolated static let agentModeKey = "sotto_agentMode"
+    nonisolated static let memoryLedgerKey = "sotto_showMemoryLedger"
     nonisolated static let voiceFeedbackEnabledKey = "sotto_voiceFeedbackEnabled"
     nonisolated static let voiceIdentifierKey = "sotto_voiceIdentifier"
     nonisolated static let speechRateKey = "sotto_speechRate"
@@ -108,6 +109,12 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
     
     nonisolated static var isDirectInsert: Bool {
         UserDefaults.standard.bool(forKey: directInsertKey)
+    }
+
+    /// Debug-only HUD line showing warm model sessions and eviction count.
+    /// Off by default; enable with `defaults write` on this key.
+    nonisolated static var showMemoryLedger: Bool {
+        UserDefaults.standard.bool(forKey: memoryLedgerKey)
     }
 
     nonisolated static var customSystemPrompt: String {

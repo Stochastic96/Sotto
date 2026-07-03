@@ -129,7 +129,7 @@ enum SkillStore {
     // MARK: - Gated execution
 
     /// Run an ENABLED skill by name. Refuses anything not approved by the user.
-    static func runEnabled(_ rawName: String) -> String {
+    static func runEnabled(_ rawName: String) async -> String {
         let target = slug(rawName)
         let skill = lock.withLock { load().first { $0.name == target } }
 
@@ -137,6 +137,26 @@ enum SkillStore {
         guard skill.enabled else {
             return "Skill '\(target)' is not enabled yet. Ask the user to say \"enable skill \(target)\" first."
         }
+
+        // INTERCEPT SOTTO NATIVE TOOL CALL REFLEXES
+        if skill.body.hasPrefix("# SOTTO_TOOL_CALL: ") {
+            let line = skill.body.components(separatedBy: "\n").first ?? ""
+            let prefixLen = "# SOTTO_TOOL_CALL: ".count
+            let payload = String(line.dropFirst(prefixLen))
+            
+            // Format: toolName:jsonArgs
+            if let firstBraceIdx = payload.firstIndex(of: "{") {
+                let toolName = String(payload[..<firstBraceIdx]).trimmingCharacters(in: CharacterSet(charactersIn: " :"))
+                let jsonArgs = String(payload[firstBraceIdx...])
+                
+                do {
+                    return try await JarvisToolbox.callToolNatively(name: toolName, jsonArgs: jsonArgs)
+                } catch {
+                    return "Reflex failed: \(error.localizedDescription)"
+                }
+            }
+        }
+
         ensureDirs()
         let ext = skill.language == "applescript" ? "applescript" : "sh"
         let fileURL = scriptsDir.appendingPathComponent("\(target).\(ext)")

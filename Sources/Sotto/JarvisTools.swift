@@ -73,6 +73,7 @@ struct SpotifyTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
+        Task { await CommandLearner.shared.recordToolCall(toolName: name, arguments: arguments) }
         // Every command is addressed to Spotify by name (see SpotifyControl), so it can
         // never accidentally drive Apple Music or another player.
         switch arguments.action {
@@ -102,6 +103,7 @@ struct VolumeTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
+        Task { await CommandLearner.shared.recordToolCall(toolName: name, arguments: arguments) }
         switch arguments.action {
         case .mute:
             _ = SystemControlHelper.setMuted(true); return "Muted."
@@ -127,6 +129,7 @@ struct BrightnessTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
+        Task { await CommandLearner.shared.recordToolCall(toolName: name, arguments: arguments) }
         let current = SystemControlHelper.getBrightness()
         switch arguments.direction {
         case .up:
@@ -151,6 +154,7 @@ struct OpenWebsiteTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
+        Task { await CommandLearner.shared.recordToolCall(toolName: name, arguments: arguments) }
         var url = arguments.url.trimmingCharacters(in: .whitespacesAndNewlines)
         if !url.lowercased().hasPrefix("http") { url = "https://" + url }
         // Pure in-process Swift — opens instantly in the default browser, no AppleScript
@@ -177,7 +181,8 @@ struct OpenAppTool: SiriDelegatable {
 
     @MainActor
     func call(arguments: Arguments) async throws -> String {
-        try await siriDelegatedCall(tool: self, arguments: arguments) {
+        Task { await CommandLearner.shared.recordToolCall(toolName: name, arguments: arguments) }
+        return try await siriDelegatedCall(tool: self, arguments: arguments) {
             let appName = arguments.appName.trimmingCharacters(in: .whitespacesAndNewlines)
             let path = "/Applications/\(appName).app"
             let sysPath = "/System/Applications/\(appName).app"
@@ -379,7 +384,7 @@ struct RunSkillTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        let out = SkillStore.runEnabled(arguments.name)
+        let out = await SkillStore.runEnabled(arguments.name)
         return out.isEmpty ? "Ran '\(arguments.name)'." : out
     }
 }
@@ -589,6 +594,7 @@ struct PowerStateTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
+        Task { await CommandLearner.shared.recordToolCall(toolName: name, arguments: arguments) }
         switch arguments.action {
         case .lock:
             NativeSystemOrchestrator.lockScreen()
@@ -861,5 +867,72 @@ enum JarvisToolbox {
             if picked.count >= 5 { break }
         }
         return picked
+    }
+
+    static func callToolNatively(name: String, jsonArgs: String) async throws -> String {
+        // Reflex replays run outside a CoordinatorAgent turn, so clear the current utterance
+        // first — otherwise each tool's recordToolCall() would attribute this replay to a
+        // stale, unrelated phrase and pollute its learned arguments.
+        await CommandLearner.shared.clearCurrentUtterance()
+        // Arguments are reconstructed through the framework's own JSON bridge
+        // (@Generable => ConvertibleFromGeneratedContent) - no Codable involved.
+        switch name {
+        case "control_spotify":
+            let args = try SpotifyTool.Arguments(GeneratedContent(json: jsonArgs))
+            return try await SpotifyTool().call(arguments: args)
+        case "set_volume":
+            let args = try VolumeTool.Arguments(GeneratedContent(json: jsonArgs))
+            return try await VolumeTool().call(arguments: args)
+        case "adjust_brightness":
+            let args = try BrightnessTool.Arguments(GeneratedContent(json: jsonArgs))
+            return try await BrightnessTool().call(arguments: args)
+        case "open_website":
+            let args = try OpenWebsiteTool.Arguments(GeneratedContent(json: jsonArgs))
+            return try await OpenWebsiteTool().call(arguments: args)
+        case "open_app":
+            let args = try OpenAppTool.Arguments(GeneratedContent(json: jsonArgs))
+            return try await OpenAppTool().call(arguments: args)
+        case "create_note":
+            let args = try CreateNoteTool.Arguments(GeneratedContent(json: jsonArgs))
+            return try await CreateNoteTool().call(arguments: args)
+        case "web_search":
+            let args = try WebSearchTool.Arguments(GeneratedContent(json: jsonArgs))
+            return try await WebSearchTool().call(arguments: args)
+        case "read_screen":
+            let args = try ReadScreenTool.Arguments(GeneratedContent(json: jsonArgs))
+            return try await ReadScreenTool().call(arguments: args)
+        case "click_element":
+            let args = try ClickElementTool.Arguments(GeneratedContent(json: jsonArgs))
+            return try await ClickElementTool().call(arguments: args)
+        case "recall_history":
+            let args = try RecallHistoryTool.Arguments(GeneratedContent(json: jsonArgs))
+            return try await RecallHistoryTool().call(arguments: args)
+        case "system_power_state":
+            let args = try PowerStateTool.Arguments(GeneratedContent(json: jsonArgs))
+            return try await PowerStateTool().call(arguments: args)
+        case "simulate_keystroke":
+            let args = try KeySimulatorTool.Arguments(GeneratedContent(json: jsonArgs))
+            return try await KeySimulatorTool().call(arguments: args)
+        case "morning_brief":
+            let args = try MorningBriefTool.Arguments(GeneratedContent(json: jsonArgs))
+            return try await MorningBriefTool().call(arguments: args)
+        case "start_focus_session":
+            let args = try FocusSessionTool.Arguments(GeneratedContent(json: jsonArgs))
+            return try await FocusSessionTool().call(arguments: args)
+        case "end_workday":
+            let args = try EndWorkdayTool.Arguments(GeneratedContent(json: jsonArgs))
+            return try await EndWorkdayTool().call(arguments: args)
+        case "switch_workspace":
+            let args = try WorkspaceSwitchTool.Arguments(GeneratedContent(json: jsonArgs))
+            return try await WorkspaceSwitchTool().call(arguments: args)
+        case "manage_tasks":
+            let args = try MicrotaskTool.Arguments(GeneratedContent(json: jsonArgs))
+            return try await MicrotaskTool().call(arguments: args)
+        case "ask_siri":
+            let args = try AskSiriTool.Arguments(GeneratedContent(json: jsonArgs))
+            return try await AskSiriTool().call(arguments: args)
+        default:
+            throw NSError(domain: "JarvisToolbox", code: -1, userInfo: [NSLocalizedDescriptionKey: "Native tool execution not supported for \(name)"])
+        }
     }
 }

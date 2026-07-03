@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 import os
 
 /// Learns which Jarvis phrases you use repeatedly and promotes them so
@@ -19,6 +20,9 @@ actor CommandLearner {
         var toolName: String?
         var count: Int
         var promoted: Bool
+        var lastArgumentsJson: String?
+        var argumentsStableCount: Int?
+        var reflexDrafted: Bool?
     }
 
     // OSAllocatedUnfairLock for synchronous reads from JarvisToolbox.routed
@@ -27,12 +31,78 @@ actor CommandLearner {
 
     private var entries: [String: Entry] = [:]
     private let threshold = 3
+    private var currentUtterance: String?
 
     private lazy var fileURL: URL = {
         SettingsController.sottoDataURL.appendingPathComponent("learned_shortcuts.json")
     }()
 
     private init() {}
+
+    /// Set at the START of every CoordinatorAgent turn and simply overwritten by the
+    /// next turn — never cleared. Tool calls record via fire-and-forget tasks that can
+    /// land after the turn returns; clearing eagerly made attribution silently flaky.
+    func setCurrentUtterance(_ utterance: String) {
+        currentUtterance = utterance
+    }
+
+    /// Drop the current utterance so tool calls fired OUTSIDE a CoordinatorAgent turn
+    /// aren't attributed to a stale phrase. Reflex replays (SkillStore → callToolNatively)
+    /// never go through handleTurn, so without this a replayed tool call would corrupt the
+    /// learning data of whatever phrase the last real turn happened to leave set.
+    func clearCurrentUtterance() {
+        currentUtterance = nil
+    }
+
+    /// Track argument stability for a tool call fired during the current turn.
+    /// Deliberately does NOT touch `count`/promotion — counting stays in the single
+    /// post-turn `record(phrase:toolName:)` path, so a turn is never counted twice.
+    func recordToolCall(toolName: String, argumentsJson: String) {
+        guard let phrase = currentUtterance else { return }
+        let key = Self.normalize(phrase)
+        guard key.count > 5 else { return }
+
+        var e = entries[key] ?? Entry(phrase: key, toolName: nil, count: 0, promoted: false, lastArgumentsJson: nil, argumentsStableCount: nil, reflexDrafted: nil)
+        if e.toolName == nil { e.toolName = toolName }
+
+        if let lastArgs = e.lastArgumentsJson, lastArgs == argumentsJson {
+            e.argumentsStableCount = (e.argumentsStableCount ?? 0) + 1
+        } else {
+            e.lastArgumentsJson = argumentsJson
+            e.argumentsStableCount = 1
+        }
+
+        // Same phrase + same tool + identical arguments `threshold` times → distill a
+        // reflex skill. Saved DISABLED; the user must speak "enable skill <name>" to arm
+        // it, so the name is built from the phrase itself to stay pronounceable.
+        if (e.argumentsStableCount ?? 0) >= threshold && e.reflexDrafted != true {
+            e.reflexDrafted = true
+            let words = key.split(separator: " ").prefix(4).joined(separator: "_")
+            let name = "auto_" + words.filter { $0.isLetter || $0.isNumber || $0 == "_" }
+            let desc = "Auto-distilled reflex for '\(phrase)' -> \(toolName)"
+            let body = "# SOTTO_TOOL_CALL: \(toolName):\(argumentsJson)\n# This is an auto-distilled Sotto reflex. Do not modify."
+
+            SkillStore.draft(
+                name: name,
+                description: desc,
+                trigger: phrase,
+                language: "shell",
+                body: body
+            )
+            print("[LEARNER] Auto-drafted reflex skill for '\(phrase)': \(name)")
+        }
+
+        entries[key] = e
+        refreshCache()
+        save()
+    }
+
+    /// `@Generable` arguments serialize through the framework's own JSON bridge, so tool
+    /// argument types need no Codable conformance (String-raw @Generable enums expand to
+    /// deprecated GenerationError paths inside the macro — that's why Codable is gone).
+    func recordToolCall(toolName: String, arguments: some ConvertibleToGeneratedContent) {
+        recordToolCall(toolName: toolName, argumentsJson: arguments.generatedContent.jsonString)
+    }
 
     // MARK: - Startup
 

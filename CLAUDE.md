@@ -30,18 +30,26 @@ Microphone, Accessibility, and Screen Recording permissions are needed for the f
 
 Requires **macOS 27 + Xcode 27 (Swift 6.4)**. The platform floor is macOS 27, and modern Apple Intelligence features are active by default.
 
+**Known SDK-beta diagnostics (do not chase):** a full rebuild shows ~108 deprecation
+warnings (`GenerationError` / `decodingFailure`), all from the `@Generable` macro
+expansion on the project's 9 `@Generable` enums — Apple's macro emits a deprecated
+fallback throw beside the new `ParsingError` path. Not fixable in project code; goes
+away when the SDK's macro is fixed. Same category as the `installTapCompat` shim in
+`AudioRecorder.swift`. Any warning NOT from a `@Generable` expansion is new — fix it.
+
 ## Model backend — what's active
 
-**Apple Intelligence (Foundation Models / `SystemLanguageModel`) is the only model backend.** Every `LanguageModelSession` in this codebase runs on it — dictation polish, Jarvis command routing, and all sub-agent delegation. The lane-based DynamicProfile system is always active.
+**Apple Intelligence (Foundation Models / `SystemLanguageModel`) is the only model backend.** Every `LanguageModelSession` in this codebase runs on it — dictation polish, Jarvis command routing, and all sub-agent delegation. The chat/quick/bigJob lanes are built as plain per-lane `LanguageModelSession`s in `CoordinatorAgent` (the `DynamicProfile` API was retired after dyld symbol-not-found crashes; `JarvisProfile.classify` still picks the lane).
 
 ## Concurrency & Memory Pressure Management
 
-1. **Memory Pressure Handling**: A DispatchSource memory pressure observer is registered in `AppController.swift`. On `.warning` or `.critical` signals, it unloads warm cached sub-agent sessions (`OSControlAgent`, `WebResearcherAgent`, `ScriptingExecutorAgent`) and the polish session to free up unified memory.
+1. **Memory Pressure Handling**: A DispatchSource memory pressure observer is registered in `AppController.swift`. On `.warning` or `.critical` signals, it unloads warm cached sub-agent sessions (`OSControlAgent`, `WebResearcherAgent`, `ScriptingExecutorAgent`, `CoordinatorAgent.shared`) and the polish session to free up unified memory. `AppController.coordinator` must stay `CoordinatorAgent.shared` — a private instance would hide its warm session from eviction. `MemoryLedger` counts evictions; the HUD ledger line is gated behind `SettingsController.showMemoryLedger` (debug default-off).
 2. **Actor & MainActor Isolation**:
    - `ScreenParser`, `NativeClipboard`, and `ClipboardObserver` are isolated to `@MainActor`.
    - `GitObserver` is implemented as a Swift actor to prevent concurrent state mutation races.
    - All `NSAppleScript` and AppKit pasteboard calls must execute safely on the main thread/runloop.
-3. **Deadlock Prevention in AudioRecorder**: CoreAudio background thread calls write to `silenceAccumulator` and `samples` inside a lock, but invoke the silence callback *outside* the lock context to prevent lock deadlocks when stop() is called.
+3. **Deadlock Prevention in AudioRecorder**: CoreAudio background thread calls write to `silenceAccumulator` and `samples` inside a lock, but invoke the silence callback and the `onBuffer` streaming callback *outside* the lock context to prevent lock deadlocks when stop() is called.
+4. **Streaming ASR single-consumer rule**: `DictationTranscriber.results` tolerates exactly ONE consumer. The live streaming pass (`Transcriber.startStreaming/finishStreaming`) owns it via a backend-held `StreamingSession`; batch `transcribe()` cancels any active session before consuming. On key-release, `AppController.endRecording` awaits the streaming setup task and prefers the streaming transcript (skipping a second ASR pass); nil falls back to batch over the recorded samples. Partial transcripts are HUD display ONLY — they must never route or execute commands (half-spoken text acting is a safety bug, and dictation must never trigger actions).
 
 ## Structured Output
 
