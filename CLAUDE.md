@@ -59,12 +59,15 @@ The codebase uses `@Generable` structured output types with `respond(to:generati
 
 ## Dictation transcription — native SpeechAnalyzer, not legacy SFSpeechRecognizer
 
-`TranscriptionEngine.appleSpeech` (`Transcriber.swift`) runs on `NativeDictationBackend`
-— the modern `SpeechAnalyzer` + `DictationTranscriber` stack (`import Speech`, macOS 26+)
-— not the old delegate-callback `SFSpeechRecognizer` API. Key points for future work here:
+Dictation (`Transcriber.swift`) runs on `NativeDictationBackend` — the modern
+`SpeechAnalyzer` + `DictationTranscriber` stack (`import Speech`, macOS 26+) — not the old
+delegate-callback `SFSpeechRecognizer` API. This is the ONLY transcription engine: the old
+Parakeet/FluidAudio ANE backend and the user-facing engine picker were removed, so there is
+no engine setting to switch. Key points for future work here:
 - The `SpeechAnalyzer`/model is created once and cached on the `Transcriber` actor
   (`.lingering` model retention) so repeated dictation presses don't re-pay asset-install
-  cost; it's released only when the user switches to the `.offlineAI` (Parakeet) engine.
+  cost; the cached instance is only torn down after a failed/hung finalize (rebuilt on the
+  next press).
 - Custom vocabulary + learned jargon (same UserDefaults keys `SottoIntelligence` reads for
   the polish prompt) are injected via `AnalysisContext.contextualStrings` so the ASR layer
   gets names/jargon right at the source, not just via post-hoc polish correction.
@@ -89,7 +92,7 @@ re-architecting. Don't wire it into the startup path or flip its default without
 ## Architecture map
 
 ```
-Voice → Parakeet (ANE, via FluidAudio) → transcript
+Voice → AudioRecorder (16 kHz mono) → SpeechAnalyzer/DictationTranscriber (on-device) → transcript
                                ↓
         CommandEngine.checkZeroLatencyShortcut  ← instant, no AI (window tiling, volume, etc)
                                ↓

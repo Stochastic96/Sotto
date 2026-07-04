@@ -6,7 +6,6 @@ let package = Package(
     defaultLocalization: "en",
     platforms: [.macOS(.v27)],
     dependencies: [
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.15.0"),
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts.git", from: "1.12.0"),
     ],
     targets: [
@@ -18,7 +17,6 @@ let package = Package(
             name: "Sotto",
             dependencies: [
                 "SottoCore",
-                .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
             ],
             path: "Sources/Sotto",

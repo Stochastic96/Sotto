@@ -1,13 +1,14 @@
 import os
 import sys
-import requests
+import subprocess
+import urllib.parse
 from dotenv import load_dotenv
 from google.antigravity import Agent, LocalAgentConfig
 
 # Load environment variables from a .env file if present
 load_dotenv()
 
-# Define the custom tool to communicate with Sotto's PhoneRemote HTTP API
+# Define the custom tool to communicate with Sotto's custom macOS URL scheme
 def send_command_to_sotto(command: str) -> str:
     """Sends a voice/text command to the local Sotto assistant running on macOS.
     
@@ -19,22 +20,15 @@ def send_command_to_sotto(command: str) -> str:
         command: The natural language command to send to Sotto, e.g., "set volume to 50 percent",
                  "open Safari", "mute", "sleep mac", "create a note: buy milk", "maximize window".
     """
-    url = "http://localhost:52027/command"
-    headers = {"Content-Type": "application/json"}
-    payload = {"text": command}
+    encoded_command = urllib.parse.quote(command)
+    url = f"sotto://command?text={encoded_command}"
     
-    print(f"\n[TOOL] Forwarding command to Sotto: '{command}'...")
+    print(f"\n[TOOL] Forwarding command to Sotto via URL scheme: '{command}'...")
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=5)
-        if response.status_code == 200:
-            return f"Successfully sent command to Sotto. Response: {response.text}"
-        else:
-            return f"Failed to send command to Sotto. Status code: {response.status_code}, Response: {response.text}"
-    except requests.exceptions.RequestException as e:
-        return (
-            f"Error connecting to Sotto's PhoneRemote server: {e}.\n"
-            "Please ensure Sotto is running on your Mac and the PhoneRemote listener is active."
-        )
+        subprocess.run(["open", url], check=True)
+        return "Successfully sent command to Sotto via URL scheme."
+    except subprocess.SubprocessError as e:
+        return f"Failed to send command to Sotto via URL scheme: {e}"
 
 async def main():
     # Verify GEMINI_API_KEY is present
@@ -62,7 +56,7 @@ async def main():
     print("=====================================================================")
     print("🤖 Google Antigravity Agent - Sotto Integration Controller")
     print("=====================================================================")
-    print("This agent forwards system commands to Sotto via its local HTTP server.")
+    print("This agent forwards system commands to Sotto via its native URL scheme.")
     print("Starting interactive loop. Type 'exit' or 'quit' to end.\n")
 
     async with Agent(config) as agent:

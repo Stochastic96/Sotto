@@ -542,6 +542,44 @@ struct MemoryTool: Tool {
     }
 }
 
+@Generable
+enum MemoryPadAction {
+    case read, write, append, clear
+}
+
+/// Private background memory/scratchpad to hold temporary text content
+struct MemoryPadTool: Tool {
+    let name = "manage_memory_pad"
+    let description = "Save or retrieve temporary notes, drafts, or research data to Sotto's private background memory pad. This does NOT modify the user's macOS system clipboard."
+
+    @Generable
+    struct Arguments {
+        @Guide(description: "The memory pad operation: read (get current content), write (overwrite content), append (add to end), or clear (empty pad).")
+        let action: MemoryPadAction
+        @Guide(description: "The text to write or append. Leave empty for read or clear.")
+        let text: String?
+    }
+
+    func call(arguments: Arguments) async throws -> String {
+        switch arguments.action {
+        case .read:
+            let val = await SottoMemoryPad.shared.get()
+            return val.isEmpty ? "Memory pad is currently empty." : "Memory pad content:\n\(val)"
+        case .write:
+            guard let t = arguments.text else { return "Text is required for write." }
+            await SottoMemoryPad.shared.set(t)
+            return "Saved text to Sotto's memory pad."
+        case .append:
+            guard let t = arguments.text else { return "Text is required for append." }
+            await SottoMemoryPad.shared.append(t)
+            return "Appended text to Sotto's memory pad."
+        case .clear:
+            await SottoMemoryPad.shared.clear()
+            return "Cleared Sotto's memory pad."
+        }
+    }
+}
+
 /// Send a prompt to the Claude desktop app's quick-entry popover (no full app window).
 /// Use for research / questions you want answered in Claude.
 struct AskClaudeTool: Tool {
@@ -791,7 +829,7 @@ enum JarvisToolbox {
             OpenWebsiteTool(), OpenAppTool(), CreateNoteTool(), WebSearchTool(),
             ReadScreenTool(), ClickElementTool(), DraftSkillTool(), RunSkillTool(),
             RecallHistoryTool(), SystemStatusTool(), RAMMemoryStatusTool(), GPUStatusTool(),
-            LocationGeocoderTool(), WikipediaLookupTool(), MemoryTool(),
+            LocationGeocoderTool(), WikipediaLookupTool(), MemoryTool(), MemoryPadTool(),
             AskClaudeTool(), PowerStateTool(),
             NetworkDiagnosticsTool(), ClipboardTool(), SpotlightSearchTool(),
             AppWindowTool(), KeySimulatorTool(),
@@ -928,6 +966,9 @@ enum JarvisToolbox {
         case "manage_tasks":
             let args = try MicrotaskTool.Arguments(GeneratedContent(json: jsonArgs))
             return try await MicrotaskTool().call(arguments: args)
+        case "manage_memory_pad":
+            let args = try MemoryPadTool.Arguments(GeneratedContent(json: jsonArgs))
+            return try await MemoryPadTool().call(arguments: args)
         case "ask_siri":
             let args = try AskSiriTool.Arguments(GeneratedContent(json: jsonArgs))
             return try await AskSiriTool().call(arguments: args)

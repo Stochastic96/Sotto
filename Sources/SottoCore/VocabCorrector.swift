@@ -1,13 +1,13 @@
 import Foundation
 
-/// Post-transcription vocabulary corrections. Fixes common Parakeet mishears
+/// Post-transcription vocabulary corrections. Fixes common ASR mishears
 /// (brand names, camelCase tech terms) and lets you add project-specific words.
 ///
 /// Usage: call `VocabCorrector.apply(to: rawTranscript)` after transcription.
 public enum VocabCorrector {
     private static let userDefaultsKey = "sotto_vocab_corrections"
 
-    // Seeded corrections for common Parakeet/ASR mishears.
+    // Seeded corrections for common ASR mishears.
     // Key: lowercase mis-transcription. Value: correct spelling.
     private static let builtIn: [String: String] = [
         // Tech brand names
@@ -34,7 +34,7 @@ public enum VocabCorrector {
         "open ai":        "OpenAI",
         "javascript":     "JavaScript",
         "typescript":     "TypeScript",
-        // App and assistant name corrections (Parakeet frequently mishears these)
+        // App and assistant name corrections (ASR frequently mishears these)
         "soto":           "Sotto",
         "sotto":          "Sotto",
         "jarvise":        "Jarvis",

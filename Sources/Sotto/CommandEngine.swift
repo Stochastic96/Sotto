@@ -107,6 +107,21 @@ enum CommandEngine {
             }
         }
 
+        // Zero-latency app launcher via Siri with local name normalization
+        for verb in ["open ", "launch ", "start ", "run "] {
+            if cleanT.hasPrefix(verb) {
+                let rawAppName = String(cleanT.dropFirst(verb.count)).trimmingCharacters(in: CharacterSet(charactersIn: " .,!?"))
+                if let cleanApp = resolveAppAlias(for: rawAppName) {
+                    let query = "open \(cleanApp)"
+                    return ZeroLatencyShortcut(
+                        command: "native:ask_siri:\(query)",
+                        voiceFeedback: "Opening \(cleanApp) via Siri.",
+                        hudMessage: "Siri: open \(cleanApp)"
+                    )
+                }
+            }
+        }
+
         if isSiriNativeCommand(cleanT) {
             if cleanT.contains("weather") || cleanT.contains("temperature") || cleanT.contains("forecast") {
                 Task {
@@ -1131,6 +1146,55 @@ enum CommandEngine {
             }
         }
         return cleanText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func resolveAppAlias(for name: String) -> String? {
+        let clean = name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let aliases: [String: String] = [
+            "google chromme": "chrome",
+            "google chrome": "chrome",
+            "gocle hcrome": "chrome",
+            "gocle chrome": "chrome",
+            "google chroome": "chrome",
+            "chromme": "chrome",
+            "chrome": "chrome",
+            "safari browser": "safari",
+            "safari": "safari",
+            "x code": "xcode",
+            "xcode": "xcode",
+            "vs code": "vscode",
+            "vscode": "vscode",
+            "visual studio code": "vscode",
+            "slack": "slack",
+            "spotify": "spotify",
+            "messages": "messages",
+            "mail": "mail",
+            "finder": "finder",
+            "terminal": "terminal",
+            "terminal app": "terminal",
+            "activity monitor": "activity monitor",
+            "system settings": "system settings",
+            "system preferences": "system settings"
+        ]
+        if let matched = aliases[clean] {
+            return matched
+        }
+        // Check if an actual app exists with this name to make it general
+        let appDirs = ["/Applications", "/System/Applications", "/System/Applications/Utilities", "~/Applications"]
+        let fileManager = FileManager.default
+        for dir in appDirs {
+            let expandedDir = (dir as NSString).expandingTildeInPath
+            let url = URL(fileURLWithPath: expandedDir)
+            if let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: nil) {
+                while let appURL = enumerator.nextObject() as? URL {
+                    let appName = appURL.deletingPathExtension().lastPathComponent.lowercased()
+                    if appName == clean {
+                        return clean
+                    }
+                }
+            }
+        }
+        return nil
     }
 
     private static func isSiriNativeCommand(_ text: String) -> Bool {

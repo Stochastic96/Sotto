@@ -96,6 +96,10 @@ import SottoCore
     private var watchdogTask: Task<Void, Never>?
 
     init() {
+        // Dictation ships with LLM polish ON by default — the primary experience is
+        // clean polished output, not raw ASR. Polish runs on the shared Apple
+        // Intelligence model (same base model Siri uses, so no extra ~2 GB), kept warm
+        // because dictation is the daily driver. Toggle off via the status-bar menu.
         if UserDefaults.standard.object(forKey: Self.polishDefaultsKey) == nil {
             UserDefaults.standard.set(true, forKey: Self.polishDefaultsKey)
         }
@@ -211,18 +215,6 @@ import SottoCore
             self?.settings.showSettings()
         }
 
-        settings.onEngineChanged = { [weak self] in
-            Task { @MainActor in
-                await self?.loadModel()
-                if let intel = self?.intelligence {
-                    await intel.forceUnload()
-                    if self?.polishEnabled == true {
-                        await intel.preload()
-                    }
-                }
-            }
-        }
-
         NotificationCenter.default.addObserver(
             forName: NSNotification.Name("SottoIncomingCommand"),
             object: nil,
@@ -314,17 +306,13 @@ import SottoCore
         // Resume any bulk background jobs left running from a previous launch.
         LongTaskEngine.resumePending()
 
-        // Warm both Apple Intelligence sessions at launch:
-        //   JarvisAgent  — intent classifier + single-hop tool calls
-        //   CoordinatorAgent — multi-turn Jarvis orchestration (was cold before, now warm)
-#if DEBUG
-        JarvisAgent.prewarm()
-#endif
+        // Dictation is the daily driver, so ONLY its polish session is warmed at launch
+        // (via intelligence.preload() in loadModel). Jarvis is used a few times a day, so it
+        // stays LAZY — its classifier/coordinator model loads on first Jarvis press, not now.
+        // Prewarming a second Apple Intelligence session here competes with polish for unified
+        // memory on 8 GB and was tipping launch into CriticalMemoryPressure.
+        // CoordinatorAgent.prewarm() only bootstraps the CommandLearner hint cache (no model).
         CoordinatorAgent.prewarm()
-
-        // Cache the built-in mic device ID so the first recording press skips
-        // the CoreAudio device-enumeration scan.
-        recorder.prewarm()
 
         // ── Kernel event bus + proactive observers ──────────────────────────
         // Each observer runs as a sleeping background Task — 0 CPU until an event fires.
@@ -509,7 +497,7 @@ import SottoCore
             self.streamingSetupTask = Task { @MainActor in
                 do {
                     guard let partials = try await self.transcriber.startStreaming(feeding: bufferStream) else {
-                        // Backend can't stream (Parakeet/legacy). Finish the buffer stream so
+                        // Backend can't stream (legacy fallback). Finish the buffer stream so
                         // the recorder tap stops piling AVAudioPCMBuffers into an unbounded,
                         // unconsumed AsyncStream for the whole recording — a real memory cost
                         // on the 8 GB target since recorder.samples already holds the audio.

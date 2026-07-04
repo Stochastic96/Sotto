@@ -86,7 +86,7 @@ actor EventBus {
         let transcript: String
         let reply: String
         let injectText: String?       // non-nil → paste into focused app
-        let tier: String              // "reflex" | "apple" | "mlx" | "failed"
+        let tier: String              // "reflex" | "apple" | "failed"
         let toolsUsed: [String]
         let latencyMs: Double
     }

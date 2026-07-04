@@ -1,6 +1,4 @@
 import AVFoundation
-import CoreAudio
-import AudioToolbox
 import os
 
 extension AVAudioNode {
@@ -27,7 +25,6 @@ final class SendableAudioBuffer: @unchecked Sendable {
 /// without requiring microphone hardware or permission prompts in tests.
 protocol AudioCapturing: AnyObject {
     var currentRMS: Float { get }
-    func prewarm()
     func onSilenceDetected(_ handler: @escaping () -> Void)
     func start(onBuffer: (@Sendable (SendableAudioBuffer) -> Void)?) throws
     func stop() -> [Float]
@@ -36,14 +33,13 @@ protocol AudioCapturing: AnyObject {
 // MARK: - AudioRecorder
 
 /// Captures microphone audio while the hotkey is held and converts it to
-/// 16 kHz mono Float32 — the format FluidAudio/Parakeet expects.
+/// 16 kHz mono Float32 — the capture format the SpeechAnalyzer dictation path uses.
 final class AudioRecorder: @unchecked Sendable, AudioCapturing {
     private let engine = AVAudioEngine()
     private var samples: [Float] = []
     private let lock = OSAllocatedUnfairLock<Void>()
 
-    // Cached hardware config — avoids re-enumerating all CoreAudio devices on every press.
-    private var cachedBuiltInMicID: AudioDeviceID?
+    // Cached hardware→16 kHz converter, rebuilt only when the input format changes.
     private var cachedConverter: AVAudioConverter?
     private var cachedHwFormat: AVAudioFormat?
 
@@ -91,24 +87,18 @@ final class AudioRecorder: @unchecked Sendable, AudioCapturing {
                 self.engine.inputNode.removeTap(onBus: 0)
                 self.engine.stop()
             }
-            // Discard stale device ID and converter; they'll be rebuilt on next start().
-            self.cachedBuiltInMicID = nil
-            self.cachedConverter = nil
-            self.cachedHwFormat = nil
+            // Discard the stale converter; it's rebuilt on the next append(). Guard with the
+            // capture lock — append() reads/writes the same fields on the CoreAudio thread,
+            // and an unsynchronized ARC store to the AVAudioConverter? reference can crash.
+            self.lock.withLock {
+                self.cachedConverter = nil
+                self.cachedHwFormat = nil
+            }
         }
     }
 
     func onSilenceDetected(_ handler: @escaping () -> Void) {
         self.silenceDetectedHandler = handler
-    }
-
-    /// Warms the CoreAudio device cache at launch so the first recording press doesn't
-    /// pay the device-enumeration cost. Safe to call on any thread.
-    func prewarm() {
-        if cachedBuiltInMicID == nil {
-            cachedBuiltInMicID = findBuiltInMicrophoneDeviceID()
-            print("[AUDIO] Prewarmed mic ID: \(cachedBuiltInMicID.map { "\($0)" } ?? "not found")")
-        }
     }
 
     func start(onBuffer: (@Sendable (SendableAudioBuffer) -> Void)? = nil) throws {
@@ -123,47 +113,31 @@ final class AudioRecorder: @unchecked Sendable, AudioCapturing {
 
         let input = engine.inputNode
 
-        // Always use the physical built-in mic, regardless of Bluetooth/external speaker state.
-        // Use the cached device ID when available to avoid re-enumerating all CoreAudio devices.
-        let builtInMicID = cachedBuiltInMicID ?? findBuiltInMicrophoneDeviceID()
-        if cachedBuiltInMicID == nil { cachedBuiltInMicID = builtInMicID }
-        if let builtInMicID {
-            print("[AUDIO] Forcing built-in microphone input device ID: \(builtInMicID)")
-            do {
-                try setInputDevice(engine: engine, deviceID: builtInMicID)
-            } catch {
-                print("[AUDIO] Failed to set input device to built-in microphone: \(error.localizedDescription). Using default input.")
-            }
-        } else {
-            print("[AUDIO] Built-in microphone not found. Using default input.")
-        }
+        // We deliberately do NOT force the input device via AudioUnitSetProperty here.
+        // Switching kAudioOutputUnitProperty_CurrentDevice posts an
+        // AVAudioEngineConfigurationChange DURING start(), which our own observer reacts to
+        // by tearing down the tap and stopping the engine we're mid-way through starting —
+        // and it also desyncs the node format (44100 graph vs 48000 hardware) → -10868, so
+        // recording never begins. Use whatever macOS has selected as the current input
+        // device; the converter below adapts any sample rate to 16 kHz.
 
-        let hwFormat = input.outputFormat(forBus: 0)
+        // The tap MUST use the input node's INPUT format (the real hardware rate, e.g.
+        // 48000 Hz), NOT its output format. On an input node, outputFormat(forBus:) — and
+        // therefore `format: nil` — returns a stale 44100 Hz default, which mismatches the
+        // 48000 Hz hardware and fails graph init with -10868 ("formats don't match"), so no
+        // audio is ever captured. inputFormat(forBus:) reflects the actual device.
+        let hwFormat = input.inputFormat(forBus: 0)
         guard hwFormat.sampleRate > 0 else {
-            throw NSError(domain: "AudioRecorder", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid hardware sample rate (0)"])
+            throw NSError(domain: "AudioRecorder", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid hardware input sample rate (0)"])
         }
-
-        // Reuse the cached converter when the hardware format matches — AVAudioConverter
-        // creation is non-trivial and the format is stable within a session.
-        let converter: AVAudioConverter
-        if let cached = cachedConverter, let fmt = cachedHwFormat,
-           fmt.sampleRate == hwFormat.sampleRate && fmt.channelCount == hwFormat.channelCount {
-            converter = cached
-        } else {
-            guard let fresh = AVAudioConverter(from: hwFormat, to: targetFormat) else {
-                throw NSError(domain: "AudioRecorder", code: -2, userInfo: [NSLocalizedDescriptionKey: "Failed to create audio converter from \(hwFormat.sampleRate)Hz to 16000Hz"])
-            }
-            converter = fresh
-            cachedConverter = fresh
-            cachedHwFormat = hwFormat
-        }
+        print("[AUDIO] Installing tap at hardware input format: \(Int(hwFormat.sampleRate))Hz, \(hwFormat.channelCount)ch")
 
         // Strong capture: the tap is always removed in stop() before AudioRecorder can
         // deinit, so there is no retain cycle. A [weak self] capture here produces a
         // Sendable warning in Swift 6 because Optional<AudioRecorder> isn't Sendable.
         input.removeTap(onBus: 0)
         try input.installTapCompat(onBus: 0, bufferSize: 4096, format: hwFormat) { [self] buffer, _ in
-            append(buffer, using: converter)
+            append(buffer)
         }
         engine.prepare()
         try engine.start()
@@ -179,8 +153,25 @@ final class AudioRecorder: @unchecked Sendable, AudioCapturing {
         }
     }
 
-    private func append(_ buffer: AVAudioPCMBuffer, using converter: AVAudioConverter) {
-        guard buffer.format.sampleRate > 0 else { return }
+    /// Returns a cached converter from `format` → 16 kHz mono, rebuilding only when the
+    /// incoming hardware format actually changes. Called on the CoreAudio capture thread;
+    /// the config-change observer may clear the cache from the main thread, so all access to
+    /// the cache fields is serialized by `lock`. Not called while `lock` is already held.
+    private func converter(for format: AVAudioFormat) -> AVAudioConverter? {
+        lock.withLock {
+            if let cached = cachedConverter, let fmt = cachedHwFormat,
+               fmt.sampleRate == format.sampleRate && fmt.channelCount == format.channelCount {
+                return cached
+            }
+            guard let fresh = AVAudioConverter(from: format, to: targetFormat) else { return nil }
+            cachedConverter = fresh
+            cachedHwFormat = format
+            return fresh
+        }
+    }
+
+    private func append(_ buffer: AVAudioPCMBuffer) {
+        guard buffer.format.sampleRate > 0, let converter = converter(for: buffer.format) else { return }
         let ratio = targetFormat.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 16
         guard let out = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else { return }
@@ -240,101 +231,6 @@ final class AudioRecorder: @unchecked Sendable, AudioCapturing {
 
         if triggerSilence {
             silenceDetectedHandler?()
-        }
-    }
-
-    // MARK: - Device discovery
-
-    /// Finds the physical built-in microphone by CoreAudio transport type.
-    /// This is reliable even when Bluetooth speakers/headsets are connected and
-    /// macOS has switched the system default input away from the built-in mic.
-    private func findBuiltInMicrophoneDeviceID() -> AudioDeviceID? {
-        for deviceID in getAllDevices() {
-            guard getTransportType(deviceID: deviceID) == kAudioDeviceTransportTypeBuiltIn,
-                  hasInputChannels(deviceID: deviceID) else { continue }
-            return deviceID
-        }
-        return nil
-    }
-
-    private func getTransportType(deviceID: AudioDeviceID) -> UInt32 {
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyTransportType,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var transportType: UInt32 = 0
-        var dataSize = UInt32(MemoryLayout<UInt32>.size)
-        AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &dataSize, &transportType)
-        return transportType
-    }
-
-    private func hasInputChannels(deviceID: AudioDeviceID) -> Bool {
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyStreamConfiguration,
-            mScope: kAudioDevicePropertyScopeInput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var dataSize: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(deviceID, &propertyAddress, 0, nil, &dataSize) == noErr,
-              dataSize >= MemoryLayout<AudioBufferList>.size else { return false }
-        let buffer = UnsafeMutableRawPointer.allocate(byteCount: Int(dataSize), alignment: MemoryLayout<AudioBufferList>.alignment)
-        defer { buffer.deallocate() }
-        guard AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &dataSize, buffer) == noErr else { return false }
-        return buffer.load(as: AudioBufferList.self).mNumberBuffers > 0
-    }
-
-    private func getAllDevices() -> [AudioDeviceID] {
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-
-        var dataSize: UInt32 = 0
-        let status = AudioObjectGetPropertyDataSize(
-            AudioObjectID(kAudioObjectSystemObject),
-            &propertyAddress,
-            0,
-            nil,
-            &dataSize
-        )
-        guard status == noErr else { return [] }
-
-        let deviceCount = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
-        var deviceIDs = [AudioDeviceID](repeating: 0, count: deviceCount)
-
-        let retrieveStatus = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &propertyAddress,
-            0,
-            nil,
-            &dataSize,
-            &deviceIDs
-        )
-        return retrieveStatus == noErr ? deviceIDs : []
-    }
-
-    private func setInputDevice(engine: AVAudioEngine, deviceID: AudioDeviceID) throws {
-        let inputNode = engine.inputNode
-        try inputNode.withAudioUnit { audioUnit in
-            guard let audioUnit else {
-                throw NSError(domain: "AudioRecorder", code: -3, userInfo: [NSLocalizedDescriptionKey: "Input node audio unit is nil"])
-            }
-            var mDeviceID = deviceID
-            let size = UInt32(MemoryLayout<AudioDeviceID>.size)
-            let status = AudioUnitSetProperty(
-                audioUnit,
-                kAudioOutputUnitProperty_CurrentDevice,
-                kAudioUnitScope_Global,
-                0,
-                &mDeviceID,
-                size
-            )
-
-            if status != noErr {
-                throw NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: [NSLocalizedDescriptionKey: "AudioUnitSetProperty CurrentDevice failed with status \(status)"])
-            }
         }
     }
 }

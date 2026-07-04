@@ -546,7 +546,8 @@ extension AppController {
             return t == "jarvis" || t.hasSuffix("jarvis")   // also catches "hejarvis"
         }
         var dropCount = 0
-        if words[0].lowercased() == "hey", words.count > 1, isWake(words[1]) {
+        let openers = ["hey", "hi", "hello", "yo", "ok"]
+        if openers.contains(words[0].lowercased()), words.count > 1, isWake(words[1]) {
             dropCount = 2
         } else if isWake(words[0]) {
             dropCount = 1

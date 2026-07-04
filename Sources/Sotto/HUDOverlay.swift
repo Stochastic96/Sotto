@@ -446,8 +446,8 @@ final class HUDOverlay {
         // Position at the bottom-center of the screen, floating 50pt above the bottom/dock
         let x = sf.minX + (sf.width - pw) / 2
         let y = sf.minY + 50
-        print("[HUD-DEBUG] Main Screen Frame: \(screen.frame), Visible Frame: \(sf)")
-        print("[HUD-DEBUG] Calculated HUD Frame: x=\(x), y=\(y), w=\(pw), h=\(ph)")
+        // print("[HUD-DEBUG] Main Screen Frame: \(screen.frame), Visible Frame: \(sf)")
+        // print("[HUD-DEBUG] Calculated HUD Frame: x=\(x), y=\(y), w=\(pw), h=\(ph)")
         panel.setFrame(NSRect(x: x, y: y, width: pw, height: ph), display: false)
     }
 }

@@ -13,7 +13,7 @@ For agent/session working notes and known gotchas, see `CLAUDE.md`.
 
 **Target hardware: Apple Silicon M1, 8 GB unified memory.** There is no larger-RAM
 fallback target. Every architectural choice below — session reuse, lane
-classification, background job batching, MLX-vs-Apple-Intelligence tradeoffs —
+classification, background job batching, and Apple Intelligence memory constraints —
 exists because 8 GB is a hard ceiling, not a soft recommendation. When evaluating a
 change, ask "does this add resident memory or reprocessing cost per turn" before
 asking "does this add capability."
@@ -22,8 +22,8 @@ asking "does this add capability."
 
 ```
                           ┌─────────────────────────────┐
-   Microphone  ────────▶ │  AudioRecorder / Parakeet ANE │
-                          │  (FluidAudio, on-device STT)  │
+   Microphone  ────────▶ │ AudioRecorder/SpeechAnalyzer │
+                          │ (Native Speech, on-device)  │
                           └───────────────┬───────────────┘
                                           ▼
                               transcript (raw speech)
@@ -120,15 +120,7 @@ fallback if the model is unavailable.
 
 ## Dictation pipeline
 
-`DictationPipeline.swift` → `SottoIntelligence.refine()`. Tries `MLXEngine`
-(on-device Qwen 0.5B via MLX-Swift) first; if unavailable — **currently always
-true**, since `Package.swift` has no MLX dependencies wired in right now — falls
-through to a dedicated, prewarmed Apple Intelligence session kept separate from
-the general-completion session specifically so the two never evict each other
-(see the session-architecture note at the top of `SottoIntelligence.swift`).
-Deliberately avoids `ContextOptions`/`reasoningLevel` — the on-device model on M1
-8 GB doesn't declare the `.reasoning` capability, and using those options throws
-`unsupportedCapability` on every call.
+`DictationPipeline.swift` → `SottoIntelligence.refine()`. Uses a dedicated, prewarmed Apple Intelligence session kept separate from the general-completion session specifically so the two never evict each other (see the session-architecture note at the top of `SottoIntelligence.swift`). Deliberately avoids `ContextOptions`/`reasoningLevel` — the on-device model on M1 8 GB doesn't declare the `.reasoning` capability, and using those options throws `unsupportedCapability` on every call.
 
 ## App / tool integration surface
 

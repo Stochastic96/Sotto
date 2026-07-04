@@ -3,18 +3,6 @@ import KeyboardShortcuts
 import ServiceManagement
 import AVFoundation
 
-enum TranscriptionEngine: String, CaseIterable {
-    case offlineAI = "offlineAI"
-    case appleSpeech = "appleSpeech"
-    
-    var displayName: String {
-        switch self {
-        case .offlineAI: return String(localized: "engine.offlineAI", defaultValue: "Offline AI (Parakeet ANE)", bundle: .module)
-        case .appleSpeech: return String(localized: "engine.appleSpeech", defaultValue: "Apple Native Dictation (on-device)", bundle: .module)
-        }
-    }
-}
-
 // UI-building/window-management side is MainActor (all AppKit calls belong there);
 // the UserDefaults-backed static accessors below are marked `nonisolated` since
 // they're plain, thread-safe reads/writes with no shared mutable class state, and
@@ -23,7 +11,6 @@ enum TranscriptionEngine: String, CaseIterable {
 final class SettingsController: NSObject, NSTextFieldDelegate {
     private var window: NSWindow?
     private var workspaceField: NSTextField?
-    var onEngineChanged: (() -> Void)?
     private let testSynthesizer = AVSpeechSynthesizer()
     
     // UserDefaults keys
@@ -33,7 +20,6 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
     nonisolated static let systemPromptKey = "sotto_systemPrompt"
     nonisolated static let vocabularyKey = "sotto_vocabulary"
     nonisolated static let workspacePathKey = "sotto_workspacePath"
-    nonisolated static let engineKey = "sotto_transcriptionEngine"
     nonisolated static let agentModeKey = "sotto_agentMode"
     nonisolated static let memoryLedgerKey = "sotto_showMemoryLedger"
     nonisolated static let voiceFeedbackEnabledKey = "sotto_voiceFeedbackEnabled"
@@ -131,11 +117,6 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
     
     nonisolated static var homeCity: String {
         UserDefaults.standard.string(forKey: "sotto_home_city") ?? ""
-    }
-    
-    nonisolated static var transcriptionEngine: TranscriptionEngine {
-        let raw = UserDefaults.standard.string(forKey: engineKey) ?? TranscriptionEngine.appleSpeech.rawValue
-        return TranscriptionEngine(rawValue: raw) ?? .appleSpeech
     }
     
     nonisolated static var isAgentMode: Bool {
@@ -237,7 +218,7 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         hotkeyStack.spacing = 10
         hotkeyStack.translatesAutoresizingMaskIntoConstraints = false
         
-        let dictationLabel = NSTextField(labelWithString: "Whisper Dictation Shortcut (Default: ⌘ShiftK)")
+        let dictationLabel = NSTextField(labelWithString: "Dictation Shortcut (Default: ⌘ShiftK)")
         dictationLabel.font = .systemFont(ofSize: 11, weight: .bold)
         dictationLabel.textColor = NSColor.secondaryLabelColor
         hotkeyStack.addArrangedSubview(dictationLabel)
@@ -286,35 +267,6 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         
         let hotkeyCard = createCard(title: "Dictation Hotkey & Mode", iconName: "keyboard", subview: hotkeyStack)
         stack.addArrangedSubview(hotkeyCard)
-        
-        // --- 1b. Speech Recognition Engine Card ---
-        let engineStack = NSStackView()
-        engineStack.orientation = .vertical
-        engineStack.alignment = .leading
-        engineStack.spacing = 10
-        engineStack.translatesAutoresizingMaskIntoConstraints = false
-        
-        let enginePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
-        enginePopUp.bezelStyle = .rounded
-        enginePopUp.font = .systemFont(ofSize: 12)
-        enginePopUp.translatesAutoresizingMaskIntoConstraints = false
-        for engine in TranscriptionEngine.allCases {
-            enginePopUp.addItem(withTitle: engine.displayName)
-        }
-        let currentEngine = Self.transcriptionEngine
-        if let index = TranscriptionEngine.allCases.firstIndex(of: currentEngine) {
-            enginePopUp.selectItem(at: index)
-        }
-        enginePopUp.target = self
-        enginePopUp.action = #selector(enginePopUpChanged(_:))
-        enginePopUp.setAccessibilityLabel("Speech Recognition Engine")
-        engineStack.addArrangedSubview(enginePopUp)
-        
-        let engineDesc = createDescriptionLabel("Choose the speech recognition technology. Offline AI runs a local private ANE model (requires model download). Apple Native Dictation uses macOS Siri engine for instant setup.")
-        engineStack.addArrangedSubview(engineDesc)
-        
-        let engineCard = createCard(title: "Speech Recognition Engine", iconName: "waveform", subview: engineStack)
-        stack.addArrangedSubview(engineCard)
         
         // --- 1c. LLM API Settings Card ---
         let llmStack = NSStackView()
@@ -535,7 +487,7 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         stack.addArrangedSubview(resetCard)
         
         // Setup card constraints to stretch horizontally to match the stack view
-        for card in [hotkeyCard, engineCard, llmCard, agentCard, voiceCard, scopingCard, promptCard, vocabCard, resetCard] {
+        for card in [hotkeyCard, llmCard, agentCard, voiceCard, scopingCard, promptCard, vocabCard, resetCard] {
             card.leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: 16).isActive = true
             card.trailingAnchor.constraint(equalTo: stack.trailingAnchor, constant: -16).isActive = true
         }
@@ -628,15 +580,6 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
         alert.runModal()
-    }
-    
-    @objc private func enginePopUpChanged(_ sender: NSPopUpButton) {
-        let index = sender.indexOfSelectedItem
-        guard index >= 0, index < TranscriptionEngine.allCases.count else { return }
-        let selectedEngine = TranscriptionEngine.allCases[index]
-        UserDefaults.standard.set(selectedEngine.rawValue, forKey: Self.engineKey)
-        print("[SETTINGS] Transcription engine updated: \(selectedEngine.rawValue)")
-        onEngineChanged?()
     }
     
     @objc private func toggleAgentMode(_ sender: NSButton) {

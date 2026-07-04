@@ -91,7 +91,7 @@ public let kClarificationPrefix = "ASK:"
 
 /// The Jarvis "front door". One warm Apple Foundation Models session carries the most
 /// relevant native tools (the fast single-hop lane — the framework runs the tool-calling
-/// loop itself) plus escalation tools that hand off to the MLX sub-agents only when a task
+/// loop itself) plus escalation tools that hand off to specialized sub-agents only when a task
 /// genuinely needs running code, deep screen-driving, or compound OS work. Large repetitive
 /// jobs are kicked off as background `start_long_task`s.
 /// Actor isolation ensures the mutable `session` state is never raced — a second Jarvis

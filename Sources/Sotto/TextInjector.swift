@@ -8,6 +8,7 @@ import CoreGraphics
 /// injection strategy without touching call sites in AppController/CommandEngine.
 protocol TextInjecting: Sendable {
     func inject(_ text: String, fileURL: URL?, targetPID: pid_t?) async
+    func injectUnicode(_ text: String, targetPID: pid_t?) async
     func grabActiveSelection(targetPID: pid_t?) async -> String?
     func pressReturn(targetPID: pid_t?) async
     func pressSearchShortcut(_ type: SearchShortcutType, targetPID: pid_t?) async
@@ -16,6 +17,9 @@ protocol TextInjecting: Sendable {
 extension TextInjecting {
     func inject(_ text: String, fileURL: URL? = nil, targetPID: pid_t? = nil) async {
         await inject(text, fileURL: fileURL, targetPID: targetPID)
+    }
+    func injectUnicode(_ text: String, targetPID: pid_t? = nil) async {
+        await injectUnicode(text, targetPID: targetPID)
     }
     func grabActiveSelection() async -> String? { await grabActiveSelection(targetPID: nil) }
     func pressReturn() async { await pressReturn(targetPID: nil) }
@@ -247,6 +251,21 @@ final class TextInjector: Sendable, TextInjecting {
         let duration = CFAbsoluteTimeGetCurrent() - startTime
         print("[BENCHMARK] Active selection grabbed via clipboard fallback in \(String(format: "%.2f", duration * 1000))ms")
         return selectedText
+    }
+
+    func injectUnicode(_ text: String, targetPID: pid_t? = nil) async {
+        let source = CGEventSource(stateID: .privateState)
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true) else { return }
+        
+        let utf16Chars = Array(text.utf16)
+        down.keyboardSetUnicodeString(stringLength: utf16Chars.count, unicodeString: utf16Chars)
+        
+        if let pid = targetPID {
+            down.postToPid(pid)
+        } else {
+            down.post(tap: .cghidEventTap)
+        }
+        try? await Task.sleep(for: .milliseconds(50))
     }
 
     private func postKeystroke(_ keyCode: CGKeyCode, flags: CGEventFlags, targetPID: pid_t? = nil) async {

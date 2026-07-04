@@ -1,28 +1,6 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "engine.appleSpeech" : {
-      "comment" : "Display name for Apple's native on-device SpeechAnalyzer/DictationTranscriber engine",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Apple Native Dictation (on-device)"
-          }
-        }
-      }
-    },
-    "engine.offlineAI" : {
-      "comment" : "Display name for the offline Parakeet AI transcription engine",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Offline AI (Parakeet ANE)"
-          }
-        }
-      }
-    },
     "hud.listening" : {
       "comment" : "HUD label shown when the microphone is active and recording",
       "localizations" : {

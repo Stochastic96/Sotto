@@ -141,7 +141,7 @@ swift build -c release
 ## Architecture
 
 ```
-Voice → Parakeet (ANE) → transcript
+Voice → SpeechAnalyzer (on-device dictation) → transcript
                               ↓
         CommandEngine.checkZeroLatencyShortcut  ← instant, no AI
                               ↓

@@ -32,7 +32,9 @@ enum SiriBridge {
             // Fallback sleep if focus detection fails or is slow
             try? await Task.sleep(for: .milliseconds(400))
         }
-        await injector.inject(prompt, fileURL: nil)        // pasteboard + ⌘V (reused)
+        // Inject the query directly using native keyboard events instead of copy-pasting
+        // through the pasteboard, avoiding clipboard pollution entirely.
+        await injector.injectUnicode(prompt)
         try? await Task.sleep(for: .milliseconds(150))
         await injector.pressReturn()
     }

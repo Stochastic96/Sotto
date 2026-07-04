@@ -1,15 +1,13 @@
 import Foundation
-import FluidAudio
 import os
 @preconcurrency import Speech
 import AVFoundation
 
 // MARK: - TranscriptionBackend Protocol
 
-/// A single speech-recognition implementation.
-///
-/// To add a new engine: create a type conforming to `TranscriptionBackend` and
-/// return an instance from `Transcriber.makeBackend()`. No other changes needed.
+/// A single speech-recognition implementation. The app ships one backend
+/// (`NativeDictationBackend`); the protocol exists so the legacy fallback and any
+/// future engine can be swapped in without touching `Transcriber`.
 protocol TranscriptionBackend: Sendable {
     func prepare() async throws
     /// `samples` must be 16 kHz mono Float32.
@@ -31,26 +29,6 @@ extension TranscriptionBackend {
     func cancelStreaming() async {}
 }
 
-// MARK: - Parakeet (FluidAudio / ANE, fully offline)
-
-// Only ever touched serially through the owning Transcriber actor.
-private final class ParakeetBackend: TranscriptionBackend, @unchecked Sendable {
-    private var manager: AsrManager?
-
-    func prepare() async throws {
-        guard manager == nil else { return }
-        let models = try await AsrModels.downloadAndLoad()
-        manager = AsrManager(config: .default, models: models)
-    }
-
-    func transcribe(_ samples: [Float]) async throws -> String {
-        guard let manager else { throw Transcriber.TranscriberError.notReady }
-        var decoderState = try TdtDecoderState()
-        let result = try await manager.transcribe(samples, decoderState: &decoderState)
-        return result.text
-    }
-}
-
 // MARK: - Apple Native Dictation (SpeechAnalyzer / DictationTranscriber, macOS 26+)
 
 /// Native on-device dictation via the modern `SpeechAnalyzer` + `DictationTranscriber`
@@ -65,9 +43,9 @@ private final class ParakeetBackend: TranscriptionBackend, @unchecked Sendable {
 /// dictation driver, so a brand-new OS-beta API gets a safety net rather than a hard
 /// failure.
 private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sendable {
-    // 16 kHz mono — the same fixed capture format AudioRecorder already produces for
-    // Parakeet. `prepareToAnalyze(in:)` tells the analyzer to expect buffers in this
-    // exact format so no extra AnalyzerInputConverter plumbing is needed.
+    // 16 kHz mono — the fixed capture format AudioRecorder produces. `prepareToAnalyze(in:)`
+    // tells the analyzer to expect buffers in this exact format so no extra
+    // AnalyzerInputConverter plumbing is needed.
     private static let format = AVAudioFormat(
         commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false
     )!
@@ -513,9 +491,8 @@ private struct LegacyAppleSpeechBackend: TranscriptionBackend {
 
 // MARK: - Transcriber
 
-/// Routes transcription to the active backend selected in SettingsController.
-/// Adding a new engine requires only a new `TranscriptionBackend` conformance
-/// and a case in `makeBackend()` — `prepare()` and `transcribe()` stay unchanged.
+/// Drives dictation through the native Apple `NativeDictationBackend` (SpeechAnalyzer),
+/// which self-heals to `LegacyAppleSpeechBackend` if the modern stack can't prepare.
 actor Transcriber {
     enum TranscriberError: LocalizedError {
         case notReady
@@ -535,16 +512,14 @@ actor Transcriber {
     }
 
     private var activeBackend: (any TranscriptionBackend)?
-    // Cached so switching back to .offlineAI doesn't re-download the model.
-    private var parakeetBackend: ParakeetBackend?
     // Cached so repeated dictation presses reuse the warm, `.lingering`-retained
     // SpeechAnalyzer/DictationTranscriber instead of re-installing the asset each time.
     private var nativeDictationBackend: NativeDictationBackend?
 
     func prepare() async throws {
-        let setting = SettingsController.transcriptionEngine
-        print("[TRANSCRIBER] Preparing engine: \(setting.rawValue)")
-        let backend = makeBackend(for: setting)
+        print("[TRANSCRIBER] Preparing native Apple dictation engine")
+        let backend = nativeDictationBackend ?? NativeDictationBackend()
+        nativeDictationBackend = backend
         try await backend.prepare()
         activeBackend = backend
     }
@@ -569,21 +544,6 @@ actor Transcriber {
 
     func cancelStreaming() async {
         await activeBackend?.cancelStreaming()
-    }
-
-    private func makeBackend(for setting: TranscriptionEngine) -> any TranscriptionBackend {
-        switch setting {
-        case .offlineAI:
-            let backend = parakeetBackend ?? ParakeetBackend()
-            parakeetBackend = backend
-            nativeDictationBackend = nil  // release the lingering model when switching away
-            return backend
-        case .appleSpeech:
-            parakeetBackend = nil  // release model weights when switching away
-            let backend = nativeDictationBackend ?? NativeDictationBackend()
-            nativeDictationBackend = backend
-            return backend
-        }
     }
 }
 
