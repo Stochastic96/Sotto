@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import os
+import SottoCore
 
 /// Learns which Jarvis phrases you use repeatedly and promotes them so
 /// JarvisToolbox.routed(for:) pre-selects the right tool immediately —
@@ -90,6 +91,16 @@ actor CommandLearner {
                 body: body
             )
             print("[LEARNER] Auto-drafted reflex skill for '\(phrase)': \(name)")
+        }
+
+        // Same stability bar feeds the Jarvis Brain: once this phrase has produced
+        // identical arguments `threshold` times, remember it as an associative memory
+        // so ANY phrasing of the command can replay the tool without the LLM. The
+        // brain refuses tools outside its direct-execution allowlist, and re-firing
+        // here just refreshes the stored args (upsert by phrase).
+        if (e.argumentsStableCount ?? 0) >= threshold {
+            let args = argumentsJson
+            Task { await JarvisBrain.shared.rememberCommand(phrase: key, action: .tool(name: toolName, argsJson: args)) }
         }
 
         entries[key] = e

@@ -91,6 +91,23 @@ extension AppController {
             return
         }
         
+        // 3d. Jarvis Brain — associative command memory. Embeds the utterance with the
+        // on-device NLEmbedding sentence model and matches remembered commands by
+        // MEANING, so a learned/seeded command fires natively in any phrasing without
+        // waking the model. A failed or declined action falls through to the LLM.
+        if let hit = await JarvisBrain.shared.recall(utterance: raw),
+           let brainReply = await runBrainAction(hit.action, raw: raw) {
+            print("[JARVIS] Brain memory ('\(hit.phrase)'): \(brainReply)")
+            hud.showResult("🧠 \(hit.phrase)\n\(brainReply)")
+            speak(shortSpoken(brainReply))
+            TaskJournal.record(command: raw, reply: brainReply)
+            await ConversationMemory.shared.record(user: raw, assistant: brainReply)
+            finishLane(.reflex, start: laneStart, raw: raw)
+            state = .idle
+            Task { try? await Task.sleep(for: .seconds(2)); hud.hide() }
+            return
+        }
+
         // 4. Native Apple Intelligence agent (tool calling) — the catch-all brain.
         var agentError: Error? = nil
         if SettingsController.apiProvider.lowercased() == "apple",
@@ -149,7 +166,21 @@ extension AppController {
         state = .idle
         Task { try? await Task.sleep(for: .seconds(3.5)); hud.hide() }
     }
-    
+
+    /// Executes a Jarvis Brain memory hit. Kernel actions run the named reflex against
+    /// the raw utterance (the reflex re-parses it and may decline); tool actions replay
+    /// the captured arguments through the native registry, gated by the brain's
+    /// allowlist. Nil or a throw means "fall through to the LLM" — never a dead end.
+    private func runBrainAction(_ action: BrainAction, raw: String) async -> String? {
+        switch action {
+        case .kernel(let capability):
+            return await Kernel.shared.runReflex(named: capability, intent: raw)
+        case .tool(let name, let argsJson):
+            guard JarvisBrain.directExecutionAllowlist.contains(name) else { return nil }
+            return try? await JarvisToolbox.callToolNatively(name: name, jsonArgs: argsJson)
+        }
+    }
+
     /// Presents a Jarvis reply: when the model asks a clarifying question (the `ASK:`
     /// convention), speak it and re-open the mic for the answer; otherwise show + speak the
     /// reply normally. Manages `state`/HUD lifecycle.

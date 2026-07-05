@@ -36,6 +36,14 @@ actor Kernel {
     /// Names of every bound reflex — used by the capability consistency check.
     func boundReflexNames() -> [String] { Array(reflexes.keys) }
 
+    /// Run a specific bound reflex by capability name, skipping registry routing.
+    /// Used by JarvisBrain, which has already resolved the intent semantically; the
+    /// reflex still re-parses `intent` itself and may decline (nil → escalate).
+    func runReflex(named name: String, intent: String) async -> String? {
+        guard let run = reflexes[name] else { return nil }
+        return await run(intent)
+    }
+
     // MARK: - Routing
 
     /// The cheapest capable route for `intent`, or nil if nothing in the registry matches.
