@@ -736,6 +736,7 @@ import SottoCore
                 await WebResearcherAgent.shared.unload()
                 await ScriptingExecutorAgent.shared.unload()
                 await CoordinatorAgent.shared.unload()
+                await self?.transcriber.unload()
                 if let intel = self?.intelligence {
                     if event.contains(.critical) {
                         await intel.forceUnload()

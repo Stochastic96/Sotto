@@ -60,7 +60,14 @@ enum SkillStore {
     /// Draft a new skill. Always saved DISABLED. Returns a confirmation string.
     @discardableResult
     static func draft(name: String, description: String, trigger: String, language: String, body: String) -> String {
-        let lang = language.lowercased().contains("apple") ? "applescript" : "shell"
+        let lang: String
+        if language.lowercased().contains("apple") {
+            lang = "applescript"
+        } else if language.lowercased().contains("swift") {
+            lang = "swift"
+        } else {
+            lang = "shell"
+        }
         let skill = DraftedSkill(
             name: slug(name),
             description: description,
@@ -112,9 +119,35 @@ enum SkillStore {
 
         // Materialize the script on disk for transparency / inspection.
         ensureDirs()
-        let ext = skill.language == "applescript" ? "applescript" : "sh"
+        let ext: String
+        if skill.language == "applescript" {
+            ext = "applescript"
+        } else if skill.language == "swift" {
+            ext = "swift"
+        } else {
+            ext = "sh"
+        }
         let fileURL = scriptsDir.appendingPathComponent("\(target).\(ext)")
         try? skill.body.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        // Compile Swift script to binary if language is swift
+        if skill.language == "swift" {
+            let binURL = scriptsDir.appendingPathComponent(target)
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/swiftc")
+            process.arguments = ["-O", "-o", binURL.path, fileURL.path]
+            do {
+                try process.run()
+                process.waitUntilExit()
+                if process.terminationStatus != 0 {
+                    print("[SKILLS] Pre-compilation of '\(target)' failed with exit code \(process.terminationStatus)")
+                } else {
+                    print("[SKILLS] Pre-compiled '\(target)' successfully.")
+                }
+            } catch {
+                print("[SKILLS] Pre-compilation execution error for '\(target)': \(error.localizedDescription)")
+            }
+        }
 
         // Register the skill trigger dynamically with CommandEngine so it can run zero-latency
         CommandEngine.registerSkillTrigger(skill.trigger, skillName: skill.name)
@@ -158,14 +191,32 @@ enum SkillStore {
         }
 
         ensureDirs()
-        let ext = skill.language == "applescript" ? "applescript" : "sh"
+        let ext: String
+        if skill.language == "applescript" {
+            ext = "applescript"
+        } else if skill.language == "swift" {
+            ext = "swift"
+        } else {
+            ext = "sh"
+        }
         let fileURL = scriptsDir.appendingPathComponent("\(target).\(ext)")
         if !FileManager.default.fileExists(atPath: fileURL.path) {
             try? skill.body.write(to: fileURL, atomically: true, encoding: .utf8)
         }
-        let command = skill.language == "applescript"
-            ? "osascript \"\(fileURL.path)\""
-            : "bash \"\(fileURL.path)\""
+        
+        let command: String
+        if skill.language == "applescript" {
+            command = "osascript \"\(fileURL.path)\""
+        } else if skill.language == "swift" {
+            let binURL = scriptsDir.appendingPathComponent(target)
+            if FileManager.default.fileExists(atPath: binURL.path) {
+                command = "\"\(binURL.path)\""
+            } else {
+                command = "/usr/bin/swift \"\(fileURL.path)\""
+            }
+        } else {
+            command = "bash \"\(fileURL.path)\""
+        }
         return CommandEngine.runCommandNatively(command)
     }
 

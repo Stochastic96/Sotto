@@ -545,6 +545,12 @@ actor Transcriber {
     func cancelStreaming() async {
         await activeBackend?.cancelStreaming()
     }
+
+    func unload() {
+        activeBackend = nil
+        nativeDictationBackend = nil
+        print("[TRANSCRIBER] Unloaded native dictation backend.")
+    }
 }
 
 // MARK: - AnalyzerInputStream
