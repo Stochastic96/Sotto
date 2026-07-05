@@ -199,6 +199,11 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
 
     private var activeStreamingSession: StreamingSession?
 
+    /// Whether a live streaming pass is in flight — checked by `Transcriber.unload()`
+    /// so memory-pressure eviction never tears the backend out from under a dictation
+    /// press that is still recording or finalizing.
+    var isStreaming: Bool { activeStreamingSession != nil }
+
     func startStreaming(feeding audio: AsyncStream<SendableAudioBuffer>) async throws -> AsyncStream<String>? {
         // Never two sessions: a stale one (e.g. from an aborted short-tap) dies first.
         activeStreamingSession?.cancel()
@@ -526,6 +531,9 @@ actor Transcriber {
 
     /// `samples` must be 16 kHz mono Float32.
     func transcribe(_ samples: [Float]) async throws -> String {
+        // Self-heal after a memory-pressure unload() that landed between this press's
+        // prewarm prepare() and its key-release — otherwise the press fails with notReady.
+        if activeBackend == nil { try await prepare() }
         guard let activeBackend else { throw TranscriberError.notReady }
         return try await activeBackend.transcribe(samples)
     }
@@ -547,6 +555,13 @@ actor Transcriber {
     }
 
     func unload() {
+        // A live streaming pass owns transcriber.results and the analyzer; dropping the
+        // backend mid-dictation would orphan the session and fail the in-flight press.
+        // Eviction is opportunistic — skip and let a later pressure event reclaim it.
+        if nativeDictationBackend?.isStreaming == true {
+            print("[TRANSCRIBER] Skipping unload — streaming dictation in progress.")
+            return
+        }
         activeBackend = nil
         nativeDictationBackend = nil
         print("[TRANSCRIBER] Unloaded native dictation backend.")

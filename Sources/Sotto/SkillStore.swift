@@ -130,22 +130,40 @@ enum SkillStore {
         let fileURL = scriptsDir.appendingPathComponent("\(target).\(ext)")
         try? skill.body.write(to: fileURL, atomically: true, encoding: .utf8)
 
-        // Compile Swift script to binary if language is swift
+        // Compile Swift skills in the background — swiftc takes seconds on the M1 and
+        // enable() runs on the MainActor Jarvis pipeline, so the compile must never block
+        // the caller. Until the binary lands, runEnabled() interprets the .swift source;
+        // the compiler writes to a temp path and the finished binary is swapped in with a
+        // rename so a run can never execute a half-written executable.
         if skill.language == "swift" {
             let binURL = scriptsDir.appendingPathComponent(target)
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/swiftc")
-            process.arguments = ["-O", "-o", binURL.path, fileURL.path]
-            do {
-                try process.run()
-                process.waitUntilExit()
-                if process.terminationStatus != 0 {
-                    print("[SKILLS] Pre-compilation of '\(target)' failed with exit code \(process.terminationStatus)")
-                } else {
-                    print("[SKILLS] Pre-compiled '\(target)' successfully.")
+            let tmpURL = scriptsDir.appendingPathComponent(".\(target).compiling")
+            Task.detached(priority: .utility) {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/swiftc")
+                process.arguments = ["-O", "-o", tmpURL.path, fileURL.path]
+                let status: Int32
+                do {
+                    status = try await withCheckedThrowingContinuation { continuation in
+                        process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
+                        do { try process.run() } catch { continuation.resume(throwing: error) }
+                    }
+                } catch {
+                    print("[SKILLS] Pre-compilation execution error for '\(target)': \(error.localizedDescription)")
+                    return
                 }
-            } catch {
-                print("[SKILLS] Pre-compilation execution error for '\(target)': \(error.localizedDescription)")
+                if status == 0 {
+                    do {
+                        try? FileManager.default.removeItem(at: binURL)
+                        try FileManager.default.moveItem(at: tmpURL, to: binURL)
+                        print("[SKILLS] Pre-compiled '\(target)' successfully.")
+                    } catch {
+                        print("[SKILLS] Could not install compiled binary for '\(target)': \(error.localizedDescription)")
+                    }
+                } else {
+                    try? FileManager.default.removeItem(at: tmpURL)
+                    print("[SKILLS] Pre-compilation of '\(target)' failed with exit code \(status)")
+                }
             }
         }
 
