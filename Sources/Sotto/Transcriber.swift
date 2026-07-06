@@ -370,15 +370,24 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
         }
     }
 
+    /// The wake phrase, always seeded into the ASR context so the recognizer is biased
+    /// toward "Jarvis" at the source. Without this the native model mishears "Hey Jarvis"
+    /// as unrelated words ("Punjabi"), which then leaks into routing and learned memory.
+    private static let wakeWords = ["Jarvis", "Hey Jarvis", "Sotto"]
+
     /// Custom vocabulary (Settings) + learned jargon, same sources `SottoIntelligence`
     /// injects into the polish prompt — fed here too so ASR gets them right at the source.
+    /// The wake words are always included so summoning Jarvis transcribes reliably.
     private static func contextualVocabulary() -> [String] {
         let custom = SettingsController.customVocabulary
             .components(separatedBy: ",")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         let learned = UserDefaults.standard.stringArray(forKey: "sotto_learned_vocabulary") ?? []
-        return Array(Set(custom + learned)).prefix(100).map { $0 }
+        // Wake words go first and are exempt from the cap — the 100-entry limit only trims
+        // the (unbounded, ever-growing) learned/custom vocab, never the summon phrase.
+        let extra = Set(custom + learned).subtracting(wakeWords)
+        return wakeWords + Array(extra).prefix(max(0, 100 - wakeWords.count))
     }
 }
 
