@@ -15,7 +15,6 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
     
     // UserDefaults keys
     nonisolated static let pttKey = "sotto_pushToTalk"
-    nonisolated static let handsFreeKey = "sotto_handsFree"
     nonisolated static let directInsertKey = "sotto_directInsert"
     nonisolated static let systemPromptKey = "sotto_systemPrompt"
     nonisolated static let vocabularyKey = "sotto_vocabulary"
@@ -89,10 +88,6 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         UserDefaults.standard.object(forKey: pttKey) as? Bool ?? true
     }
 
-    nonisolated static var isHandsFreeEnabled: Bool {
-        UserDefaults.standard.object(forKey: handsFreeKey) as? Bool ?? false
-    }
-    
     nonisolated static var isDirectInsert: Bool {
         UserDefaults.standard.bool(forKey: directInsertKey)
     }
@@ -242,14 +237,6 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         let pttDesc = createDescriptionLabel("Hold the hotkey down to dictate, release to stop recording. Uncheck for standard click-to-start, click-to-stop toggle.")
         hotkeyStack.addArrangedSubview(pttDesc)
 
-        let handsFreeCheckbox = NSButton(checkboxWithTitle: "Hands-Free Wake Word Mode", target: self, action: #selector(toggleHandsFree(_:)))
-        handsFreeCheckbox.state = Self.isHandsFreeEnabled ? .on : .off
-        handsFreeCheckbox.font = .systemFont(ofSize: 12, weight: .medium)
-        hotkeyStack.addArrangedSubview(handsFreeCheckbox)
-
-        let handsFreeDesc = createDescriptionLabel("Continuously listen in the background for 'Hey Jarvis' or 'Jarvis' wake phrases to trigger voice capture.")
-        hotkeyStack.addArrangedSubview(handsFreeDesc)
-        
         let hotkeyDivider = NSBox()
         hotkeyDivider.boxType = .separator
         hotkeyDivider.translatesAutoresizingMaskIntoConstraints = false
@@ -645,15 +632,6 @@ final class SettingsController: NSObject, NSTextFieldDelegate {
         print("[SETTINGS] Push-To-Talk toggled: \(enabled)")
     }
 
-    @MainActor @objc private func toggleHandsFree(_ sender: NSButton) {
-        let enabled = sender.state == .on
-        UserDefaults.standard.set(enabled, forKey: Self.handsFreeKey)
-        print("[SETTINGS] Hands-Free toggled: \(enabled)")
-        if let shared = AppController.shared {
-            shared.updateWakeDetector()
-        }
-    }
-    
     @objc private func toggleLaunchAtLogin(_ sender: NSButton) {
         let enabled = sender.state == .on
         do {

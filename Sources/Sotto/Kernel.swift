@@ -89,10 +89,13 @@ actor Kernel {
 
     // MARK: - Reflex bindings
     //
-    // Only bind capabilities that aren't already caught upstream by
-    // CommandEngine.checkZeroLatencyShortcut (window/media/volume/etc. are). The
-    // kernel's non-redundant win is app launch, which the Jarvis pipeline otherwise
-    // sends to the model.
+    // Every reflex-tier capability in CapabilityRegistry MUST be bound here — otherwise
+    // an intent routes to reflex tier, finds no executor, and silently escalates to the
+    // model (IntegrationTests.runCapabilityConsistencyCheck enforces this). Some of these
+    // (window/media/volume "set" phrasings) are also caught earlier by
+    // CommandEngine.checkZeroLatencyShortcut for single utterances; the kernel bindings are
+    // what let them run inside compound utterances ("tile left and mute") and cover bare
+    // commands the shortcut layer misses ("mute", "lock").
 
     func seedReflexes() {
         // App launch — "open xcode", "launch terminal", "start notes"
@@ -140,6 +143,25 @@ actor Kernel {
         bindReflex("media_prev") { _ in
             let ok = await MainActor.run { SpotifyControl.previous() }
             return ok ? "Back to previous track." : SpotifyControl.permissionHint
+        }
+
+        // System actions whose registry capability name IS the native action name, all
+        // executed by NativeActions.perform. Bound uniformly so single commands ("mute",
+        // "lock") and compound utterances ("tile left and mute") resolve at reflex tier
+        // (0 tokens) instead of waking the model. The registry has already matched the
+        // intent to one of these capabilities by keyword; the reflex just runs the fixed
+        // action. Without these bindings the intent routed to reflex tier, found no
+        // executor, and silently escalated to the model.
+        let nativeActionReflexes = [
+            "win_maximize", "win_minimize", "win_left", "win_right", "win_center",
+            "mute", "volume_up", "volume_down", "brightness_up", "brightness_down",
+            "dark_mode_toggle", "lock", "sleep", "empty_trash",
+        ]
+        for name in nativeActionReflexes {
+            bindReflex(name) { _ in
+                let output = await NativeActions.perform(name)
+                return output.isEmpty ? "Done." : output
+            }
         }
 
         // Spotlight file search — "find file X", "where is X", "locate X"

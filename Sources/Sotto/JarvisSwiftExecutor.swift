@@ -5,11 +5,14 @@ struct JarvisSwiftExecutor {
     
     static func writeResearchReport(name: String, content: String) -> String {
         let researchDir = SettingsController.sottoDataURL.appendingPathComponent("research")
-        try? FileManager.default.createDirectory(at: researchDir, withIntermediateDirectories: true)
-        
         let safeName = name.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "_")
         let fileURL = researchDir.appendingPathComponent("\(safeName).md")
-        try? content.write(to: fileURL, atomically: true, encoding: .utf8)
+        do {
+            try FileManager.default.createDirectory(at: researchDir, withIntermediateDirectories: true)
+            try content.write(to: fileURL, atomically: true, encoding: .utf8)
+        } catch {
+            print("[SWIFT-EXECUTOR] Failed to write research report '\(safeName)' (\(error.localizedDescription)); the opened file may be missing.")
+        }
         return fileURL.path
     }
     

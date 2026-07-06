@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import SottoCore
 
 @Generable
 public struct TurnOutcome: Sendable {
@@ -21,6 +22,8 @@ public struct SwiftScript: Sendable {
 struct DelegateOSControlTool: Tool {
     let name = "delegate_to_os_control"
     let description = "Delegate native macOS control tasks (volume, brightness, power, notes, reminders, calendar) to the OS Control Agent."
+    /// Injectable sub-agent; defaults to the warm shared OS Control Agent.
+    let agent: any SubAgent = OSControlAgent.shared
 
     @Generable
     struct Arguments {
@@ -29,13 +32,15 @@ struct DelegateOSControlTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        return await OSControlAgent.shared.run(task: arguments.task)
+        return await agent.run(task: arguments.task)
     }
 }
 
 struct DelegateWebResearcherTool: Tool {
     let name = "delegate_to_web_researcher"
     let description = "Delegate web search, screen reading, and clicking actions to the Web Researcher Agent."
+    /// Injectable sub-agent; defaults to the warm shared Web Researcher Agent.
+    let agent: any SubAgent = WebResearcherAgent.shared
 
     @Generable
     struct Arguments {
@@ -44,13 +49,15 @@ struct DelegateWebResearcherTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        return await WebResearcherAgent.shared.run(task: arguments.task)
+        return await agent.run(task: arguments.task)
     }
 }
 
 struct DelegateScriptingExecutorTool: Tool {
     let name = "delegate_to_scripting_executor"
     let description = "Delegate complex computational or automation tasks requiring writing and running Swift scripts to the Scripting Executor Agent."
+    /// Injectable sub-agent; defaults to the warm shared Scripting Executor Agent.
+    let agent: any SubAgent = ScriptingExecutorAgent.shared
 
     @Generable
     struct Arguments {
@@ -59,7 +66,7 @@ struct DelegateScriptingExecutorTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        return await ScriptingExecutorAgent.shared.run(task: arguments.task)
+        return await agent.run(task: arguments.task)
     }
 }
 
@@ -190,11 +197,7 @@ public actor CoordinatorAgent {
         // Follow-up answer to a clarifying question: continue the SAME session.
         if isFollowUp, let session = self.session {
             let response = try await session.respond(to: userInput, generating: TurnOutcome.self, options: GenerationOptions(temperature: 0.3))
-            let outcome = response.content
-            if let question = outcome.clarifyingQuestion, !question.isEmpty {
-                return kClarificationPrefix + " " + question
-            }
-            return outcome.reply ?? ""
+            return Self.reply(from: response.content)
         }
 
         let conversation = await ConversationMemory.shared.digest()
@@ -206,137 +209,119 @@ public actor CoordinatorAgent {
         let mode = JarvisProfile.classify(userInput)
         print("[COORDINATOR] Lane: \(mode.rawValue)  (routed: \(routed.map { $0.name }.joined(separator: ", ")))")
         
-        let temperature: Double
-        switch mode {
-        case .chat:
-            temperature = 0.7
-        case .bigJob:
-            temperature = 0.2
-        case .quick:
-            temperature = 0.3
-        }
-        
+        // BigJob lane has its own idempotent flow (it must start the background job exactly
+        // once), so it never shares the chat/quick session path below.
         if mode == .bigJob {
-            await MainActor.run { StartLongTaskTool.wasCalled = false }
+            return await runBigJobTurn(userInput: userInput, instructions: instructions)
         }
-        
-        let escalationTools: [any Tool] = [DelegateScriptingExecutorTool(), DelegateWebResearcherTool(), DelegateOSControlTool(), StartLongTaskTool()]
+
         let session: LanguageModelSession
-        switch mode {
-        case .chat:
+        let temperature: Double
+        if mode == .chat {
             // Chat lane: warm, brief, no tools.
             session = LanguageModelSession(instructions: instructions + "\n\nThis is small talk — reply warmly in ONE short line and use no tools.")
-        case .bigJob:
-            // BigJob lane: narrow to the long task tool and require it in instructions.
-            session = LanguageModelSession(tools: [StartLongTaskTool()], instructions: instructions + "\n\nThis is a large repetitive job. Call start_long_task with the full goal in plain language.")
-        case .quick:
+            temperature = 0.7
+        } else {
             // Quick lane: native routed tools + escalation tools.
+            let escalationTools: [any Tool] = [DelegateScriptingExecutorTool(), DelegateWebResearcherTool(), DelegateOSControlTool(), StartLongTaskTool()]
             session = LanguageModelSession(tools: routed + escalationTools, instructions: instructions)
+            temperature = 0.3
         }
         self.session = session
 
         do {
-            // 40-second hard timeout: the DynamicProfile tool-calling loop has no built-in
-            // cycle limit — without maximumResponseTokens AND a timeout, a model with no
-            // city for get_weather can loop asking for clarification indefinitely.
+            // 40-second hard timeout: the tool-calling loop has no built-in cycle limit —
+            // without maximumResponseTokens AND a timeout, a model with no city for
+            // get_weather can loop asking for clarification indefinitely.
             let opts = GenerationOptions(temperature: temperature, maximumResponseTokens: 512)
-            let outcome: TurnOutcome = try await withTimeout(seconds: 40, errorDomain: "JarvisDP", errorDescription: "DynamicProfile timed out after 40s") {
-                let res = try await session.respond(to: userInput, generating: TurnOutcome.self, options: opts)
-                return res.content
+            let outcome: TurnOutcome = try await withTimeout(seconds: 40, errorDomain: "JarvisTurn", errorDescription: "Jarvis turn timed out after 40s") {
+                try await session.respond(to: userInput, generating: TurnOutcome.self, options: opts).content
             }
-            
-            let wasCalled = await MainActor.run { StartLongTaskTool.wasCalled }
-            if mode == .bigJob && !wasCalled {
-                print("[COORDINATOR] bigJob turn completed but start_long_task was not called. Retrying once with a stronger prompt...")
-                let retryInstructions = instructions + "\n\nCRITICAL: You MUST call the start_long_task tool. Do not reply in prose without calling it."
-                let retrySession = LanguageModelSession(tools: [StartLongTaskTool()], instructions: retryInstructions)
-                do {
-                    let retryOutcome: TurnOutcome = try await withTimeout(seconds: 40, errorDomain: "JarvisDP", errorDescription: "DynamicProfile retry timed out after 40s") {
-                        let res = try await retrySession.respond(to: userInput, generating: TurnOutcome.self, options: opts)
-                        return res.content
-                    }
-                    
-                    let retryWasCalled = await MainActor.run { StartLongTaskTool.wasCalled }
-                    if retryWasCalled {
-                        let reply = retryOutcome.reply ?? ""
-                        let toolHint = CommandLearner.inferTool(from: reply)
-                        Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
-                        return reply
-                    }
-                } catch {
-                    print("[COORDINATOR] Retry failed (\(error.localizedDescription)). Routing directly.")
-                }
-                
-                let finalWasCalled = await MainActor.run { StartLongTaskTool.wasCalled }
-                if finalWasCalled {
-                    print("[COORDINATOR] Retry failed/timed out, but tool was already executed. Returning background starting reply.")
-                    let reply = Self.backgroundJobReply
-                    let toolHint = CommandLearner.inferTool(from: reply)
-                    Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
-                    return reply
-                } else {
-                    print("[COORDINATOR] Retry did not call start_long_task. Routing to LongTaskEngine directly.")
-                    let directReply = LongTaskEngine.start(goal: userInput)
-                    let toolHint = CommandLearner.inferTool(from: directReply)
-                    Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
-                    return directReply
-                }
-            }
-            
-            let reply: String
-            if let question = outcome.clarifyingQuestion, !question.isEmpty {
-                reply = kClarificationPrefix + " " + question
-            } else {
-                reply = outcome.reply ?? ""
-            }
-            let toolHint = CommandLearner.inferTool(from: reply)
-            Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
+            let reply = Self.reply(from: outcome)
+            recordLearned(phrase: userInput, reply: reply)
             return reply
         } catch {
-            if mode == .bigJob {
-                let wasCalled = await MainActor.run { StartLongTaskTool.wasCalled }
-                if wasCalled {
-                    print("[COORDINATOR] bigJob failed/timed out, but start_long_task was already executed. Returning background starting reply.")
-                    let reply = Self.backgroundJobReply
-                    let toolHint = CommandLearner.inferTool(from: reply)
-                    Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
-                    return reply
-                } else {
-                    print("[COORDINATOR] bigJob failed in DynamicProfile. Routing directly to LongTaskEngine.")
-                    let directReply = LongTaskEngine.start(goal: userInput)
-                    let toolHint = CommandLearner.inferTool(from: directReply)
-                    Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
-                    return directReply
-                }
-            }
-            print("[COORDINATOR] DynamicProfile failed (\(error.localizedDescription)); retrying tool-free.")
+            print("[COORDINATOR] Jarvis turn failed (\(error.localizedDescription)); retrying tool-free.")
             self.session = nil
             await Task.yield()
-            // Log feedback for DynamicProfile failures so Apple can improve model stability.
+            // Log feedback for session failures so Apple can improve model stability.
             JarvisDiagnostics.record(
                 session: self.session,
                 error: error,
                 input: userInput,
-                description: "DynamicProfile session failed or timed out",
+                description: "Per-lane session failed or timed out",
                 category: .toolCallLoop
             )
             // Retry once with a minimal, tool-free session — sheds context and re-responds
-            // (Apple's own guidance for a context-window overrun) so a transient
-            // DynamicProfile hiccup or timeout doesn't leave Jarvis silent for the turn.
+            // (Apple's own guidance for a context-window overrun) so a transient hiccup or
+            // timeout doesn't leave Jarvis silent for the turn.
             let lean = LanguageModelSession(instructions: JarvisAgent.instructions)
             self.session = lean
-            let response = try await lean.respond(to: userInput, generating: TurnOutcome.self, options: GenerationOptions(temperature: 0.3))
-            let outcome = response.content
-            let reply: String
-            if let question = outcome.clarifyingQuestion, !question.isEmpty {
-                reply = kClarificationPrefix + " " + question
-            } else {
-                reply = outcome.reply ?? ""
-            }
-            let toolHint = CommandLearner.inferTool(from: reply)
-            Task { await CommandLearner.shared.record(phrase: userInput, toolName: toolHint) }
+            let outcome = try await lean.respond(to: userInput, generating: TurnOutcome.self, options: GenerationOptions(temperature: 0.3)).content
+            let reply = Self.reply(from: outcome)
+            recordLearned(phrase: userInput, reply: reply)
             return reply
         }
+    }
+
+    /// Maps a `TurnOutcome` to a reply string, encoding a clarifying question with the
+    /// `ASK:` sentinel the pipeline detects (`presentJarvisReply`).
+    private static func reply(from outcome: TurnOutcome) -> String {
+        if let question = outcome.clarifyingQuestion, !question.isEmpty {
+            return kClarificationPrefix + " " + question
+        }
+        return outcome.reply ?? ""
+    }
+
+    /// Fire-and-forget: teach `CommandLearner` which tool this phrase used (inferred from the
+    /// reply) so repeated commands get pre-selected and eventually promoted.
+    private func recordLearned(phrase: String, reply: String) {
+        let toolHint = CommandLearner.inferTool(from: reply)
+        Task { await CommandLearner.shared.record(phrase: phrase, toolName: toolHint) }
+    }
+
+    /// BigJob lane: the user asked for a bulk background job, so the turn MUST end with the
+    /// job started exactly once. We ask the model to call `start_long_task` (retrying once
+    /// with a firmer prompt if it replies in prose instead); if it still won't, we start the
+    /// job directly. `StartLongTaskTool.wasCalled` is the single source of truth for "already
+    /// started" and is checked only after each `respond()` fully returns (so any tool call
+    /// has completed) — which means the direct fallback fires at most once and can never
+    /// double-launch the job.
+    private func runBigJobTurn(userInput: String, instructions: String) async -> String {
+        await MainActor.run { StartLongTaskTool.wasCalled = false }
+        let opts = GenerationOptions(temperature: 0.2, maximumResponseTokens: 512)
+        let prompts = [
+            instructions + "\n\nThis is a large repetitive job. Call start_long_task with the full goal in plain language.",
+            instructions + "\n\nCRITICAL: You MUST call the start_long_task tool. Do not reply in prose without calling it.",
+        ]
+
+        for (attempt, prompt) in prompts.enumerated() {
+            let session = LanguageModelSession(tools: [StartLongTaskTool()], instructions: prompt)
+            self.session = session
+            var reply = ""
+            do {
+                let outcome: TurnOutcome = try await withTimeout(seconds: 40, errorDomain: "JarvisTurn", errorDescription: "bigJob turn timed out after 40s") {
+                    try await session.respond(to: userInput, generating: TurnOutcome.self, options: opts).content
+                }
+                reply = Self.reply(from: outcome)
+            } catch {
+                print("[COORDINATOR] bigJob attempt \(attempt + 1) failed (\(error.localizedDescription)).")
+            }
+            // respond() has fully returned, so any tool call has finished and wasCalled is
+            // stable. If the job started, we're done — never retry or start it again.
+            if await MainActor.run(body: { StartLongTaskTool.wasCalled }) {
+                let finalReply = reply.isEmpty ? Self.backgroundJobReply : reply
+                recordLearned(phrase: userInput, reply: finalReply)
+                return finalReply
+            }
+        }
+
+        // The model never called the tool across both attempts — start the job directly,
+        // exactly once (wasCalled is false here, so the tool did not run).
+        print("[COORDINATOR] bigJob: model never called start_long_task; starting directly.")
+        let directReply = LongTaskEngine.start(goal: userInput)
+        recordLearned(phrase: userInput, reply: directReply)
+        return directReply
     }
 }
 
@@ -348,7 +333,7 @@ public actor CoordinatorAgent {
 /// a cheap delegation hop. Caching the session (recreated only every 12 turns, matching
 /// `SottoIntelligence`'s polish-session bound) removes that repeated cold-start cost while
 /// still bounding transcript growth.
-public actor OSControlAgent {
+public actor OSControlAgent: SubAgent {
     public static let shared = OSControlAgent()
     private init() {}
 
@@ -396,7 +381,7 @@ public actor OSControlAgent {
 
 /// Same session-reuse rationale as `OSControlAgent` — the tool set here is fixed, so there's
 /// no need to rebuild the session on every escalation.
-public actor WebResearcherAgent {
+public actor WebResearcherAgent: SubAgent {
     public static let shared = WebResearcherAgent()
     private init() {}
 
@@ -454,7 +439,7 @@ public actor WebResearcherAgent {
 /// Same session-reuse rationale as `OSControlAgent`/`WebResearcherAgent`. The system prompt
 /// is fixed (script-generation instructions never change per task), so there's no reason to
 /// re-process it into a fresh session on every escalation.
-public actor ScriptingExecutorAgent {
+public actor ScriptingExecutorAgent: SubAgent {
     public static let shared = ScriptingExecutorAgent()
     private init() {}
 

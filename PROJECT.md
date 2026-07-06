@@ -67,11 +67,11 @@ arriving mid-turn) wrapping one warm Apple Foundation Models `LanguageModelSessi
 macOS 27+): classifies each turn into `chat` (small talk, tools forbidden,
 temperature 0.7), `quick` (the default — routed tools + escalation, temperature
 0.3), or `bigJob` (bulk repetitive work, `start_long_task` required, temperature
-0.2). Expressed as a native `LanguageModelSession.DynamicProfile` so the framework
-itself enforces the tool-calling mode per lane, rather than relying on prompt text
-alone. On macOS 26 (or if the DynamicProfile path times out/fails after 40s),
-falls back to a hand-built session with up to 12 tool schemas assembled manually —
-functionally correct but reprocesses more context per turn.
+0.2). Each lane is built as a plain per-lane `LanguageModelSession` with the tools
+appropriate to that lane assembled manually (the `LanguageModelSession.DynamicProfile`
+API was retired after dyld symbol-not-found crashes). If a turn times out or fails
+after 40s it retries once with a minimal tool-free session, so a transient hiccup
+never leaves Jarvis silent for the turn.
 
 **Clarification loop**: if the model is genuinely unsure, it replies with a
 sentinel prefix (`kClarificationPrefix = "ASK:"`); `AppController` detects this,

@@ -71,23 +71,24 @@ no engine setting to switch. Key points for future work here:
 - Custom vocabulary + learned jargon (same UserDefaults keys `SottoIntelligence` reads for
   the polish prompt) are injected via `AnalysisContext.contextualStrings` so the ASR layer
   gets names/jargon right at the source, not just via post-hoc polish correction.
-- `LegacyAppleSpeechBackend` (the old `SFSpeechRecognizer` implementation) is kept in the
-  same file as an internal fallback — not user-selectable — invoked automatically if the
-  modern path throws during `prepare()` or `transcribe()` (e.g. on-device asset install
-  fails). Don't delete it without confirming the modern path has proven stable in practice.
+- There is no fallback engine. If the modern path throws during `prepare()` or
+  `transcribe()` (e.g. on-device asset install fails without network), the error
+  propagates: `AppController.endRecording` surfaces it as an `.error` state and schedules
+  recovery back to idle. The old `LegacyAppleSpeechBackend` (`SFSpeechRecognizer`) was
+  removed — don't reintroduce a legacy recognizer; harden the `SpeechAnalyzer` path instead.
 - `SottoIntelligence.refine()`'s polish instructions were tuned for a more premium/
   professional feel: paragraph breaks at topic boundaries and list formatting for
   enumerated speech, plus an explicit no-hallucinated-facts rule. `isAcceptablePolish()` in
   `DictationPipeline.swift` still guards against truncation/expansion/loop/unrelated-output
   regressions from any prompt change here.
 
-## Voice activation — hotkey-only by default
+## Voice activation — hotkey-only
 
 Jarvis and Dictation are both hotkey-driven (`SettingsController.isPushToTalk` defaults
-`true`). `WakeWordDetector`'s continuous-listening path only starts if
-`SettingsController.isHandsFreeEnabled` is explicitly turned on in Settings (defaults
-`false`) — it is dormant code, not deleted, so hands-free can be revisited later without
-re-architecting. Don't wire it into the startup path or flip its default without asking.
+`true`). There is no hands-free / wake-word path: the old `WakeWordDetector` (continuous
+`SFSpeechRecognizer` listening) and its `isHandsFreeEnabled` setting were removed. If
+hands-free is ever revisited, build it on the modern `SpeechAnalyzer` stack rather than
+resurrecting the legacy recognizer.
 
 ## Architecture map
 
@@ -103,7 +104,7 @@ Voice → AudioRecorder (16 kHz mono) → SpeechAnalyzer/DictationTranscriber (o
         CoordinatorAgent (Apple Foundation Models)
           ├─ CommandLearner.hint → pre-select known tool  (learned from ≥3 uses, persisted)
           ├─ JarvisToolbox.routed (keyword scoring, max 5 tools)
-          └─ DynamicProfile: chat / quick / bigJob lanes
+          └─ JarvisProfile.classify → per-lane LanguageModelSession: chat / quick / bigJob
                                ↓ (quick/bigJob lane escalation)
           Delegate*Tool → OSControlAgent / WebResearcherAgent / ScriptingExecutorAgent
                                ↓ (bulk work)

@@ -141,7 +141,7 @@ actor CapabilityRegistry {
     }
 }
 
-// MARK: - Seed: register all 33 existing tools at startup
+// MARK: - Seed: register all built-in capabilities at startup
 
 extension CapabilityRegistry {
 
@@ -177,7 +177,9 @@ extension CapabilityRegistry {
 
             // ── Foundation Model tier (Apple Intelligence, on-device) ─────────
             .init(name: "open_website",      keywords: ["open","go","website","url","browse"],              latencyMs: 400, tier: .foundationModel, requiresNetwork: true),
-            .init(name: "web_search",        keywords: ["search","google","find","look"],                   latencyMs: 400, tier: .foundationModel, requiresNetwork: true),
+            // web_search is a pure-Swift 0-token reflex (open a Google URL — see
+            // Kernel.seedReflexes); keep it reflex tier so that binding is actually reachable.
+            .init(name: "web_search",        keywords: ["search","google","find","look"],                   latencyMs: 60,  tier: .reflex, requiresNetwork: true),
             .init(name: "control_spotify",   keywords: ["spotify","play","pause","song","artist","music"],  latencyMs: 400, tier: .foundationModel),
             .init(name: "set_volume",        keywords: ["volume","set","percent","mute","unmute"],          latencyMs: 400, tier: .foundationModel),
             .init(name: "adjust_brightness", keywords: ["brightness","brighter","dimmer"],                  latencyMs: 400, tier: .foundationModel),
@@ -201,23 +203,24 @@ extension CapabilityRegistry {
             .init(name: "start_focus_session", description: "Start a focus/DND session",                keywords: ["focus","session","dnd","distract","concentrate"],                  latencyMs: 800,  tier: .foundationModel),
             .init(name: "end_workday",         description: "End workday workflow",                      keywords: ["end","workday","day","done","finish","wrap"],                      latencyMs: 2000, tier: .foundationModel),
             .init(name: "switch_workspace",    description: "Switch workspace mode",                     keywords: ["workspace","switch","mode","development","writing","presentation"], latencyMs: 600,  tier: .foundationModel),
-            .init(name: "organize_downloads",  description: "Organize downloads folder",                 keywords: ["organize","downloads","files","sort","clean"],                     latencyMs: 500,  tier: .reflex, risk: .medium),
-            .init(name: "find_large_files",    description: "Find large files",                          keywords: ["large","files","storage","space","disk"],                         latencyMs: 300,  tier: .reflex),
+            .init(name: "organize_downloads",  description: "Organize downloads folder",                 keywords: ["organize","downloads","files","sort","clean"],                     latencyMs: 500,  tier: .foundationModel, risk: .medium),
+            .init(name: "find_large_files",    description: "Find large files",                          keywords: ["large","files","storage","space","disk"],                         latencyMs: 300,  tier: .foundationModel),
             .init(name: "explain_code",        description: "Explain a code snippet",                    keywords: ["explain","code","snippet","what","does"],                         latencyMs: 800,  tier: .foundationModel),
             .init(name: "generate_git_commit", description: "Generate git commit message",               keywords: ["git","commit","message","changes","staged"],                      latencyMs: 1000, tier: .foundationModel),
             .init(name: "find_bug",            description: "Find bugs in code",                         keywords: ["bug","find","issue","problem","wrong"],                           latencyMs: 800,  tier: .foundationModel),
             .init(name: "explain_error",       description: "Explain a compiler or runtime error",       keywords: ["error","explain","why","crash","failed"],                         latencyMs: 800,  tier: .foundationModel),
  
-            // ── Previously undescribed tools (kept in sync by the drift guard in
-            //    IntegrationTests.runCapabilityConsistencyCheck). NB: none of these may
-            //    use the "open"/"launch" keywords or they'd out-compete open_app's reflex. ─
-            .init(name: "recall_history",      description: "Recall what Jarvis recently did",                       keywords: ["history","recall","recent","did","you","earlier"],        latencyMs: 200, tier: .reflex),
-            .init(name: "system_power_state",  description: "Lock, sleep, restart or shut down the Mac",             keywords: ["lock","sleep","restart","shutdown","power","logout"],     latencyMs: 50,  tier: .reflex, risk: .medium),
-            .init(name: "network_diagnostics", description: "Check Wi-Fi / internet connectivity",                   keywords: ["wifi","wi-fi","internet","connection","reachable","ping","online"], latencyMs: 200, tier: .reflex),
-            .init(name: "manage_clipboard",    description: "Read or write the clipboard",                           keywords: ["clipboard","copy","paste","copied","pasteboard"],         latencyMs: 20,  tier: .reflex),
-            .init(name: "manage_memory_pad",   description: "Read or write Sotto's private background memory pad",   keywords: ["scratchpad","pad","note","draft","memory","save","remember","clear","append","write","read"], latencyMs: 20,  tier: .reflex),
-            .init(name: "manage_apps_windows", description: "Switch, activate, list, or arrange app windows",        keywords: ["window","switch","activate","foreground","minimize","focus","tile"], latencyMs: 50, tier: .reflex),
-            .init(name: "simulate_keystroke",  description: "Send a keyboard shortcut or keystroke",                 keywords: ["keystroke","press","hotkey","key","shortcut"],            latencyMs: 30,  tier: .reflex),
+            // ── Tool-backed capabilities: these are @Generable Tools the model calls with
+            //    structured arguments (which clipboard slot, which key, read vs write), so
+            //    they are foundationModel tier, not pure kernel reflexes. NB: none of these
+            //    may use the "open"/"launch" keywords or they'd out-compete open_app's reflex. ─
+            .init(name: "recall_history",      description: "Recall what Jarvis recently did",                       keywords: ["history","recall","recent","did","you","earlier"],        latencyMs: 200, tier: .foundationModel),
+            .init(name: "system_power_state",  description: "Lock, sleep, restart or shut down the Mac",             keywords: ["lock","sleep","restart","shutdown","power","logout"],     latencyMs: 50,  tier: .foundationModel, risk: .medium),
+            .init(name: "network_diagnostics", description: "Check Wi-Fi / internet connectivity",                   keywords: ["wifi","wi-fi","internet","connection","reachable","ping","online"], latencyMs: 200, tier: .foundationModel),
+            .init(name: "manage_clipboard",    description: "Read or write the clipboard",                           keywords: ["clipboard","copy","paste","copied","pasteboard"],         latencyMs: 20,  tier: .foundationModel),
+            .init(name: "manage_memory_pad",   description: "Read or write Sotto's private background memory pad",   keywords: ["scratchpad","pad","note","draft","memory","save","remember","clear","append","write","read"], latencyMs: 20,  tier: .foundationModel),
+            .init(name: "manage_apps_windows", description: "Switch, activate, list, or arrange app windows",        keywords: ["window","switch","activate","foreground","minimize","focus","tile"], latencyMs: 50, tier: .foundationModel),
+            .init(name: "simulate_keystroke",  description: "Send a keyboard shortcut or keystroke",                 keywords: ["keystroke","press","hotkey","key","shortcut"],            latencyMs: 30,  tier: .foundationModel),
             .init(name: "ask_siri",            description: "Open Siri and ask a question, compose messages, control closed Apple apps, or query real-time info", keywords: ["siri","ask","message","send","text","email","mail","imessage","weather","temperature","forecast","rain","raining","cold","hot","sunny","snow","wind","outside","umbrella","humidity","storm","cloudy","remind","reminder","task","todo","calendar","event","meeting","schedule","alarm","timer","wake me","facetime","whatsapp","call","phone","shortcut","shortcuts","automation"], latencyMs: 1500, tier: .foundationModel),
  
             // ── Scripting executor / Web researcher / OS control delegation tools ──

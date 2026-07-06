@@ -112,7 +112,7 @@ Activate with the dictation hotkey (default: ⌘K). Speak — when you stop, the
 ## Requirements
 
 - **Apple Silicon Mac** — M1 or newer. Tuned for M1 / 8 GB.
-- **macOS 27 with Apple Intelligence enabled** — required for the Jarvis agent and DynamicProfile lanes.
+- **macOS 27 with Apple Intelligence enabled** — required for the Jarvis agent and its chat / quick / bigJob lanes.
 - **Xcode or Command Line Tools** — to build.
 - **Internet on first run only** — downloads Swift packages and models. After that, fully offline.
 
@@ -152,10 +152,10 @@ Voice → SpeechAnalyzer (on-device dictation) → transcript
         CoordinatorAgent (Foundation Models)
           ├─ CommandLearner.hint → pre-select known tool  ← learned
           ├─ JarvisToolbox.routed (keyword scoring)       ← fallback
-          └─ DynamicProfile: chat / quick / bigJob lanes  ← macOS 27
+          └─ JarvisProfile.classify → per-lane session: chat / quick / bigJob  ← macOS 27
 ```
 
-Dictation polish: `QwenRefiner` → Qwen 0.5B → polished text → `TextInjector` → ⌘V.
+Dictation polish: `SottoIntelligence.refine()` → Apple Intelligence (Foundation Models) → polished text → `TextInjector` → ⌘V.
 
 **CommandLearner:** records `(phrase → toolName)` after every Jarvis turn. Promoted phrases (≥3 uses) are cached in `learned_shortcuts.json` and injected as position-#1 tool in `JarvisToolbox.routed`, so the model sees the correct tool immediately rather than scoring 24 keyword groups.
 

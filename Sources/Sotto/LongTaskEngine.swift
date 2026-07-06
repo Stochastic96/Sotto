@@ -61,12 +61,15 @@ public enum LongTaskEngine {
     }
 
     private static func save(_ task: LongTask) {
-        try? FileManager.default.createDirectory(at: tasksDir, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
-        if let data = try? encoder.encode(task) {
-            try? data.write(to: url(for: task.id), options: .atomic)
+        do {
+            try FileManager.default.createDirectory(at: tasksDir, withIntermediateDirectories: true)
+            let data = try encoder.encode(task)
+            try data.write(to: url(for: task.id), options: .atomic)
+        } catch {
+            print("[LongTask] Failed to persist task \(task.id) (\(error.localizedDescription)) — it may not resume after relaunch.")
         }
     }
 
@@ -130,11 +133,11 @@ public enum LongTaskEngine {
     private static func emptyPromotionalInbox(_ task: inout LongTask) async {
         await progress("🧹 Cleaning inbox…")
         while true {
-            let batch = MailConnector.fetchInboxBatch(offset: task.batchCursor, limit: batchSize)
+            let batch = await MailConnector.fetchInboxBatch(offset: task.batchCursor, limit: batchSize)
             if batch.isEmpty { break }
 
             let promoIds = await classifyPromotional(batch)
-            let trashed = MailConnector.moveToTrash(ids: promoIds)
+            let trashed = await MailConnector.moveToTrash(ids: promoIds)
             let kept = batch.count - trashed
 
             task.itemsActioned += trashed

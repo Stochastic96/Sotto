@@ -6,8 +6,8 @@ import AVFoundation
 // MARK: - TranscriptionBackend Protocol
 
 /// A single speech-recognition implementation. The app ships one backend
-/// (`NativeDictationBackend`); the protocol exists so the legacy fallback and any
-/// future engine can be swapped in without touching `Transcriber`.
+/// (`NativeDictationBackend`); the protocol exists so a future engine can be swapped in
+/// without touching `Transcriber`.
 protocol TranscriptionBackend: Sendable {
     func prepare() async throws
     /// `samples` must be 16 kHz mono Float32.
@@ -32,16 +32,13 @@ extension TranscriptionBackend {
 // MARK: - Apple Native Dictation (SpeechAnalyzer / DictationTranscriber, macOS 26+)
 
 /// Native on-device dictation via the modern `SpeechAnalyzer` + `DictationTranscriber`
-/// stack — the same engine class Apple's own Dictation and Notes use. Replaces the
-/// legacy `SFSpeechRecognizer` path: no delegate-callback race (the bug the old 8s
-/// watchdog in `LegacyAppleSpeechBackend` existed to paper over), contextual-vocabulary
-/// injection at the ASR layer instead of only post-hoc in the polish prompt, and an
-/// explicit on-device asset install step instead of an implicit one.
+/// stack — the same engine class Apple's own Dictation and Notes use. This is the only
+/// transcription engine: contextual-vocabulary injection happens at the ASR layer (not
+/// just post-hoc in the polish prompt), with an explicit on-device asset install step.
 ///
-/// Falls back to `LegacyAppleSpeechBackend` if the modern path fails to prepare or
-/// transcribe (e.g. asset install fails without network) — this is the user's daily
-/// dictation driver, so a brand-new OS-beta API gets a safety net rather than a hard
-/// failure.
+/// If the modern path can't prepare or transcribe (e.g. asset install fails without
+/// network), the error propagates to the caller — `AppController.endRecording` surfaces
+/// it as an `.error` state and schedules recovery. There is no legacy fallback engine.
 private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sendable {
     // 16 kHz mono — the fixed capture format AudioRecorder produces. `prepareToAnalyze(in:)`
     // tells the analyzer to expect buffers in this exact format so no extra
@@ -57,8 +54,6 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
     // wants 16-bit Int PCM, not the recorder's Float32), so every buffer is converted to this
     // before it's wrapped in an AnalyzerInput. Resolved via bestAvailableAudioFormat.
     private var analyzerFormat: AVAudioFormat?
-    private let legacyFallback = LegacyAppleSpeechBackend()
-    private var useLegacy = false
 
     func prepare() async throws {
         let status = SFSpeechRecognizer.authorizationStatus()
@@ -100,12 +95,10 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
             self.transcriber = t
             self.analyzer = a
             self.analyzerFormat = format
-            self.useLegacy = false
             print("[TRANSCRIBER] Native DictationTranscriber ready (\(resolved.identifier), format: \(format.commonFormat.rawValue)@\(Int(format.sampleRate))Hz).")
         } catch {
-            print("[TRANSCRIBER] Native dictation unavailable (\(error.localizedDescription)); falling back to legacy Apple Speech.")
-            useLegacy = true
-            try await legacyFallback.prepare()
+            print("[TRANSCRIBER] Native dictation failed to prepare (\(error.localizedDescription)).")
+            throw error
         }
      }
 
@@ -212,7 +205,7 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
         if transcriber == nil {
             try await prepare()
         }
-        guard !useLegacy, let transcriber, let analyzer else {
+        guard let transcriber, let analyzer else {
             return nil
         }
 
@@ -287,12 +280,12 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
 
         // `prepare()` only runs once at launch (AppController.loadModel), not before every
         // press — so if a prior transcribe() invalidated the cached analyzer after a
-        // failure, rebuild it here rather than staying permanently degraded to legacy.
-        if !useLegacy, transcriber == nil {
-            try? await prepare()
+        // failure, rebuild it here rather than staying permanently in a notReady state.
+        if transcriber == nil {
+            try await prepare()
         }
-        guard !useLegacy, let transcriber, let analyzer else {
-            return try await legacyFallback.transcribe(samples)
+        guard let transcriber, let analyzer else {
+            throw Transcriber.TranscriberError.notReady
         }
 
         guard let buffer = AVAudioPCMBuffer(pcmFormat: Self.format, frameCapacity: AVAudioFrameCount(samples.count)) else {
@@ -367,15 +360,13 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
 
             return text
         } catch {
-            print("[TRANSCRIBER] Native dictation transcribe failed/timed out (\(error.localizedDescription)); falling back to legacy Apple Speech for this utterance.")
-            // Don't set useLegacy = true here — that's reserved for a structurally
-            // unavailable modern path (permission/asset failure in prepare()). A transcribe-
-            // level failure gets a clean rebuild attempt on the next press instead of
-            // permanently degrading every future dictation to the legacy path.
+            print("[TRANSCRIBER] Native dictation transcribe failed/timed out (\(error.localizedDescription)).")
+            // Invalidate the cached analyzer so the next press rebuilds it from scratch
+            // rather than reusing a possibly-wedged instance, then propagate: the caller
+            // surfaces a clean error and returns to idle.
             self.transcriber = nil
             self.analyzer = nil
-            try? await legacyFallback.prepare()
-            return try await legacyFallback.transcribe(samples)
+            throw error
         }
     }
 
@@ -391,125 +382,20 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
     }
 }
 
-// MARK: - Legacy Apple Speech (SFSpeechRecognizer) — fallback only
-
-/// Kept as the safety net `NativeDictationBackend` falls back to, and to keep
-/// `LegacyAppleSpeechBackend` buildable standalone if the modern stack ever needs
-/// bypassing entirely. Not user-selectable on its own.
-private struct LegacyAppleSpeechBackend: TranscriptionBackend {
-    func prepare() async throws {
-        let status = SFSpeechRecognizer.authorizationStatus()
-        guard status != .authorized else { return }
-        if status == .notDetermined {
-            let authorized = await withCheckedContinuation { continuation in
-                SFSpeechRecognizer.requestAuthorization { s in
-                    continuation.resume(returning: s == .authorized)
-                }
-            }
-            if !authorized { throw Transcriber.TranscriberError.permissionDenied }
-        } else {
-            throw Transcriber.TranscriberError.permissionDenied
-        }
-    }
-
-    func transcribe(_ samples: [Float]) async throws -> String {
-        guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else {
-            throw Transcriber.TranscriberError.speechRecognizerNotAvailable
-        }
-        
-        let audioDuration = Double(samples.count) / 16000.0
-        let timeoutSeconds = max(8.0, audioDuration * 0.5)
-
-        let format = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: 16000,
-            channels: 1,
-            interleaved: false
-        )!
-
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)) else {
-            throw NSError(domain: "Transcriber", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Failed to create PCM buffer for Speech Recognition"])
-        }
-        buffer.frameLength = buffer.frameCapacity
-        if let channelData = buffer.floatChannelData {
-            samples.withUnsafeBufferPointer { ptr in
-                channelData[0].initialize(from: ptr.baseAddress!, count: samples.count)
-            }
-        }
-
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
-        request.append(buffer)
-        request.endAudio()
-
-        // SFSpeechRecognizer's on-device recognizer can — under memory pressure on
-        // an 8 GB M1 — deliver partial results and then NEVER deliver `isFinal` and
-        // NEVER an error. The old code resumed the continuation only on `.isFinal`
-        // or error, so that case hung this `await` forever and wedged the whole app
-        // at `.transcribing` (every later hotkey press → "Still transcribing…").
-        // Fix: keep the latest partial, add an 8s safety timeout, and resume with
-        // the best partial we have. A genuine "no speech" outcome resolves to "" so
-        // the pipeline just returns to idle instead of throwing a scary error.
-        // `SFSpeechRecognitionTask` is not Sendable; box it so the timeout closure
-        // can cancel it without tripping concurrency warnings.
-        final class TaskBox: @unchecked Sendable { var task: SFSpeechRecognitionTask? }
-        struct SpeechState { var finished = false; var partial = "" }
-        let box = TaskBox()
-        let state = OSAllocatedUnfairLock(initialState: SpeechState())
-        return try await withCheckedThrowingContinuation { continuation in
-            box.task = recognizer.recognitionTask(with: request) { result, error in
-                // withLock owns both fields; returning String? avoids capturing a var.
-                let resumeText: String? = state.withLock { s in
-                    guard !s.finished else { return nil }
-                    if let result {
-                        s.partial = result.bestTranscription.formattedString
-                        if result.isFinal { s.finished = true; return s.partial }
-                    }
-                    if error != nil {
-                        s.finished = true
-                        // Prefer any partial we captured; treat "no speech
-                        // detected" as an empty (silent) result, not a hard failure.
-                        return s.partial
-                    }
-                    return nil
-                }
-                if let text = resumeText { continuation.resume(returning: text) }
-            }
-
-            Task.detached {
-                try? await Task.sleep(for: .seconds(timeoutSeconds))
-                let resumeText: String? = state.withLock { s in
-                    guard !s.finished else { return nil }
-                    s.finished = true
-                    return s.partial
-                }
-                if let text = resumeText {
-                    box.task?.cancel()
-                    print("[TRANSCRIBER] Apple Speech timed out after \(String(format: "%.1f", timeoutSeconds))s; returning best partial (\(text.count) chars).")
-                    continuation.resume(returning: text)
-                }
-            }
-        }
-    }
-}
-
 // MARK: - Transcriber
 
-/// Drives dictation through the native Apple `NativeDictationBackend` (SpeechAnalyzer),
-/// which self-heals to `LegacyAppleSpeechBackend` if the modern stack can't prepare.
+/// Drives dictation through the native Apple `NativeDictationBackend` (SpeechAnalyzer).
+/// A prepare/transcribe failure propagates to the caller rather than degrading to any
+/// legacy engine.
 actor Transcriber {
     enum TranscriberError: LocalizedError {
         case notReady
-        case speechRecognizerNotAvailable
         case permissionDenied
 
         var errorDescription: String? {
             switch self {
             case .notReady:
                 return "Speech model is not loaded yet."
-            case .speechRecognizerNotAvailable:
-                return "Apple Speech Recognizer is not available for your system or locale."
             case .permissionDenied:
                 return "Speech Recognition permission not granted by system. Please enable it in Settings > Privacy & Security > Speech Recognition."
             }

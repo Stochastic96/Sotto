@@ -34,7 +34,6 @@ import SottoCore
     var hotkey: HotkeyListener?
     var intelligence: SottoIntelligence?
     var polishEnabled: Bool
-    let wakeDetector = WakeWordDetector()
     var visualizerTimer: Timer?
     var recordingStart: Date?
     var recentTranscripts: [String] = []
@@ -74,7 +73,6 @@ import SottoCore
         didSet {
             stateEnteredAt = Date()
             statusBar.update(for: state)
-            updateWakeDetector()
             // Arm the watchdog only while in a transient state that can get stuck;
             // cancel it the instant we leave, eliminating the free-running 5s poll.
             switch state {
@@ -292,16 +290,6 @@ import SottoCore
         // Run availability diagnostics at startup to surface clear log output
         // instead of silent failures later.
         JarvisDiagnostics.reportAvailability()
-
-        // Setup hands-free wake word detector
-        wakeDetector.onWakeWordDetected = { [weak self] in
-            guard let self = self else { return }
-            Task { @MainActor in
-                print("[WAKE] Wake word detected! Triggering Jarvis hands-free.")
-                self.currentMode = .jarvis
-                self.beginRecording()
-            }
-        }
 
         // Resume any bulk background jobs left running from a previous launch.
         LongTaskEngine.resumePending()
@@ -713,16 +701,6 @@ import SottoCore
             self.hud.hide()
             self.state = .idle
             self.soundBasso?.play()
-        }
-    }
-
-    func updateWakeDetector() {
-        if #available(macOS 10.15, *) {
-            if case .idle = state, SettingsController.isHandsFreeEnabled {
-                wakeDetector.start()
-            } else {
-                wakeDetector.stop()
-            }
         }
     }
 

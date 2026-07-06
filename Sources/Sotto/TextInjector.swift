@@ -1,29 +1,6 @@
 import AppKit
 import CoreGraphics
-
-// MARK: - TextInjecting Protocol
-
-/// Abstracts text and selection injection into the focused application.
-/// Conform to this protocol to substitute a test double or an alternative
-/// injection strategy without touching call sites in AppController/CommandEngine.
-protocol TextInjecting: Sendable {
-    func inject(_ text: String, fileURL: URL?, targetPID: pid_t?) async
-    func injectUnicode(_ text: String, targetPID: pid_t?) async
-    func grabActiveSelection(targetPID: pid_t?) async -> String?
-    func pressReturn(targetPID: pid_t?) async
-    func pressSearchShortcut(_ type: SearchShortcutType, targetPID: pid_t?) async
-}
-
-extension TextInjecting {
-    func inject(_ text: String, fileURL: URL? = nil, targetPID: pid_t? = nil) async {
-        await inject(text, fileURL: fileURL, targetPID: targetPID)
-    }
-    func injectUnicode(_ text: String, targetPID: pid_t? = nil) async {
-        await injectUnicode(text, targetPID: targetPID)
-    }
-    func grabActiveSelection() async -> String? { await grabActiveSelection(targetPID: nil) }
-    func pressReturn() async { await pressReturn(targetPID: nil) }
-}
+import SottoCore
 
 // MARK: - TextInjector
 

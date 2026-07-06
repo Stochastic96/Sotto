@@ -36,15 +36,25 @@ enum SkillStore {
     }
 
     private static func load() -> [DraftedSkill] {
-        guard let data = try? Data(contentsOf: manifestURL),
-              let skills = try? JSONDecoder().decode([DraftedSkill].self, from: data) else { return [] }
-        return skills
+        // A missing manifest is normal on first run — return empty quietly. Only a manifest
+        // that exists but can't be read/decoded is an error worth surfacing.
+        guard FileManager.default.fileExists(atPath: manifestURL.path) else { return [] }
+        do {
+            let data = try Data(contentsOf: manifestURL)
+            return try JSONDecoder().decode([DraftedSkill].self, from: data)
+        } catch {
+            print("[SKILLS] Failed to load skills manifest (\(error.localizedDescription)); treating as empty.")
+            return []
+        }
     }
 
     private static func save(_ skills: [DraftedSkill]) {
         ensureDirs()
-        if let data = try? JSONEncoder().encode(skills) {
-            try? data.write(to: manifestURL)
+        do {
+            let data = try JSONEncoder().encode(skills)
+            try data.write(to: manifestURL)
+        } catch {
+            print("[SKILLS] Failed to save skills manifest (\(error.localizedDescription)) — drafts may not persist.")
         }
     }
 
@@ -128,7 +138,11 @@ enum SkillStore {
             ext = "sh"
         }
         let fileURL = scriptsDir.appendingPathComponent("\(target).\(ext)")
-        try? skill.body.write(to: fileURL, atomically: true, encoding: .utf8)
+        do {
+            try skill.body.write(to: fileURL, atomically: true, encoding: .utf8)
+        } catch {
+            print("[SKILLS] Failed to write script file for '\(target)' (\(error.localizedDescription)).")
+        }
 
         // Compile Swift skills in the background — swiftc takes seconds on the M1 and
         // enable() runs on the MainActor Jarvis pipeline, so the compile must never block
@@ -219,7 +233,11 @@ enum SkillStore {
         }
         let fileURL = scriptsDir.appendingPathComponent("\(target).\(ext)")
         if !FileManager.default.fileExists(atPath: fileURL.path) {
-            try? skill.body.write(to: fileURL, atomically: true, encoding: .utf8)
+            do {
+                try skill.body.write(to: fileURL, atomically: true, encoding: .utf8)
+            } catch {
+                print("[SKILLS] Failed to materialize script for '\(target)' (\(error.localizedDescription)).")
+            }
         }
         
         let command: String

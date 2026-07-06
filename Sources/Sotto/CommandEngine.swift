@@ -5,11 +5,6 @@ import os
 import SottoCore
 import ScreenCaptureKit
 
-enum SearchShortcutType: String {
-    case find // Cmd+F
-    case location // Cmd+L
-}
-
 struct CommandOutput {
     var text: String
     var pressReturnAfter: Bool

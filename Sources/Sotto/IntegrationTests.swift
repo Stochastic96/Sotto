@@ -63,6 +63,20 @@ public func runCapabilityConsistencyCheck() async -> Bool {
         print("❌ Kernel reflexes with no registered capability: \(badReflexes.joined(separator: ", "))")
         ok = false
     }
+
+    // Forward check: every reflex-tier capability MUST have a kernel binding. Without one,
+    // the intent routes to reflex tier, finds no executor, and silently escalates to the
+    // model — the exact drift this pass fixed.
+    let boundReflexSet = Set(reflexNames)
+    let reflexTierCaps = await CapabilityRegistry.shared.allCapabilities()
+        .filter { $0.tier == .reflex }.map { $0.name }
+    let unboundReflexCaps = reflexTierCaps.filter { !boundReflexSet.contains($0) }
+    if unboundReflexCaps.isEmpty {
+        print("✅ All \(reflexTierCaps.count) reflex-tier capabilities have a kernel binding.")
+    } else {
+        print("❌ Reflex-tier capabilities with no kernel binding (bind in Kernel.seedReflexes or raise their tier): \(unboundReflexCaps.joined(separator: ", "))")
+        ok = false
+    }
     return ok
 }
 

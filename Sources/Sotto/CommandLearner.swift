@@ -108,13 +108,6 @@ actor CommandLearner {
         save()
     }
 
-    /// `@Generable` arguments serialize through the framework's own JSON bridge, so tool
-    /// argument types need no Codable conformance (String-raw @Generable enums expand to
-    /// deprecated GenerationError paths inside the macro — that's why Codable is gone).
-    func recordToolCall(toolName: String, arguments: some ConvertibleToGeneratedContent) {
-        recordToolCall(toolName: toolName, argumentsJson: arguments.generatedContent.jsonString)
-    }
-
     // MARK: - Startup
 
     /// Load persisted entries and warm the hint cache. Call once at launch.
@@ -183,6 +176,22 @@ actor CommandLearner {
             s.removeLast()
         }
         return s.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+// MARK: - CommandRecording conformance
+
+/// `CommandLearner.shared` is the production recorder tools inject via the `CommandRecording`
+/// seam. The actor's `recordToolCall(toolName:argumentsJson:)` witnesses the protocol
+/// requirement (actor-isolated methods satisfy `async` requirements across the actor hop).
+extension CommandLearner: CommandRecording {}
+
+extension CommandRecording {
+    /// `@Generable` arguments serialize through the framework's own JSON bridge, so tool
+    /// argument types need no Codable conformance (String-raw @Generable enums expand to
+    /// deprecated GenerationError paths inside the macro — that's why Codable is gone).
+    func recordToolCall(toolName: String, arguments: some ConvertibleToGeneratedContent) async {
+        await recordToolCall(toolName: toolName, argumentsJson: arguments.generatedContent.jsonString)
     }
 }
 

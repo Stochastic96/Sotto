@@ -177,7 +177,12 @@ extension AppController {
             return await Kernel.shared.runReflex(named: capability, intent: raw)
         case .tool(let name, let argsJson):
             guard JarvisBrain.directExecutionAllowlist.contains(name) else { return nil }
-            return try? await JarvisToolbox.callToolNatively(name: name, jsonArgs: argsJson)
+            do {
+                return try await JarvisToolbox.callToolNatively(name: name, jsonArgs: argsJson)
+            } catch {
+                print("[BRAIN] Replay of learned tool '\(name)' failed (\(error.localizedDescription)); falling through to the model.")
+                return nil
+            }
         }
     }
 

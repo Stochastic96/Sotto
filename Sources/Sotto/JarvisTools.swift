@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import FoundationModels
+import SottoCore
 
 // Native Apple Foundation Models tools. Each wraps an existing Sotto skill
 // (an AppleScript in sotto-data/skills/ or a native SystemControlHelper call) so the
@@ -63,6 +64,10 @@ enum TaskAction {
 struct SpotifyTool: Tool {
     let name = "control_spotify"
     let description = "Control Spotify ONLY (not Apple Music): play, pause, skip tracks, or search and play a specific song or artist."
+    /// Injectable Spotify transport; defaults to the live AppleScript-backed control.
+    let spotify: any SpotifyControlling = LiveSpotify()
+    /// Injectable usage recorder; defaults to the shared CommandLearner.
+    let recorder: any CommandRecording = CommandLearner.shared
 
     @Generable
     struct Arguments {
@@ -73,18 +78,18 @@ struct SpotifyTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        Task { await CommandLearner.shared.recordToolCall(toolName: name, arguments: arguments) }
+        Task { await recorder.recordToolCall(toolName: name, arguments: arguments) }
         // Every command is addressed to Spotify by name (see SpotifyControl), so it can
         // never accidentally drive Apple Music or another player.
         switch arguments.action {
-        case .play:     return await SpotifyControl.play()     ? "Spotify playing." : SpotifyControl.permissionHint
-        case .pause:    return await SpotifyControl.pause()    ? "Spotify paused." : SpotifyControl.permissionHint
-        case .next:     return await SpotifyControl.next()     ? "Skipped to the next track." : SpotifyControl.permissionHint
-        case .previous: return await SpotifyControl.previous() ? "Back to the previous track." : SpotifyControl.permissionHint
+        case .play:     return await spotify.play()     ? "Spotify playing." : spotify.permissionHint
+        case .pause:    return await spotify.pause()    ? "Spotify paused." : spotify.permissionHint
+        case .next:     return await spotify.next()     ? "Skipped to the next track." : spotify.permissionHint
+        case .previous: return await spotify.previous() ? "Back to the previous track." : spotify.permissionHint
         case .playSong:
             let q = (arguments.query ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !q.isEmpty else { return "Tell me which song or artist to play." }
-            return await SpotifyControl.searchAndPlay(q)
+            return await spotify.searchAndPlay(q)
         }
     }
 }
@@ -93,6 +98,10 @@ struct SpotifyTool: Tool {
 struct VolumeTool: Tool {
     let name = "set_volume"
     let description = "Set the Mac's output volume or mute/unmute the speakers."
+    /// Injectable volume/brightness/mute control; defaults to the live CoreAudio-backed impl.
+    let system: any SystemControlling = LiveSystemControl()
+    /// Injectable usage recorder; defaults to the shared CommandLearner.
+    let recorder: any CommandRecording = CommandLearner.shared
 
     @Generable
     struct Arguments {
@@ -103,15 +112,15 @@ struct VolumeTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        Task { await CommandLearner.shared.recordToolCall(toolName: name, arguments: arguments) }
+        Task { await recorder.recordToolCall(toolName: name, arguments: arguments) }
         switch arguments.action {
         case .mute:
-            _ = SystemControlHelper.setMuted(true); return "Muted."
+            _ = system.setMuted(true); return "Muted."
         case .unmute:
-            _ = SystemControlHelper.setMuted(false); return "Unmuted."
+            _ = system.setMuted(false); return "Unmuted."
         case .setLevel:
             let pct = Float(max(0, min(100, arguments.level ?? 50)))
-            _ = SystemControlHelper.setVolume(pct)
+            _ = system.setVolume(pct)
             return "Volume set to \(Int(pct))%."
         }
     }
@@ -121,6 +130,10 @@ struct VolumeTool: Tool {
 struct BrightnessTool: Tool {
     let name = "adjust_brightness"
     let description = "Increase or decrease the screen brightness."
+    /// Injectable brightness control; defaults to the live impl.
+    let system: any SystemControlling = LiveSystemControl()
+    /// Injectable usage recorder; defaults to the shared CommandLearner.
+    let recorder: any CommandRecording = CommandLearner.shared
 
     @Generable
     struct Arguments {
@@ -129,14 +142,14 @@ struct BrightnessTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        Task { await CommandLearner.shared.recordToolCall(toolName: name, arguments: arguments) }
-        let current = SystemControlHelper.getBrightness()
+        Task { await recorder.recordToolCall(toolName: name, arguments: arguments) }
+        let current = system.getBrightness()
         switch arguments.direction {
         case .up:
-            _ = SystemControlHelper.setBrightness(min(1, current + 0.15))
+            _ = system.setBrightness(min(1, current + 0.15))
             return "Brightness up."
         case .down:
-            _ = SystemControlHelper.setBrightness(max(0, current - 0.15))
+            _ = system.setBrightness(max(0, current - 0.15))
             return "Brightness down."
         }
     }
@@ -146,6 +159,8 @@ struct BrightnessTool: Tool {
 struct OpenWebsiteTool: Tool {
     let name = "open_website"
     let description = "Open a website URL in the browser."
+    /// Injectable usage recorder; defaults to the shared CommandLearner.
+    let recorder: any CommandRecording = CommandLearner.shared
 
     @Generable
     struct Arguments {
@@ -154,7 +169,7 @@ struct OpenWebsiteTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        Task { await CommandLearner.shared.recordToolCall(toolName: name, arguments: arguments) }
+        Task { await recorder.recordToolCall(toolName: name, arguments: arguments) }
         var url = arguments.url.trimmingCharacters(in: .whitespacesAndNewlines)
         if !url.lowercased().hasPrefix("http") { url = "https://" + url }
         // Pure in-process Swift — opens instantly in the default browser, no AppleScript
@@ -168,6 +183,8 @@ struct OpenWebsiteTool: Tool {
 struct OpenAppTool: SiriDelegatable {
     let name = "open_app"
     let description = "Launch a macOS application by name (e.g. Notes, Spotify, Safari)."
+    /// Injectable usage recorder; defaults to the shared CommandLearner.
+    let recorder: any CommandRecording = CommandLearner.shared
 
     @Generable
     struct Arguments {
@@ -181,7 +198,7 @@ struct OpenAppTool: SiriDelegatable {
 
     @MainActor
     func call(arguments: Arguments) async throws -> String {
-        Task { await CommandLearner.shared.recordToolCall(toolName: name, arguments: arguments) }
+        Task { await recorder.recordToolCall(toolName: name, arguments: arguments) }
         return try await siriDelegatedCall(tool: self, arguments: arguments) {
             let appName = arguments.appName.trimmingCharacters(in: .whitespacesAndNewlines)
             let path = "/Applications/\(appName).app"
@@ -232,6 +249,8 @@ struct OpenAppTool: SiriDelegatable {
 struct CreateNoteTool: Tool {
     let name = "create_note"
     let description = "Create a note in Apple Notes with the given content."
+    /// Injectable power/state control (createNote lives here); defaults to the live impl.
+    let power: any SystemPowerControlling = LiveSystemPower()
 
     @Generable
     struct Arguments {
@@ -241,7 +260,7 @@ struct CreateNoteTool: Tool {
 
     func call(arguments: Arguments) async throws -> String {
         let c = arguments.content
-        let ok = NativeSystemOrchestrator.createNote(c)
+        let ok = await power.createNote(c)
         return ok ? "Note saved." : "Could not save the note."
     }
 }
@@ -624,6 +643,10 @@ struct AskSiriTool: Tool {
 struct PowerStateTool: Tool {
     let name = "system_power_state"
     let description = "Trigger system power/state actions: lock screen, empty trash, or purge/clean RAM (flushes inactive memory, requires admin password)."
+    /// Injectable power/state control; defaults to the live AppleScript-backed impl.
+    let power: any SystemPowerControlling = LiveSystemPower()
+    /// Injectable usage recorder; defaults to the shared CommandLearner.
+    let recorder: any CommandRecording = CommandLearner.shared
 
     @Generable
     struct Arguments {
@@ -632,16 +655,16 @@ struct PowerStateTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        Task { await CommandLearner.shared.recordToolCall(toolName: name, arguments: arguments) }
+        Task { await recorder.recordToolCall(toolName: name, arguments: arguments) }
         switch arguments.action {
         case .lock:
-            NativeSystemOrchestrator.lockScreen()
+            await power.lockScreen()
             return "Locking screen."
         case .emptyTrash:
-            NativeSystemOrchestrator.emptyTrash()
+            await power.emptyTrash()
             return "Emptying trash."
         case .cleanRAM:
-            let ok = NativeSystemOrchestrator.purgeRAM()
+            let ok = await power.purgeRAM()
             return ok ? "RAM purged — inactive memory flushed." : "Purge failed or was cancelled."
         }
     }
@@ -666,6 +689,8 @@ struct NetworkDiagnosticsTool: Tool {
 struct ClipboardTool: Tool {
     let name = "manage_clipboard"
     let description = "Read or write text contents to the macOS system clipboard natively."
+    /// Injectable clipboard access; defaults to the live NSPasteboard-backed impl.
+    let clipboard: any ClipboardAccessing = LiveClipboard()
 
     @Generable
     struct Arguments {
@@ -679,10 +704,10 @@ struct ClipboardTool: Tool {
         switch arguments.action {
         case .write:
             guard let val = arguments.content else { return "Content is required for write." }
-            NativeClipboard.set(val)
+            clipboard.set(val)
             return "Copied text to clipboard."
         case .read:
-            let val = NativeClipboard.get()
+            let val = clipboard.get()
             return val.isEmpty ? "Clipboard is currently empty." : "Clipboard text: \(val)"
         }
     }
@@ -692,6 +717,8 @@ struct ClipboardTool: Tool {
 struct AppWindowTool: Tool {
     let name = "manage_apps_windows"
     let description = "List running applications, active window titles, or bring a running app to the foreground using its PID."
+    /// Injectable window/app control; defaults to the live NSWorkspace-backed impl.
+    let windows: any WindowControlling = LiveWindowControl()
 
     @Generable
     struct Arguments {
@@ -704,14 +731,14 @@ struct AppWindowTool: Tool {
     func call(arguments: Arguments) async throws -> String {
         switch arguments.action {
         case .listApps:
-            let apps = WindowManager.getRunningApps()
+            let apps = windows.getRunningApps()
             return "Running Applications:\n" + apps.joined(separator: "\n")
         case .listWindows:
-            let windows = WindowManager.getWindowList()
-            return windows.isEmpty ? "No visible windows found on screen." : "Visible Windows:\n" + windows.joined(separator: "\n")
+            let list = windows.getWindowList()
+            return list.isEmpty ? "No visible windows found on screen." : "Visible Windows:\n" + list.joined(separator: "\n")
         case .activateApp:
             guard let pid = arguments.targetPID else { return "targetPID is required to activate an app." }
-            let success = WindowManager.activateApp(pid: Int32(pid))
+            let success = windows.activateApp(pid: Int32(pid))
             return success ? "Activated app with PID \(pid)." : "Failed to activate app with PID \(pid)."
         }
     }
@@ -721,6 +748,8 @@ struct AppWindowTool: Tool {
 struct KeySimulatorTool: Tool {
     let name = "simulate_keystroke"
     let description = "Simulate native keystrokes and keyboard shortcuts (e.g. Cmd+S, Cmd+W, tab, space, return, escape, arrow keys)."
+    /// Injectable keystroke simulator; defaults to the live CGEvent-backed impl.
+    let keys: any KeySimulating = LiveKeySimulator()
 
     @Generable
     struct Arguments {
@@ -745,7 +774,7 @@ struct KeySimulatorTool: Tool {
         let holdsOpt = arguments.opt ?? false
         let holdsCtrl = arguments.ctrl ?? false
         
-        let success = await KeySimulator.simulate(
+        let success = await keys.simulate(
             key: key,
             cmd: holdsCmd,
             shift: holdsShift,

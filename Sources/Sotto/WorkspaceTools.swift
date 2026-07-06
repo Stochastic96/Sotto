@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import FoundationModels
+import SottoCore
 
 // MARK: - FocusSessionTool
 
@@ -10,6 +11,10 @@ import FoundationModels
 struct FocusSessionTool: Tool {
     let name = "start_focus_session"
     let description = "Start a focused work session: enables Do Not Disturb, quits distracting apps (Twitter, Discord, Slack, Messages), opens the specified project, and sets volume to 40%."
+    /// Injectable volume/brightness control; defaults to the live impl.
+    let system: any SystemControlling = LiveSystemControl()
+    /// Injectable usage recorder; defaults to the shared CommandLearner.
+    let recorder: any CommandRecording = CommandLearner.shared
 
     @Generable
     struct Arguments {
@@ -20,7 +25,7 @@ struct FocusSessionTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        Task { await CommandLearner.shared.recordToolCall(toolName: name, arguments: arguments) }
+        Task { await recorder.recordToolCall(toolName: name, arguments: arguments) }
         let mins = arguments.minutes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "25"
             : arguments.minutes.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -47,7 +52,7 @@ struct FocusSessionTool: Tool {
         }
 
         // d) Set volume to 40%
-        _ = SystemControlHelper.setVolume(40)
+        _ = system.setVolume(40)
 
         // e) Speak confirmation
         let message = "Focus session started, मिस्टर लॉर्ड. \(mins) minutes, no distractions."
@@ -131,6 +136,10 @@ struct EndWorkdayTool: Tool {
 struct WorkspaceSwitchTool: Tool {
     let name = "switch_workspace"
     let description = "Switch the desktop environment to a workflow mode: development, writing, presentation, or entertainment. Each mode opens the right apps and configures volume, brightness, and Do Not Disturb."
+    /// Injectable volume/brightness control; defaults to the live impl.
+    let system: any SystemControlling = LiveSystemControl()
+    /// Injectable usage recorder; defaults to the shared CommandLearner.
+    let recorder: any CommandRecording = CommandLearner.shared
 
     @Generable
     struct Arguments {
@@ -139,7 +148,7 @@ struct WorkspaceSwitchTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        Task { await CommandLearner.shared.recordToolCall(toolName: name, arguments: arguments) }
+        Task { await recorder.recordToolCall(toolName: name, arguments: arguments) }
         let mode = arguments.mode.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
 
         switch mode {
@@ -168,7 +177,7 @@ struct WorkspaceSwitchTool: Tool {
             _ = CommandEngine.runCommandNatively(
                 "osascript -e 'tell application \"Terminal\" to quit'"
             )
-            _ = SystemControlHelper.setBrightness(0.35)
+            _ = system.setBrightness(0.35)
             _ = CommandEngine.runCommandNatively(
                 "osascript -e 'tell application \"System Events\" to set doNotDisturb of appearance preferences to true'"
             )
@@ -182,7 +191,7 @@ struct WorkspaceSwitchTool: Tool {
             _ = CommandEngine.runCommandNatively(
                 "osascript -e 'tell application \"System Events\" to set doNotDisturb of appearance preferences to true'"
             )
-            _ = SystemControlHelper.setBrightness(1.0)
+            _ = system.setBrightness(1.0)
             let appsToClose = ["Xcode", "Terminal", "Slack", "Discord", "Messages", "Mail"]
             for app in appsToClose {
                 _ = CommandEngine.runCommandNatively(
@@ -201,7 +210,7 @@ struct WorkspaceSwitchTool: Tool {
                 "osascript -e 'tell application \"System Events\" to set doNotDisturb of appearance preferences to false'"
             )
             _ = CommandEngine.runCommandNatively("open -a Spotify")
-            _ = SystemControlHelper.setVolume(70)
+            _ = system.setVolume(70)
             _ = CommandEngine.runCommandNatively("open -a Safari")
             let msg = "Entertainment mode on, मिस्टर लॉर्ड. Spotify चालू, volume 70, browser ready। Chill मारो भाई!"
             await MainActor.run { AppController.shared?.speak(msg) }

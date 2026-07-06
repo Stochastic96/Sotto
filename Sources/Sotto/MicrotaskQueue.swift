@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import SottoCore
 
 // MARK: - MicrotaskQueue
 //
@@ -17,45 +18,9 @@ import FoundationModels
 // Task lifecycle:
 //   pending → running → done | failed → (retry if retryCount < maxRetries) → pending
 
-// MARK: - Model
-
-struct Microtask: Codable, Identifiable {
-    enum Status: String, Codable { case pending, running, done, failed }
-
-    let id: String
-    var name: String
-    var goal: String
-    var priority: Int            // higher = processed first; 0 = lowest
-    var status: Status
-    var retryCount: Int
-    var maxRetries: Int
-    var scheduledAfter: Date?    // nil = immediately eligible
-    var createdAt: Date
-    var completedAt: Date?
-    var result: String?
-    var failureReason: String?
-
-    init(name: String, goal: String, priority: Int = 0, maxRetries: Int = 2, scheduledAfter: Date? = nil) {
-        self.id = UUID().uuidString
-        self.name = name
-        self.goal = goal
-        self.priority = priority
-        self.status = .pending
-        self.retryCount = 0
-        self.maxRetries = maxRetries
-        self.scheduledAfter = scheduledAfter
-        self.createdAt = Date()
-    }
-}
-
 // MARK: - MicrotaskExecutor
-
-/// Runs a single microtask's goal and returns its output.
-/// Swap implementations via `MicrotaskQueue.executor` — useful for testing
-/// or plugging in a different AI backend without touching queue logic.
-protocol MicrotaskExecutor: Sendable {
-    func execute(_ task: Microtask) async -> (output: String?, error: String?)
-}
+// `Microtask` and the `MicrotaskExecutor` protocol now live in SottoCore (Foundation-only)
+// so the queue logic and its seam are unit-testable; the queue and the live executor stay here.
 
 /// Default executor: routes each task's goal through CoordinatorAgent.
 struct CoordinatorTaskExecutor: MicrotaskExecutor {

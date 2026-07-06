@@ -1,8 +1,12 @@
 import AppKit
 import Foundation
 
+/// Native system actions driven via `NSAppleScript` / Apple Events. `@MainActor`-isolated
+/// because Apple Events must be dispatched on the main run loop — the isolation makes that a
+/// compile-time guarantee rather than a convention every caller has to remember.
+@MainActor
 struct NativeSystemOrchestrator {
-    
+
     static func lockScreen() {
         // Triggers the standard macOS Lock Screen action instantly
         let lib = dlopen("/System/Library/PrivateFrameworks/login.framework/Versions/A/login", RTLD_NOW)

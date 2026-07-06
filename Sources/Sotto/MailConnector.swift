@@ -1,7 +1,7 @@
 import Foundation
 
 /// One inbox message, as much as Jarvis needs to decide whether it's promotional.
-public struct MailMessage {
+public struct MailMessage: Sendable {
     public let id: Int
     public let sender: String
     public let subject: String
@@ -14,6 +14,8 @@ public struct MailMessage {
 public enum MailConnector {
 
     /// Runs an AppleScript source string and returns its text result (`nil` on error).
+    /// `@MainActor`: Apple Events must be dispatched on the main run loop.
+    @MainActor
     private static func runScript(_ source: String) -> String? {
         var error: NSDictionary?
         guard let script = NSAppleScript(source: source) else { return nil }
@@ -27,6 +29,7 @@ public enum MailConnector {
 
     /// Fetch up to `limit` messages from the inbox starting at 1-based index `offset+1`.
     /// Returns an empty array when the window is past the end of the inbox.
+    @MainActor
     public static func fetchInboxBatch(offset: Int, limit: Int) -> [MailMessage] {
         let start = offset + 1
         let end = offset + limit
@@ -57,6 +60,7 @@ public enum MailConnector {
 
     /// Move the given message IDs to the Trash. Returns how many were trashed.
     @discardableResult
+    @MainActor
     public static func moveToTrash(ids: [Int]) -> Int {
         guard !ids.isEmpty else { return 0 }
         var trashed = 0
