@@ -30,7 +30,7 @@ extension AppController {
         // AI polish (Apple Intelligence, warm) with a 15s safety timeout + sanity checks.
         if polishEnabled && !skipPolish, let intel = self.intelligence {
             state = .polishing
-            hud.show("✨  Polishing…")
+            hud.present(.thinking("Polishing"))
             let polishStart = CFAbsoluteTimeGetCurrent()
             let refinementTask = Task { [self, text] in
                 let chunks = Self.splitIntoChunks(text)
@@ -38,7 +38,9 @@ extension AppController {
                     // Stream partial snapshots to the HUD so the user sees characters
                     // arriving live instead of waiting 2-4s for the whole result.
                     return try await intel.refine(text, context: context, history: self.recentTranscripts) { @MainActor [weak self] partial in
-                        self?.hud.show("✨ \(partial.prefix(60))\(partial.count > 60 ? "…" : "")")
+                        // High-frequency display-only channel — never retriggers
+                        // the structural HUD animation per streamed token.
+                        self?.hud.updateProgressDetail(String(partial.suffix(60)))
                     }
                 } else {
                     var polishedChunks: [String] = []
@@ -49,7 +51,7 @@ extension AppController {
                     for chunk in chunks {
                         let partialProgress: @Sendable @MainActor (String) -> Void = { @MainActor [weak self, accumulated] partial in
                             let hudText = accumulated.value + (accumulated.value.isEmpty ? "" : "\n\n") + partial
-                            self?.hud.show("✨ \(hudText.prefix(60))\(hudText.count > 60 ? "…" : "")")
+                            self?.hud.updateProgressDetail(String(hudText.suffix(60)))
                         }
                         let polishedChunk = try await intel.refine(chunk, context: context, history: self.recentTranscripts, onProgress: partialProgress)
                         polishedChunks.append(polishedChunk)
@@ -96,7 +98,7 @@ extension AppController {
         
         let total = CFAbsoluteTimeGetCurrent() - pipelineStart
         print("[BENCHMARK] Dictation \(String(format: "%.0f", total * 1000))ms (polish: \(String(format: "%.0f", polishDuration * 1000))ms)")
-        hud.show("✓ Done (\(String(format: "%.1f", total))s)")
+        hud.present(.success("Done", detail: "\(String(format: "%.1f", total))s"))
         self.updateMemoryLedger()
         state = .idle
         Task { try? await Task.sleep(for: .seconds(1.5)); hud.hide() }

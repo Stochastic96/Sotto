@@ -28,6 +28,16 @@ import SottoCore
     let soundPop = NSSound(named: "Pop")
     let soundTink = NSSound(named: "Tink")
     let soundBasso = NSSound(named: "Basso")
+    // Bundled signature cues: a warm rising two-tone when Jarvis starts
+    // listening (dictation keeps the familiar Pop), and a soft descending blip
+    // when listening ends — closing the previously silent key-release moment.
+    let soundJarvisActivate = AppController.bundledSound("jarvis-activate")
+    let soundListenStop = AppController.bundledSound("listen-stop")
+
+    private static func bundledSound(_ name: String) -> NSSound? {
+        guard let url = Bundle.module.url(forResource: name, withExtension: "caf") else { return nil }
+        return NSSound(contentsOf: url, byReference: true)
+    }
     let settings = SettingsController()
     let explanationController = ExplanationWindowController()
     let promptReview = PromptReviewWindowController()
@@ -61,6 +71,10 @@ import SottoCore
     // Set while Jarvis is waiting for the answer to a clarifying ("ASK:") question.
     var pendingClarification = false
 
+    /// Legacy free-form entry to the HUD. Kept ONLY for callers that surface
+    /// dynamic, externally composed strings (EventHandler system toasts,
+    /// LongTaskEngine progress lines) — the shim classifies and strips any
+    /// leftover decoration. New code must use `hud.present(_:)` directly.
     func showHUD(_ text: String) {
         hud.show(text)
     }
@@ -366,7 +380,7 @@ import SottoCore
         // can see where the HUD lives — even when the menu bar icon is hidden by overflow.
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.5))
-            self.hud.showResult("✦ Sotto is running  •  ⌘⇧K to dictate", autoHideAfter: 3.5)
+            self.hud.present(.info("Sotto is running", detail: "Hold ⌘⇧K to dictate · ⌘⇧J for Jarvis"), dismissAfter: 3.5)
             
             // Show onboarding guide automatically on first launch
             let hasShown = UserDefaults.standard.bool(forKey: "sotto_hasShownOnboarding")
@@ -402,7 +416,7 @@ import SottoCore
 
         if case .loadingModel = state {
             print("[APP] beginRecording() aborted: Speech model is loading")
-            hud.show("⏳ Loading speech model…")
+            hud.present(.thinking("Loading speech model"))
             soundBasso?.play()
             Task {
                 try? await Task.sleep(for: .seconds(2)) // 2 seconds
@@ -415,14 +429,14 @@ import SottoCore
 
         if case .transcribing = state {
             print("[APP] beginRecording() aborted: Currently transcribing")
-            hud.show("⏳ Still transcribing…")
+            hud.present(.thinking("Still transcribing"))
             soundBasso?.play()
             return
         }
 
         if case .polishing = state {
             print("[APP] beginRecording() aborted: Currently polishing")
-            hud.show("⏳ Still polishing…")
+            hud.present(.thinking("Still polishing"))
             soundBasso?.play()
             return
         }
@@ -430,7 +444,7 @@ import SottoCore
         if case .error(let msg) = state {
             if msg.contains("Model load") || msg.contains("Speech model is not loaded") {
                 print("[APP] Retrying model load because hotkey was pressed in error state: \(msg)")
-                hud.show("⏳ Retrying model load…")
+                hud.present(.thinking("Retrying model load"))
                 Task { @MainActor in
                     await loadModel()
                 }
@@ -510,8 +524,13 @@ import SottoCore
 
             try recorder.start(onBuffer: { bufferContinuation.yield($0) })
             state = .recording
-            hud.show("●  Listening  [0:00 / 5:00]")
-            soundPop?.play()
+            if currentMode == .jarvis {
+                hud.present(.listening, mode: .jarvis)
+                (soundJarvisActivate ?? soundPop)?.play()
+            } else {
+                hud.present(.listening, mode: .dictation)
+                soundPop?.play()
+            }
 
             // Prewarm ASR on the MainActor while the user is speaking.
             // MainActor isolation is critical: running ASR initialization on a background cooperative thread
@@ -523,24 +542,18 @@ import SottoCore
                 try? await self.transcriber.prepare()
             }
 
-            // Waveform at 15fps (66ms). Skip silent frames — saves ~65% of main-thread
-            // wakeups during the typical mostly-silent recording session.
+            // Live waveform + streaming caption at 15fps (66ms). Both are cheap,
+            // animation-key-free updates on the HUD model, so pushing every frame
+            // (including near-silence, which lets the bars decay naturally) is safe.
             self.visualizerTimer?.invalidate()
             self.visualizerTimer = Timer.scheduledTimer(withTimeInterval: 0.066, repeats: true) { [weak self] _ in
                 guard let self = self else { return }
                 Task { @MainActor in
                     guard case .recording = self.state else { return }
-                    let rms = self.recorder.currentRMS
-                    guard rms > 0.005 else { return }
-                    let bars = self.waveform(for: rms)
-                    let elapsed = Date().timeIntervalSince(self.recordingStart ?? Date())
-                    let timeStr = String(format: "%d:%02d", Int(elapsed) / 60, Int(elapsed) % 60)
+                    self.hud.updateLevel(self.recorder.currentRMS)
                     // Live transcript preview from the streaming ASR partials — display
                     // only; routing always waits for the final key-release transcript.
-                    let preview = self.latestPartial.isEmpty
-                        ? ""
-                        : "  “…\(String(self.latestPartial.suffix(42)))”"
-                    self.hud.show("●  Listening  \(bars)  [\(timeStr) / 5:00]\(preview)")
+                    self.hud.updateCaption(String(self.latestPartial.suffix(60)))
                 }
             }
 
@@ -567,6 +580,7 @@ import SottoCore
         visualizerTimer = nil
 
         let samples = recorder.stop()
+        soundListenStop?.play()
 
         // End the audio input and stop the partial preview — on every exit path.
         streamBufferContinuation?.finish()
@@ -584,12 +598,12 @@ import SottoCore
             // startStreaming()/transcribe() tears it down on the actor, which avoids
             // racing a cancel against a rapid next press.
             state = .idle
-            hud.showResult("Hold ⌘⇧K while speaking, then release", autoHideAfter: 2.0)
+            hud.present(.info("Hold ⌘⇧K while speaking, then release"), dismissAfter: 2.0)
             return
         }
 
         state = .transcribing
-        hud.show("…  Transcribing")
+        hud.present(.thinking("Transcribing"))
 
         // Capture the focused app now, before transcription finishes.
         // currentCached() is zero-cost between app switches.
@@ -628,7 +642,48 @@ import SottoCore
                 // (optionally) when you're already in the Jarvis lane.
                 switch mode {
                 case .dictation:
-                    await self.runDictationPipeline(raw: raw, samples: samples, context: context)
+                    let decision = BridgeDecision.classify(raw)
+                    switch decision {
+                    case .delegate(let command):
+                        print("[APP] Dictation -> Jarvis delegation: command='\(command)'")
+                        soundPop?.play()
+                        hud.present(.thinking("Jarvis"), mode: .jarvis)
+                        let start = CFAbsoluteTimeGetCurrent()
+                        let reply = await self.runJarvisPipeline(raw: command, samples: samples, context: context, origin: "dictation")
+                        let ms = (CFAbsoluteTimeGetCurrent() - start) * 1000.0
+                        BridgeAudit.record(
+                            outcome: .delegated,
+                            transcript: raw,
+                            command: command,
+                            app: lastActiveApp?.localizedName,
+                            reply: reply,
+                            latencyMs: ms
+                        )
+                    case .noTask:
+                        print("[APP] Dictation -> Jarvis delegation: no task")
+                        BridgeAudit.record(
+                            outcome: .noTask,
+                            transcript: raw,
+                            command: "",
+                            app: lastActiveApp?.localizedName
+                        )
+                        soundBasso?.play()
+                        hud.present(.warning("No command heard"))
+                        speak("I heard my name, but no command followed.")
+                        state = .idle
+                        Task { try? await Task.sleep(for: .seconds(2)); hud.hide() }
+                    case .nearMiss:
+                        print("[APP] Dictation -> Jarvis delegation: near miss, treating as dictation")
+                        BridgeAudit.record(
+                            outcome: .nearMiss,
+                            transcript: raw,
+                            command: "",
+                            app: lastActiveApp?.localizedName
+                        )
+                        await self.runDictationPipeline(raw: raw, samples: samples, context: context)
+                    case .none:
+                        await self.runDictationPipeline(raw: raw, samples: samples, context: context)
+                    }
                 case .jarvis:
                     let command = Self.jarvisWakeCommand(in: raw) ?? raw
                     await self.runJarvisPipeline(raw: command, samples: samples, context: context)
@@ -684,12 +739,6 @@ import SottoCore
         }
     }
 
-    private func waveform(for rms: Float) -> String {
-        let levels = ["  ", "▂ ", "▂▃", "▂▃▅", "▂▃▅▆", "▂▃▅▆▇"]
-        let index = min(Int(rms * 45.0), levels.count - 1)
-        return levels[max(0, index)]
-    }
-
     private func armWatchdog(limit: TimeInterval) {
         watchdogTask?.cancel()
         let enteredAt = stateEnteredAt
@@ -709,6 +758,10 @@ import SottoCore
         source.setEventHandler { [weak self] in
             let event = source.data
             print("[SYSTEM-MEMORY] OS warned of memory pressure: \(event)")
+            if event.contains(.critical) {
+                // Drop transient GPU layers (edge glow panel) before evicting models.
+                Task { @MainActor in self?.hud.tearDownTransientLayers() }
+            }
             Task {
                 await OSControlAgent.shared.unload()
                 await WebResearcherAgent.shared.unload()
@@ -748,11 +801,17 @@ import SottoCore
         )
         window.title = title
         window.isReleasedWhenClosed = false
+        window.titlebarAppearsTransparent = true
         window.center()
         
+        let backdrop = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        backdrop.material = .underWindowBackground
+        backdrop.blendingMode = .behindWindow
+        backdrop.state = .active
+        backdrop.autoresizingMask = [.width, .height]
+
         let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        container.autoresizingMask = [.width, .height]
         
         let stack = NSStackView()
         stack.orientation = .vertical
@@ -773,6 +832,7 @@ import SottoCore
         
         let scrollView = NSTextView.scrollableTextView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.drawsBackground = false
         
         guard let textView = scrollView.documentView as? NSTextView else { return }
         self.textView = textView
@@ -795,7 +855,10 @@ import SottoCore
             scrollView.heightAnchor.constraint(equalTo: stack.heightAnchor, constant: -40)
         ])
         
-        window.contentView = container
+        let mainView = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        mainView.addSubview(backdrop)
+        mainView.addSubview(container)
+        window.contentView = mainView
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         

@@ -111,11 +111,69 @@ public func runDynamicSkillTriggerTest() -> Bool {
     return true
 }
 
+public func runBridgeAuditIntegrationTest() -> Bool {
+    print("[TEST] Running BridgeAudit integration test...")
+    let testFileURL = SettingsController.sottoDataURL.appendingPathComponent("bridge_audit.jsonl")
+    
+    let fm = FileManager.default
+    let originalExists = fm.fileExists(atPath: testFileURL.path)
+    let originalContent = (try? String(contentsOf: testFileURL, encoding: .utf8)) ?? ""
+    
+    BridgeAudit.record(
+        outcome: .delegated,
+        transcript: "Jarvis run test",
+        command: "run test",
+        app: "SottoTest",
+        reply: "Executed successfully",
+        latencyMs: 15.0
+    )
+    
+    let start = Date()
+    var verified = false
+    while Date().timeIntervalSince(start) < 2.0 {
+        if let newContent = try? String(contentsOf: testFileURL, encoding: .utf8),
+           newContent.contains("run test") {
+            verified = true
+            break
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    
+    if !verified {
+        print("❌ BridgeAudit integration test: FAILED (record did not write to file)")
+        return false
+    }
+    
+    let summary = BridgeAudit.summary()
+    print("[TEST] BridgeAudit summary: \(summary)")
+    if !summary.contains("delegated") {
+        print("❌ BridgeAudit integration test: FAILED (summary is incorrect)")
+        return false
+    }
+    
+    let recent = BridgeAudit.recent(limit: 1)
+    print("[TEST] BridgeAudit recent: \(recent)")
+    if !recent.contains("run test") {
+        print("❌ BridgeAudit integration test: FAILED (recent output incorrect)")
+        return false
+    }
+    
+    if originalExists {
+        try? originalContent.write(to: testFileURL, atomically: true, encoding: .utf8)
+    } else {
+        try? fm.removeItem(at: testFileURL)
+    }
+    
+    print("✅ BridgeAudit integration test: PASSED")
+    return true
+}
+
 public func runSottoIntegrationTests() async -> Bool {
     print("=== STARTING SOTTO INTEGRATION TESTS ===")
     var success = await runCoordinatorAgentIntegrationTest()
     if success { success = await runCapabilityConsistencyCheck() }
     if success { success = runDynamicSkillTriggerTest() }
+    if success { success = runBridgeAuditIntegrationTest() }
     if success {
         print("[TEST] Verifying JarvisEvaluation runner (forceMock)...")
         success = await JarvisEvaluation.run(forceMock: true)

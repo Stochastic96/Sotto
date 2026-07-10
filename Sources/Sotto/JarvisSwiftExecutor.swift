@@ -21,20 +21,20 @@ struct JarvisSwiftExecutor {
         let cleanQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if cleanQuery.isEmpty { return }
         
-        AppController.shared?.showHUD("🔍 Cache check…")
+        AppController.shared?.hud.present(.progress("Checking cache"))
         
         // 1. Check Cache
         if let cached = SystemMemoryStore.get(key: "wiki:\(cleanQuery.lowercased())") {
             let reportPath = writeResearchReport(name: cleanQuery, content: "# Wikipedia Cache: \(cleanQuery)\n\n\(cached)\n")
             NSWorkspace.shared.open(URL(fileURLWithPath: reportPath))
             
-            AppController.shared?.showHUD("✓ Wiki Cache Found")
+            AppController.shared?.hud.present(.success("Wiki cache found"))
             AppController.shared?.speak("Knowledge is power! Cached Wikipedia details for \(cleanQuery) retrieved and report opened.")
             return
         }
         
         // 2. Query Wikipedia API
-        AppController.shared?.showHUD("🔍 Researching Wikipedia…")
+        AppController.shared?.hud.present(.progress("Researching Wikipedia"))
         if let result = await SystemDiagnostics.queryWikipedia(query: cleanQuery) {
             let combinedVal = "### Wikipedia: \(result.title)\n\(result.extract)\n*(Source: \(result.url))*"
             
@@ -43,7 +43,7 @@ struct JarvisSwiftExecutor {
             let reportPath = writeResearchReport(name: cleanQuery, content: "# Personal Wikipedia: \(cleanQuery) (Auto-Cached)\n\n\(combinedVal)\n")
             NSWorkspace.shared.open(URL(fileURLWithPath: reportPath))
             
-            AppController.shared?.showHUD("✓ Wiki Cache Updated")
+            AppController.shared?.hud.present(.success("Wiki cache updated"))
             AppController.shared?.speak("Research complete. Wikipedia results for \(cleanQuery) cached and report opened.")
         } else {
             // Wikipedia failed, open browser Google Search as fallback
@@ -51,7 +51,7 @@ struct JarvisSwiftExecutor {
                let searchUrl = URL(string: "https://www.google.com/search?q=\(encoded)") {
                 NSWorkspace.shared.open(searchUrl)
             }
-            AppController.shared?.showHUD("⚠️ Wiki Search Failed")
+            AppController.shared?.hud.present(.warning("Wiki search failed"))
             AppController.shared?.speak("No match found. Wikipedia failed, launching Google search.")
         }
     }
@@ -59,7 +59,7 @@ struct JarvisSwiftExecutor {
     @MainActor
     static func runWikiSet(key: String, value: String) async {
         SystemMemoryStore.set(key: "wiki:\(key.lowercased())", value: value, category: "wikipedia")
-        AppController.shared?.showHUD("✓ Wiki Memory Saved")
+        AppController.shared?.hud.present(.success("Wiki memory saved"))
         AppController.shared?.speak("Memory saved for Wikipedia key \(key).")
     }
     
@@ -68,7 +68,7 @@ struct JarvisSwiftExecutor {
         let cleanPlace = placeName.trimmingCharacters(in: .whitespacesAndNewlines)
         if cleanPlace.isEmpty { return }
         
-        AppController.shared?.showHUD("🗺 Locating…")
+        AppController.shared?.hud.present(.progress("Locating"))
         
         let mapsUrlString = "https://www.google.com/maps/place/\(cleanPlace.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
         guard let mapsUrl = URL(string: mapsUrlString) else { return }
@@ -84,11 +84,11 @@ struct JarvisSwiftExecutor {
             NSWorkspace.shared.open(URL(fileURLWithPath: reportPath))
             
             let addressFirstPart = result.display_name.components(separatedBy: ",").first ?? result.display_name
-            AppController.shared?.showHUD("✓ Location Resolved")
+            AppController.shared?.hud.present(.success("Location resolved"))
             AppController.shared?.speak("Maps open for \(cleanPlace) at \(addressFirstPart).")
         } else {
             NSWorkspace.shared.open(mapsUrl)
-            AppController.shared?.showHUD("✓ Location Search")
+            AppController.shared?.hud.present(.success("Location search"))
             AppController.shared?.speak("Address not resolved natively. Redirecting to Google Maps search for \(cleanPlace).")
         }
     }
@@ -98,19 +98,19 @@ struct JarvisSwiftExecutor {
         switch subcmd {
         case "feed":
             NSWorkspace.shared.open(URL(string: "https://www.linkedin.com/feed/")!)
-            AppController.shared?.showHUD("✓ LinkedIn Feed")
+            AppController.shared?.hud.present(.success("LinkedIn feed"))
             AppController.shared?.speak("LinkedIn feed launched.")
         case "messages":
             NSWorkspace.shared.open(URL(string: "https://www.linkedin.com/messaging/")!)
-            AppController.shared?.showHUD("✓ LinkedIn Messages")
+            AppController.shared?.hud.present(.success("LinkedIn messages"))
             AppController.shared?.speak("LinkedIn messages open and ready.")
         case "profile":
             NSWorkspace.shared.open(URL(string: "https://www.linkedin.com/in/")!)
-            AppController.shared?.showHUD("✓ LinkedIn Profile")
+            AppController.shared?.hud.present(.success("LinkedIn profile"))
             AppController.shared?.speak("LinkedIn profile open.")
         case "post":
             guard let topic = arg, !topic.isEmpty else { return }
-            AppController.shared?.showHUD("📝 Writing post…")
+            AppController.shared?.hud.present(.progress("Writing post"))
             
             let prompt = """
             Write a professional, engaging, and high-impact LinkedIn post about: '\(topic)'.
@@ -119,7 +119,7 @@ struct JarvisSwiftExecutor {
             let system = "You are an expert LinkedIn content creator and ghostwriter. Output only the post copy."
             
             guard let refiner = AppController.shared?.intelligence else {
-                AppController.shared?.showHUD("⚠️ Local AI offline")
+                AppController.shared?.hud.present(.warning("Local AI offline"))
                 AppController.shared?.speak("Local model not loaded. Post generation aborted.")
                 return
             }
@@ -136,10 +136,10 @@ struct JarvisSwiftExecutor {
                 NSWorkspace.shared.open(URL(string: "https://www.linkedin.com/feed/?showComposer=true")!)
                 NSWorkspace.shared.open(URL(fileURLWithPath: reportPath))
                 
-                AppController.shared?.showHUD("✓ Post Copied")
+                AppController.shared?.hud.present(.success("Post copied"))
                 AppController.shared?.speak("LinkedIn post generated and copied to clipboard. Feed open.")
             } catch {
-                AppController.shared?.showHUD("⚠️ Generation Error")
+                AppController.shared?.hud.present(.warning("Generation error"))
                 AppController.shared?.speak("Error creating LinkedIn post.")
             }
         default:
@@ -160,12 +160,12 @@ struct JarvisSwiftExecutor {
             let target = arg?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? "overview"
             let urlStr = urls[target] ?? "https://ads.google.com"
             NSWorkspace.shared.open(URL(string: urlStr)!)
-            AppController.shared?.showHUD("✓ Google Ads \(target)")
+            AppController.shared?.hud.present(.success("Google Ads \(target)"))
             AppController.shared?.speak("Launching Google Ads \(target) dashboard.")
             
         case "ad-copy":
             guard let niche = arg, !niche.isEmpty else { return }
-            AppController.shared?.showHUD("📝 Writing Ads Copy…")
+            AppController.shared?.hud.present(.progress("Writing ads copy"))
             
             let prompt = """
             Generate Google Ads Search Ad copy suggestions for this business/niche: '\(niche)'.
@@ -177,7 +177,7 @@ struct JarvisSwiftExecutor {
             let system = "You are a professional Google Ads copywriter. Output clear headlines and descriptions."
             
             guard let refiner = AppController.shared?.intelligence else {
-                AppController.shared?.showHUD("⚠️ Local AI offline")
+                AppController.shared?.hud.present(.warning("Local AI offline"))
                 AppController.shared?.speak("Local model offline. Command aborted.")
                 return
             }
@@ -188,16 +188,16 @@ struct JarvisSwiftExecutor {
                 let reportPath = writeResearchReport(name: "ads_copy_\(niche)", content: report)
                 
                 NSWorkspace.shared.open(URL(fileURLWithPath: reportPath))
-                AppController.shared?.showHUD("✓ Ad Copy Ready")
+                AppController.shared?.hud.present(.success("Ad copy ready"))
                 AppController.shared?.speak("Google Ads copy suggestions ready and file opened.")
             } catch {
-                AppController.shared?.showHUD("⚠️ Generation Error")
+                AppController.shared?.hud.present(.warning("Generation error"))
                 AppController.shared?.speak("Failed to generate Google Ads copy.")
             }
             
         case "campaign-tips":
             guard let industry = arg, !industry.isEmpty else { return }
-            AppController.shared?.showHUD("📈 Fetching Tips…")
+            AppController.shared?.hud.present(.progress("Fetching tips"))
             
             let prompt = """
             Provide 5 solid, actionable Google Ads campaign structure and optimization tips for this industry: '\(industry)'.
@@ -206,7 +206,7 @@ struct JarvisSwiftExecutor {
             let system = "You are a senior Google Ads specialist. Give short, punchy, expert advice."
             
             guard let refiner = AppController.shared?.intelligence else {
-                AppController.shared?.showHUD("⚠️ Local AI offline")
+                AppController.shared?.hud.present(.warning("Local AI offline"))
                 AppController.shared?.speak("Local model offline. Command aborted.")
                 return
             }
@@ -217,10 +217,10 @@ struct JarvisSwiftExecutor {
                 let reportPath = writeResearchReport(name: "ads_tips_\(industry)", content: report)
                 
                 NSWorkspace.shared.open(URL(fileURLWithPath: reportPath))
-                AppController.shared?.showHUD("✓ Tips Ready")
+                AppController.shared?.hud.present(.success("Tips ready"))
                 AppController.shared?.speak("Campaign structure tips for \(industry) generated and opened.")
             } catch {
-                AppController.shared?.showHUD("⚠️ Generation Error")
+                AppController.shared?.hud.present(.warning("Generation error"))
                 AppController.shared?.speak("Error generating Google Ads tips.")
             }
         default:

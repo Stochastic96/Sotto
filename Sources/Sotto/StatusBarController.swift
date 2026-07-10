@@ -1,106 +1,5 @@
 import AppKit
 
-// MARK: - Floating Sotto indicator pill
-
-/// Permanent floating pill anchored just below the menu bar, right side.
-/// Uses NSVisualEffectView (system material) so it looks native on light and dark.
-/// Draggable — position is remembered across launches.
-/// Click → same NSMenu as the status item (Quit, Settings, etc.)
-@MainActor
-final class MenuBarPill: NSObject {
-    private var panel: NSPanel?
-    private weak var sharedMenu: NSMenu?
-    private var iconButton: NSButton?
-    private let positionKey = "SottoPillOrigin"
-
-    func show(attachedTo menu: NSMenu) {
-        sharedMenu = menu
-        guard panel == nil else { panel?.orderFrontRegardless(); return }
-        buildPanel()
-    }
-
-    func update(icon: String, label: String = "") {
-        let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
-        let description = label.isEmpty ? "Sotto" : "Sotto — \(label)"
-        iconButton?.image = NSImage(systemSymbolName: icon, accessibilityDescription: description)?
-            .withSymbolConfiguration(cfg)
-    }
-
-    private func buildPanel() {
-        let w: CGFloat = 36, h: CGFloat = 26
-        let origin = defaultOrSaved(w: w, h: h)
-
-        let p = NSPanel(
-            contentRect: NSRect(x: origin.x, y: origin.y, width: w, height: h),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        p.level = .statusBar          // level 25: above all app windows, below system chrome
-        p.isOpaque = false
-        p.backgroundColor = .clear
-        p.hasShadow = true
-        p.isMovableByWindowBackground = true
-        p.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
-
-        // Material background — adapts to light/dark automatically
-        let vfx = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: w, height: h))
-        vfx.material = .hudWindow
-        vfx.blendingMode = .behindWindow
-        vfx.state = .active
-        vfx.wantsLayer = true
-        vfx.layer?.cornerRadius = h / 2
-        vfx.layer?.masksToBounds = true
-
-        // Icon button — NSButton renders SF Symbols correctly; no custom draw needed
-        let btn = NSButton(frame: vfx.bounds)
-        btn.isBordered = false
-        btn.title = ""
-        btn.imageScaling = .scaleProportionallyDown
-        btn.imagePosition = .imageOnly
-        let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
-        btn.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Sotto")?
-            .withSymbolConfiguration(cfg)
-        btn.contentTintColor = .white
-        btn.target = self
-        btn.action = #selector(pillTapped(_:))
-        btn.autoresizingMask = [.width, .height]
-        vfx.addSubview(btn)
-
-        p.contentView = vfx
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(didMove), name: NSWindow.didMoveNotification, object: p)
-
-        p.orderFrontRegardless()
-        panel = p
-        iconButton = btn
-    }
-
-    @objc private func pillTapped(_ sender: NSButton) {
-        guard let sharedMenu, let p = panel else { return }
-        // Pop menu upward from the pill
-        sharedMenu.popUp(positioning: nil,
-                         at: NSPoint(x: 0, y: p.frame.height + 4),
-                         in: p.contentView)
-    }
-
-    @objc private func didMove() {
-        guard let o = panel?.frame.origin else { return }
-        UserDefaults.standard.set([Double(o.x), Double(o.y)], forKey: positionKey)
-    }
-
-    private func defaultOrSaved(w: CGFloat, h: CGFloat) -> NSPoint {
-        if let arr = UserDefaults.standard.array(forKey: positionKey) as? [Double], arr.count == 2 {
-            return NSPoint(x: arr[0], y: arr[1])
-        }
-        guard let screen = NSScreen.main else { return .zero }
-        // Place just below the menu bar, near the right edge
-        let menuBarH = CGFloat(NSApplication.shared.mainMenu?.menuBarHeight ?? 24)
-        return NSPoint(x: screen.frame.maxX - w - 8,
-                       y: screen.frame.maxY - menuBarH - h - 4)
-    }
-}
-
 // MARK: - StatusBarController
 
 @MainActor final class StatusBarController: NSObject {
@@ -114,9 +13,6 @@ final class MenuBarPill: NSObject {
     private var polishToggleHandler: ((Bool) -> Void)?
     private var dictateHandler: (() -> Void)?
     private var settingsHandler: (() -> Void)?
-
-    // Guaranteed-visible fallback pill (shown when NSStatusItem is hidden by overflow)
-    private let pill = MenuBarPill()
 
     private var history: [String] = []
     private let historyMenu = NSMenu()
@@ -151,13 +47,15 @@ final class MenuBarPill: NSObject {
 
     init(polishEnabled: Bool) {
         polishMenuItem = NSMenuItem(title: String(localized: "menu.aiPolish", defaultValue: "AI Polish", bundle: .module), action: nil, keyEquivalent: "")
-        dictateMenuItem = NSMenuItem(title: String(localized: "menu.startDictation", defaultValue: "🎤 Start Dictation", bundle: .module), action: #selector(startDictate), keyEquivalent: "d")
+        dictateMenuItem = NSMenuItem(title: String(localized: "menu.startDictation", defaultValue: "Start Dictation", bundle: .module), action: #selector(startDictate), keyEquivalent: "d")
         super.init()
 
         let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.image = nil
-        statusItem.button?.title = "J"
-        statusItem.button?.font = .systemFont(ofSize: 14, weight: .bold)
+        let cfg = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
+        let glyph = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Sotto")?
+            .withSymbolConfiguration(cfg)
+        glyph?.isTemplate = true
+        statusItem.button?.image = glyph
 
         let menu = NSMenu()
         self.statusMenuItem.isEnabled = false
@@ -210,12 +108,6 @@ final class MenuBarPill: NSObject {
         statusItem.menu = menu
         self.item = statusItem
 
-        print("[STATUSBAR-DEBUG] Created item: \(statusItem)")
-        print("[STATUSBAR-DEBUG] Item button: \(String(describing: statusItem.button))")
-        print("[STATUSBAR-DEBUG] Item button frame: \(String(describing: statusItem.button?.frame))")
-        print("[STATUSBAR-DEBUG] Item button window: \(String(describing: statusItem.button?.window))")
-        print("[STATUSBAR-DEBUG] Item button window isVisible: \(String(describing: statusItem.button?.window?.isVisible))")
-
         // Re-apply latest state once registered
         if let lastState = self.lastState {
             self.update(for: lastState)
@@ -266,29 +158,39 @@ final class MenuBarPill: NSObject {
     func update(for state: AppController.State) {
         lastState = state
         guard self.item != nil else { return }
+        let accent = SottoDesign.Accent.nsColors(for: .jarvis)
         switch state {
         case .loadingModel:
-            set(title: "J", text: String(localized: "status.loadingModel", defaultValue: "Loading model… (first run downloads ~600 MB)", bundle: .module))
+            set(tint: nil, text: String(localized: "status.loadingModel", defaultValue: "Loading model… (first run downloads ~600 MB)", bundle: .module), dimmed: true)
         case .idle:
-            set(title: "J", text: String(localized: "status.ready", defaultValue: "Ready", bundle: .module))
+            set(tint: nil, text: String(localized: "status.ready", defaultValue: "Ready", bundle: .module))
         case .recording:
-            set(title: "J", text: String(localized: "status.listening", defaultValue: "Listening…", bundle: .module))
+            set(tint: accent[1], text: String(localized: "status.listening", defaultValue: "Listening…", bundle: .module))
         case .transcribing:
-            set(title: "J", text: String(localized: "status.transcribing", defaultValue: "Transcribing…", bundle: .module))
+            set(tint: accent[0], text: String(localized: "status.transcribing", defaultValue: "Transcribing…", bundle: .module))
         case .polishing:
-            set(title: "J", text: String(localized: "status.polishing", defaultValue: "Polishing…", bundle: .module))
+            set(tint: accent[0], text: String(localized: "status.polishing", defaultValue: "Polishing…", bundle: .module))
         case .error(let message):
-            set(title: "J", text: message)
+            set(tint: .systemRed, text: message)
         }
     }
 
-    private func set(title: String, text: String) {
+    /// One clean template glyph, always the same symbol — state shows through
+    /// tint only (no badge variants, no icon swapping). Template rendering
+    /// keeps it native in light, dark, and tinted menu bars.
+    private func set(tint: NSColor?, text: String, dimmed: Bool = false) {
         guard let item = self.item else { return }
-        item.button?.image = nil
-        item.button?.title = title
-        item.button?.font = .systemFont(ofSize: 14, weight: .bold)
+        if item.button?.image == nil {
+            let cfg = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
+            let image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Sotto")?
+                .withSymbolConfiguration(cfg)
+            image?.isTemplate = true
+            item.button?.title = ""
+            item.button?.image = image
+        }
+        item.button?.contentTintColor = tint
+        item.button?.appearsDisabled = dimmed
         statusMenuItem.title = text
-        // pill.update(icon: "sparkles", label: text)
     }
 
     private func rebuildHistoryMenu() {

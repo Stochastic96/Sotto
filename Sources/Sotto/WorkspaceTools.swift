@@ -60,7 +60,7 @@ struct FocusSessionTool: Tool {
 
         // f) Return summary
         let summary = "Focus session: \(mins) min\(project.isEmpty ? "" : " on \(project)"). DND enabled, distractions quit, volume at 40%."
-        await MainActor.run { AppController.shared?.showHUD("Focus Mode ON") }
+        await MainActor.run { AppController.shared?.hud.present(.success("Focus Mode on")) }
         return summary
     }
 }
@@ -121,7 +121,7 @@ struct EndWorkdayTool: Tool {
         // f) Speak the summary (copy to let to avoid Swift 6 captured-var warning)
         let spokenSummary = summary
         await MainActor.run { AppController.shared?.speak(spokenSummary) }
-        await MainActor.run { AppController.shared?.showHUD("Workday Ended") }
+        await MainActor.run { AppController.shared?.hud.present(.success("Workday ended")) }
 
         // g) Return summary
         return summary
@@ -165,7 +165,7 @@ struct WorkspaceSwitchTool: Tool {
             )
             let msg = "Development workspace ready, मिस्टर लॉर्ड. Xcode, Terminal, और Finder सब set है। Code करो, भौकाल मचाओ!"
             await MainActor.run { AppController.shared?.speak(msg) }
-            await MainActor.run { AppController.shared?.showHUD("Dev Mode") }
+            await MainActor.run { AppController.shared?.hud.present(.success("Dev Mode")) }
             return "Development mode: Xcode + Terminal + Finder opened, DND off."
 
         case "writing":
@@ -183,7 +183,7 @@ struct WorkspaceSwitchTool: Tool {
             )
             let msg = "Writing mode on, मिस्टर लॉर्ड. Notes खुली है, distractions गई, brightness कम की। अब लिखो!"
             await MainActor.run { AppController.shared?.speak(msg) }
-            await MainActor.run { AppController.shared?.showHUD("Writing Mode") }
+            await MainActor.run { AppController.shared?.hud.present(.success("Writing Mode")) }
             return "Writing mode: Notes opened, Xcode/Terminal quit, brightness lowered, DND enabled."
 
         case "presentation":
@@ -201,7 +201,7 @@ struct WorkspaceSwitchTool: Tool {
             _ = CommandEngine.runCommandNatively("open -a Keynote")
             let msg = "Presentation mode ready, मिस्टर लॉर्ड. Keynote open है, brightness full, सब distractions बंद। Stage is yours!"
             await MainActor.run { AppController.shared?.speak(msg) }
-            await MainActor.run { AppController.shared?.showHUD("Presentation Mode") }
+            await MainActor.run { AppController.shared?.hud.present(.success("Presentation Mode")) }
             return "Presentation mode: DND enabled, brightness maxed, distracting apps quit, Keynote opened."
 
         case "entertainment":
@@ -214,7 +214,7 @@ struct WorkspaceSwitchTool: Tool {
             _ = CommandEngine.runCommandNatively("open -a Safari")
             let msg = "Entertainment mode on, मिस्टर लॉर्ड. Spotify चालू, volume 70, browser ready। Chill मारो भाई!"
             await MainActor.run { AppController.shared?.speak(msg) }
-            await MainActor.run { AppController.shared?.showHUD("Entertainment Mode") }
+            await MainActor.run { AppController.shared?.hud.present(.success("Entertainment Mode")) }
             return "Entertainment mode: DND disabled, Spotify opened, volume at 70%, browser opened."
 
         default:

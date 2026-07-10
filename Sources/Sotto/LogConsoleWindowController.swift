@@ -26,19 +26,30 @@ import AppKit
             backing: .buffered, defer: false)
         w.title = "Sotto Console"
         w.isReleasedWhenClosed = false
+        w.titlebarAppearsTransparent = true
         w.center()
         w.delegate = self
+
+        // Material backdrop so the console matches the rest of the app's glass look.
+        let backdrop = NSVisualEffectView(frame: w.contentView!.bounds)
+        backdrop.material = .underWindowBackground
+        backdrop.blendingMode = .behindWindow
+        backdrop.state = .active
+        backdrop.autoresizingMask = [.width, .height]
+        w.contentView?.addSubview(backdrop)
 
         let scroll = NSScrollView(frame: w.contentView!.bounds)
         scroll.autoresizingMask = [.width, .height]
         scroll.hasVerticalScroller = true
         scroll.borderType = .noBorder
+        scroll.drawsBackground = false
 
         let tv = NSTextView(frame: scroll.bounds)
         tv.isEditable = false
         tv.isRichText = false
+        tv.drawsBackground = false
         tv.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        tv.textContainerInset = NSSize(width: 8, height: 8)
+        tv.textContainerInset = NSSize(width: 10, height: 10)
         tv.autoresizingMask = [.width]
         scroll.documentView = tv
 

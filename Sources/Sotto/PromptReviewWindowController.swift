@@ -25,9 +25,17 @@ import SottoCore
         )
         window.title = "Review prompt — \(prompt.useCaseLabel)"
         window.isReleasedWhenClosed = false
+        window.titlebarAppearsTransparent = true
         window.center()
 
+        let backdrop = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        backdrop.material = .underWindowBackground
+        backdrop.blendingMode = .behindWindow
+        backdrop.state = .active
+        backdrop.autoresizingMask = [.width, .height]
+
         let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        container.autoresizingMask = [.width, .height]
 
         let subtitle = NSTextField(labelWithString:
             "Check the prompt — fix any OCR mistakes — then send to Claude or copy it.")
@@ -37,9 +45,12 @@ import SottoCore
 
         let scrollView = NSTextView.scrollableTextView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.drawsBackground = false
+        
         guard let textView = scrollView.documentView as? NSTextView else { return }
         textView.isEditable = true
         textView.isSelectable = true
+        textView.drawsBackground = false
         textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
         textView.textColor = .labelColor
         textView.string = prompt.assembledText
@@ -49,7 +60,8 @@ import SottoCore
         copyButton.bezelStyle = .rounded
         let sendButton = NSButton(title: "Send to Claude", target: self, action: #selector(sendTapped))
         sendButton.bezelStyle = .rounded
-        sendButton.keyEquivalent = "\r" // Return triggers send
+        sendButton.keyEquivalent = "\r" // Return triggers send; also renders as the accent default button
+        sendButton.bezelColor = SottoDesign.Accent.nsColors(for: .jarvis)[1]
 
         let buttons = NSStackView(views: [copyButton, sendButton])
         buttons.orientation = .horizontal
@@ -74,7 +86,11 @@ import SottoCore
             buttons.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16)
         ])
 
-        window.contentView = container
+        let mainView = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        mainView.addSubview(backdrop)
+        mainView.addSubview(container)
+        window.contentView = mainView
+
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         self.window = window

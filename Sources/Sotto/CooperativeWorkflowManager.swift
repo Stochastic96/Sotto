@@ -55,20 +55,20 @@ actor CooperativeWorkflowManager {
             
             if isYes {
                 print("[WORKFLOW] User responded YES to weather outside. Triggering transit search.")
-                AppController.shared?.hud.show("🚌 Checking transit / bus schedule…")
+                AppController.shared?.hud.present(.progress("Checking transit schedule"))
                 AppController.shared?.speak("Great! Let me check the transit schedule for you.")
                 
                 // Let siri handle the route lookup natively
                 try? await Task.sleep(for: .seconds(1.2))
                 await SiriBridge.send("Show bus timings to work")
                 
-                AppController.shared?.hud.showResult("✓ Opened transit route in Siri AI")
+                AppController.shared?.hud.present(.success("Opened transit route in Siri"), dismissAfter: 6)
                 return true
             } else if isNo {
                 print("[WORKFLOW] User responded NO to weather outside.")
-                AppController.shared?.hud.show("🏠 Staying inside")
+                AppController.shared?.hud.present(.info("Staying inside"))
                 AppController.shared?.speak("Alright, stay warm and enjoy your time indoors.")
-                AppController.shared?.hud.showResult("✓ Stay safe inside!")
+                AppController.shared?.hud.present(.success("Stay safe inside!"), dismissAfter: 6)
                 return true
             }
             

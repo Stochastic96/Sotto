@@ -124,7 +124,7 @@ enum CommandEngine {
                     // Wait until Siri window is dismissed / loses focus instead of assuming timings
                     await SiriBridge.waitForSiriDismiss()
                     await MainActor.run {
-                        AppController.shared?.hud.show("🌤️ Going outside?")
+                        AppController.shared?.hud.present(.clarify("Going outside?"))
                         AppController.shared?.speak("Are you planning to go outside?")
                     }
                 }

@@ -188,7 +188,7 @@ public enum LongTaskEngine {
     private static func finish(_ summary: String) async {
         await MainActor.run {
             guard let app = AppController.shared else { return }
-            app.showHUD("✓ " + summary)
+            app.hud.present(.success(summary), dismissAfter: 6)
             app.speak(summary)
         }
     }

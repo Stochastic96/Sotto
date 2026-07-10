@@ -47,20 +47,20 @@ final class PermissionWatcher {
         // Accessibility granted after launch → must restart for it to take effect
         if ax && !lastAX {
             print("[WATCH] Accessibility just granted — restarting Sotto to activate")
-            AppController.shared?.showHUD("✅ Accessibility granted — restarting…")
+            AppController.shared?.hud.present(.success("Accessibility granted", detail: "Restarting…"))
             Task { try? await Task.sleep(for: .milliseconds(1500)); Self.relaunch() }
         }
 
         // Accessibility revoked while running → warn
         if !ax && lastAX {
             print("[WATCH] ⚠️ Accessibility revoked")
-            AppController.shared?.showHUD("⚠️ Accessibility revoked — re-enable in Settings")
+            AppController.shared?.hud.present(.warning("Accessibility revoked", detail: "Re-enable in System Settings"))
         }
 
         // Microphone just granted
         if mic && !lastMic {
             print("[WATCH] Microphone just granted")
-            AppController.shared?.showHUD("✅ Microphone granted — ready to record")
+            AppController.shared?.hud.present(.success("Microphone granted", detail: "Ready to record"))
             Task { try? await Task.sleep(for: .seconds(2)); AppController.shared?.hideHUD() }
         }
 
@@ -75,7 +75,7 @@ final class PermissionWatcher {
     private static func relaunch() {
         guard let execURL = Bundle.main.executableURL else {
             // Fallback: just tell user to re-launch manually
-            AppController.shared?.showHUD("Please re-launch Sotto to activate Accessibility")
+            AppController.shared?.hud.present(.info("Re-launch Sotto to activate Accessibility"))
             return
         }
 

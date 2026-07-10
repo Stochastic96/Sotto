@@ -5,11 +5,17 @@ import SottoCore
 extension AppController {
     
     // MARK: - Jarvis pipeline (⌘⇧J) — full OS assistant: skills, native actions, agent, orchestrator.
-    
-    func runJarvisPipeline(raw: String, samples: [Float], context: AppContext) async {
+
+    /// Runs one Jarvis turn and returns the reply text that was surfaced to the user (empty when
+    /// a branch produced no user-facing reply). The `@discardableResult` keeps the existing
+    /// hotkey caller unchanged, while the dictation→Jarvis bridge uses the return value for its
+    /// audit trail. `origin` tags the `DatasetLogger` entry so bridge-initiated turns are
+    /// distinguishable from hotkey-initiated ones.
+    @discardableResult
+    func runJarvisPipeline(raw: String, samples: [Float], context: AppContext, origin: String = "jarvis-apple") async -> String {
         if await CooperativeWorkflowManager.shared.handleResponse(raw) {
             state = .idle
-            return
+            return ""
         }
 
         let laneStart = CFAbsoluteTimeGetCurrent()
@@ -19,10 +25,10 @@ extension AppController {
         if lowerRaw.contains("lane stats") || lowerRaw.contains("jarvis stats") || lowerRaw.contains("performance stats") {
             let summary = await LaneStats.shared.summary()
             explanationController.show(text: summary, title: "Jarvis Lane Stats")
-            hud.show("📊 Lane stats")
+            hud.present(.info("Lane stats", detail: "Details opened in a window"))
             state = .idle
             Task { try? await Task.sleep(for: .seconds(1.5)); hud.hide() }
-            return
+            return summary
         }
         
         // 1. User-only skill approval gate (the only way a drafted skill becomes runnable).
@@ -34,11 +40,11 @@ extension AppController {
                 let result = SkillStore.enable(skillName.trimmingCharacters(in: .whitespacesAndNewlines))
                 print("[SKILL] \(result)")
                 speak(result)
-                hud.show("✓ \(result)")
+                hud.present(.success(result))
                 finishLane(.reflex, start: laneStart, raw: raw)
                 state = .idle
                 Task { try? await Task.sleep(for: .seconds(2)); hud.hide() }
-                return
+                return result
             }
         }
         
@@ -56,23 +62,23 @@ extension AppController {
         if let shortcut = CommandEngine.checkZeroLatencyShortcut(for: raw) {
             await runZeroLatencyShortcut(shortcut)
             finishLane(.reflex, start: laneStart, raw: raw)
-            return
+            return shortcut.voiceFeedback.isEmpty ? shortcut.hudMessage : shortcut.voiceFeedback
         }
         
         // 3b. Deterministic weather — never let the small model fumble an obvious weather
         // ask (it sometimes hallucinates "permission denied" for a keyless API). Call the
         // service directly and present it in the glass card.
         if let city = Self.weatherCity(in: raw) {
-            hud.show("🌤  Weather…")
+            hud.present(.progress("Checking weather"))
             let summary = await WeatherService.summary(city: city) ?? "Couldn't get the weather for \(city) right now."
             print("[JARVIS] Deterministic weather (\(city)): \(summary)")
-            hud.showResult("\(summary)\n\(Quips.weatherTail())")   // data on screen, wit underneath
+            hud.present(.info(summary, detail: Quips.weatherTail()), dismissAfter: 6)   // data on screen, wit underneath
             speak(shortSpoken(summary))
             TaskJournal.record(command: raw, reply: summary)
             finishLane(.reflex, start: laneStart, raw: raw)
             state = .idle
             Task { try? await Task.sleep(for: .seconds(2.5)); hud.hide() }
-            return
+            return summary
         }
         
         // 3c. Kernel reflex router — the registry picks the cheapest capable path. If
@@ -81,14 +87,14 @@ extension AppController {
         // waking the model. Anything above reflex tier returns nil and falls through.
         if let reflexReply = await Kernel.shared.dispatchCompound(raw) {
             print("[JARVIS] Kernel reflex: \(reflexReply)")
-            hud.showResult(reflexReply)
+            hud.present(.success(reflexReply), dismissAfter: 6)
             speak(shortSpoken(reflexReply))
             TaskJournal.record(command: raw, reply: reflexReply)
             await ConversationMemory.shared.record(user: raw, assistant: reflexReply)
             finishLane(.reflex, start: laneStart, raw: raw)
             state = .idle
             Task { try? await Task.sleep(for: .seconds(2)); hud.hide() }
-            return
+            return reflexReply
         }
         
         // 3d. Jarvis Brain — associative command memory. Embeds the utterance with the
@@ -98,14 +104,14 @@ extension AppController {
         if let hit = await JarvisBrain.shared.recall(utterance: raw),
            let brainReply = await runBrainAction(hit.action, raw: raw) {
             print("[JARVIS] Brain memory ('\(hit.phrase)'): \(brainReply)")
-            hud.showResult("🧠 \(hit.phrase)\n\(brainReply)")
+            hud.present(.reply("\(hit.phrase)\n\(brainReply)"))
             speak(shortSpoken(brainReply))
             TaskJournal.record(command: raw, reply: brainReply)
             await ConversationMemory.shared.record(user: raw, assistant: brainReply)
             finishLane(.reflex, start: laneStart, raw: raw)
             state = .idle
             Task { try? await Task.sleep(for: .seconds(2)); hud.hide() }
-            return
+            return brainReply
         }
 
         // 4. Native Apple Intelligence agent (tool calling) — the catch-all brain.
@@ -113,7 +119,7 @@ extension AppController {
         if SettingsController.apiProvider.lowercased() == "apple",
            JarvisAgent.isAvailable() {
             state = .polishing
-            hud.show("✨  Jarvis…")
+            hud.present(.thinking("Jarvis"), mode: .jarvis)
             do {
                 let reply: String
                 if let coord = self.coordinator {
@@ -127,7 +133,7 @@ extension AppController {
                 await ConversationMemory.shared.record(user: raw, assistant: reply)
                 finishLane(.apple, start: laneStart, raw: raw)
                 presentJarvisReply(reply, raw: raw)
-                return
+                return reply
             } catch {
                 agentError = error
                 print("[JARVIS] Agent failed (\(error.localizedDescription)); trying orchestrator.")
@@ -140,7 +146,7 @@ extension AppController {
             DatasetLogger.shared.log(mode: "orchestrator", app: lastActiveApp?.localizedName, rawTranscript: raw, response: "\(action)", kind: "orchestrator", samples: samples)
             switch action {
             case .claudeNewChat:
-                hud.show("🔑 Summoning Claude popover…")
+                hud.present(.progress("Summoning Claude popover"))
                 speak("Launching Claude popover.")
                 await ClaudeQuickEntry.send("")
             case .prepPrompt(let useCase):
@@ -151,7 +157,7 @@ extension AppController {
             finishLane(.reflex, start: laneStart, raw: raw)
             state = .idle
             Task { try? await Task.sleep(for: .seconds(2)); hud.hide() }
-            return
+            return ""
         }
         
         // 6. Nothing matched — report why Jarvis couldn't act.
@@ -160,11 +166,12 @@ extension AppController {
         else if let availErr = JarvisAgent.availabilityError() { errorMessage = availErr }
         else { errorMessage = "Apple Intelligence is unavailable on this machine." }
         print("[JARVIS] Failed: \(errorMessage)")
-        hud.show("⚠️ Jarvis Error")
+        hud.present(.warning("Jarvis unavailable"))
         speak("Jarvis is unavailable. \(errorMessage)")
         finishLane(.failed, start: laneStart, raw: raw)
         state = .idle
         Task { try? await Task.sleep(for: .seconds(3.5)); hud.hide() }
+        return errorMessage
     }
 
     /// Executes a Jarvis Brain memory hit. Kernel actions run the named reflex against
@@ -194,7 +201,7 @@ extension AppController {
         if reply.hasPrefix(kClarificationPrefix) {
             let question = String(reply.dropFirst(kClarificationPrefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
             print("[JARVIS] Clarifying question: \(question)")
-            hud.show("❓ \(question)  —  press Jarvis to answer")
+            hud.present(.clarify(question))
             speak(question)
             pendingClarification = true
             state = .idle
@@ -213,11 +220,11 @@ extension AppController {
             return
         }
         if reply.isEmpty {
-            hud.showResult(Quips.done())
+            hud.present(.success(Quips.done()), dismissAfter: 6)
         } else {
             // Full reply in the glass card; speak only the one-line headline.
             CommandEngine.lastResult = reply
-            hud.showResult(reply)
+            hud.present(.reply(reply))
             speak(shortSpoken(reply))
         }
         state = .idle
@@ -231,7 +238,7 @@ extension AppController {
             state = .idle; hud.hide(); return
         }
         state = .polishing
-        hud.show("✨  Jarvis…")
+        hud.present(.thinking("Jarvis"), mode: .jarvis)
         do {
             let reply = Self.sanitizeReply(try await coord.handleTurn(userInput: answer, isFollowUp: true))
             print("[JARVIS] Clarification reply: '\(reply)'")
@@ -240,7 +247,7 @@ extension AppController {
             presentJarvisReply(reply, raw: answer)
         } catch {
             print("[JARVIS] Clarification failed: \(error.localizedDescription)")
-            hud.show("⚠️ Jarvis Error")
+            hud.present(.warning("Jarvis unavailable"))
             speak("Jarvis is unavailable.")
             state = .idle
             Task { try? await Task.sleep(for: .seconds(3)); self.hud.hide() }
@@ -282,7 +289,7 @@ extension AppController {
     func runZeroLatencyShortcut(_ shortcut: CommandEngine.ZeroLatencyShortcut) async {
         print("[JARVIS] Zero-latency shortcut: \(shortcut.hudMessage)")
         state = .polishing
-        hud.show("✨ \(shortcut.hudMessage)…")
+        hud.present(.thinking(shortcut.hudMessage))
         
         let output: String
         if shortcut.command.hasPrefix("skill:") {
@@ -303,7 +310,7 @@ extension AppController {
         if !shortcut.voiceFeedback.isEmpty { speak(shortcut.voiceFeedback) }
         if shortcut.showOutputInWindow { explanationController.show(text: output, title: shortcut.windowTitle) }
         
-        hud.show("✓ \(shortcut.hudMessage)")
+        hud.present(.success(shortcut.hudMessage))
         state = .idle
         Task { try? await Task.sleep(for: .seconds(1.5)); hud.hide() }
     }
@@ -415,7 +422,7 @@ extension AppController {
     func handleIncomingCommandText(_ text: String) async {
         print("[APP] Received external command text: '\(text)'")
         state = .transcribing
-        hud.show("…  Processing command")
+        hud.present(.thinking("Processing command"))
         
         let context = ContextDetector.current()
         let output = await CommandEngine.process(text, context: context, selection: nil)
@@ -426,7 +433,7 @@ extension AppController {
            SettingsController.apiProvider.lowercased() == "apple",
            JarvisAgent.isAvailable() {
             self.state = .polishing
-            self.hud.show("✨  Jarvis…")
+            self.hud.present(.thinking("Jarvis"), mode: .jarvis)
             do {
                 let reply: String
                 if let coord = self.coordinator {
@@ -437,9 +444,9 @@ extension AppController {
                 DatasetLogger.shared.log(mode: "jarvis-url", app: self.lastActiveApp?.localizedName, rawTranscript: processedText, response: reply, kind: "agent", samples: nil)
                 TaskJournal.record(command: processedText, reply: reply)
                 if reply.isEmpty {
-                    self.hud.show("✓ Done")
+                    self.hud.present(.success("Done"))
                 } else {
-                    self.hud.show("🗣 \(reply)")
+                    self.hud.present(.reply(reply))
                     self.speak(reply)
                 }
                 self.state = .idle
@@ -478,7 +485,7 @@ extension AppController {
             }
             
             self.statusBar.lastTranscript = processedText
-            self.hud.show("✓ Done")
+            self.hud.present(.success("Done"))
             self.state = .idle
             Task {
                 try? await Task.sleep(for: .seconds(1.5))
@@ -496,23 +503,23 @@ extension AppController {
     func handlePrepPrompt(_ useCase: PromptUseCase) async {
         var screenText: String? = nil
         if useCase.needsScreenContext {
-            self.hud.show("📸 Reading your screen…")
+            self.hud.present(.progress("Reading your screen"))
             screenText = await CommandEngine.ocrScreen()
         }
         
         let prepped = PromptBuilder.build(useCase, screenText: screenText)
         PromptStore.save(prepped)
         
-        self.hud.show("📝 Prompt ready — review it")
+        self.hud.present(.success("Prompt ready", detail: "Review before sending"))
         self.speak("Prompt ready for review.")
         
         self.promptReview.show(prompt: prepped) { [weak self] editedText in
             guard let self else { return }
             Task { @MainActor in
-                self.hud.show("📋 Sending to Claude popover…")
+                self.hud.present(.progress("Sending to Claude popover"))
                 self.speak("Sending prompt to Claude popover.")
                 await ClaudeQuickEntry.send(editedText)
-                self.hud.show("✓ Sent to Claude popover")
+                self.hud.present(.success("Sent to Claude popover"))
             }
         }
     }
@@ -521,14 +528,14 @@ extension AppController {
     @MainActor
     func handleSendLastPrompt() async {
         guard let last = PromptStore.loadLast() else {
-            self.hud.show("⚠️ No prepared prompt saved")
+            self.hud.present(.warning("No prepared prompt saved"))
             self.speak("No prompt saved. Please prep first.")
             return
         }
-        self.hud.show("📋 Sending to Claude popover…")
+        self.hud.present(.progress("Sending to Claude popover"))
         self.speak("Sending prompt to Claude popover.")
         await ClaudeQuickEntry.send(last.assembledText)
-        self.hud.show("✓ Sent to Claude popover")
+        self.hud.present(.success("Sent to Claude popover"))
     }
     
     /// If the utterance is a weather ask, returns the city to look up (named city, or the
@@ -574,22 +581,10 @@ extension AppController {
     /// If the utterance opens with the "Hey Jarvis" wake phrase (robust to the ASR mishearing
     /// it as one garbled word, e.g. "Hejarvis"), returns the command with the wake words
     /// stripped; otherwise nil. Lets the user summon Jarvis from any mode.
+    ///
+    /// Thin wrapper over `BridgeDecision.classify` (the single source of truth in SottoCore) so
+    /// Jarvis-mode wake stripping and the dictation→Jarvis bridge can never drift apart.
     static func jarvisWakeCommand(in raw: String) -> String? {
-        let words = raw.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: " ").map(String.init)
-        guard !words.isEmpty else { return nil }
-        func isWake(_ w: String) -> Bool {
-            let t = w.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".,!?"))
-            return t == "jarvis" || t.hasSuffix("jarvis")   // also catches "hejarvis"
-        }
-        var dropCount = 0
-        let openers = ["hey", "hi", "hello", "yo", "ok"]
-        if openers.contains(words[0].lowercased()), words.count > 1, isWake(words[1]) {
-            dropCount = 2
-        } else if isWake(words[0]) {
-            dropCount = 1
-        }
-        guard dropCount > 0 else { return nil }
-        let rest = words.dropFirst(dropCount).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        return rest.isEmpty ? nil : rest
+        BridgeDecision.classify(raw).command
     }
 }
