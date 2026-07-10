@@ -128,7 +128,7 @@ extension AppController {
                     reply = "Jarvis is still starting. Please try again in a moment."
                 }
                 print("[JARVIS] Agent reply: '\(reply)'")
-                DatasetLogger.shared.log(mode: "jarvis-apple", app: lastActiveApp?.localizedName, rawTranscript: raw, response: reply, kind: "agent", samples: samples)
+                DatasetLogger.shared.log(mode: origin, app: lastActiveApp?.localizedName, rawTranscript: raw, response: reply, kind: "agent", samples: samples)
                 TaskJournal.record(command: raw, reply: reply)
                 await ConversationMemory.shared.record(user: raw, assistant: reply)
                 finishLane(.apple, start: laneStart, raw: raw)

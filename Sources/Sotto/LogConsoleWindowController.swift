@@ -20,14 +20,9 @@ import AppKit
     }
 
     private func build() {
-        let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 780, height: 480),
-            styleMask: [.titled, .closable, .resizable, .miniaturizable],
-            backing: .buffered, defer: false)
-        w.title = "Sotto Console"
-        w.isReleasedWhenClosed = false
-        w.titlebarAppearsTransparent = true
-        w.center()
+        let w = SottoDesign.makeWindow(
+            size: SottoDesign.Metrics.consoleSize, title: "Sotto Console",
+            styleMask: [.titled, .closable, .resizable, .miniaturizable])
         w.delegate = self
 
         // Material backdrop so the console matches the rest of the app's glass look.
@@ -48,7 +43,7 @@ import AppKit
         tv.isEditable = false
         tv.isRichText = false
         tv.drawsBackground = false
-        tv.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        tv.font = SottoDesign.Typography.nsMono(11)
         tv.textContainerInset = NSSize(width: 10, height: 10)
         tv.autoresizingMask = [.width]
         scroll.documentView = tv
@@ -86,7 +81,7 @@ import AppKit
         guard let chunk = String(data: newData, encoding: .utf8), !chunk.isEmpty else { return }
         tv.textStorage?.append(NSAttributedString(
             string: chunk,
-            attributes: [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+            attributes: [.font: SottoDesign.Typography.nsMono(11),
                          .foregroundColor: NSColor.textColor]))
         scrollToBottom()
     }

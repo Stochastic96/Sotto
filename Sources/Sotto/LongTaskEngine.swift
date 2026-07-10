@@ -182,13 +182,17 @@ public enum LongTaskEngine {
     // MARK: - UI hops (back to the main actor)
 
     private static func progress(_ text: String) async {
-        await MainActor.run { AppController.shared?.showHUD(text) }
+        // Background long-task progress stays out of the way — no per-tick banner
+        // spam and never steals the bottom pill from an active voice session. The
+        // user gets one native notification when the task finishes (see `finish`).
+        print("[LONGTASK] \(text)")
     }
 
     private static func finish(_ summary: String) async {
         await MainActor.run {
             guard let app = AppController.shared else { return }
-            app.hud.present(.success(summary), dismissAfter: 6)
+            // "Task done" push — a native top-right notification.
+            app.hud.present(.success(summary))
             app.speak(summary)
         }
     }

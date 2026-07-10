@@ -7,8 +7,9 @@ Guidance for Claude Code (or any future agent) working in this repo.
 Sotto is a native Swift, on-device macOS voice assistant. Two modes: **Dictation**
 (speak → polished text typed into whatever app is focused) and **Jarvis** (speak a
 command → Sotto acts: opens apps, controls the OS, browses, drafts scripts, etc).
-Full user-facing description is in `README.md` — read that first for behavior; this
-file is about the codebase and build.
+Full user-facing description is in `README.md` — read that first for behavior.
+`PROJECT.md` is the architecture blueprint (system overview, design rationale).
+This file is about the codebase, build, and known gotchas.
 
 Target hardware: Apple Silicon, tuned specifically for **M1 / 8 GB**. Every
 architecture decision in this repo is downstream of that RAM constraint — don't
@@ -20,8 +21,9 @@ suggest "just use a bigger model" without addressing memory.
 swift build              # debug build
 swift build -c release   # release build
 swift test                # SottoCore unit tests (Tests/SottoTests)
+swift test --filter VocabCorrectorTests   # run a single test class
 ./.build/debug/Sotto --run-tests    # runs integration tests
-./.build/debug/Sotto --evaluate     # runs evaluation benchmarks (only in DEBUG)
+./.build/debug/Sotto --evaluate     # runs evaluation benchmarks (only in DEBUG; add --mock to force mock mode)
 ```
 
 Microphone, Accessibility, and Screen Recording permissions are needed for the full pipelines.
@@ -43,7 +45,7 @@ away when the SDK's macro is fixed. Same category as the `installTapCompat` shim
 
 ## Concurrency & Memory Pressure Management
 
-1. **Memory Pressure Handling**: A DispatchSource memory pressure observer is registered in `AppController.swift`. On `.warning` or `.critical` signals, it unloads warm cached sub-agent sessions (`OSControlAgent`, `WebResearcherAgent`, `ScriptingExecutorAgent`, `CoordinatorAgent.shared`) and the polish session to free up unified memory. `AppController.coordinator` must stay `CoordinatorAgent.shared` — a private instance would hide its warm session from eviction. `MemoryLedger` counts evictions; the HUD ledger line is gated behind `SettingsController.showMemoryLedger` (debug default-off).
+1. **Memory Pressure Handling**: A DispatchSource memory pressure observer is registered in `AppController.swift`. On `.warning` or `.critical` signals, it unloads warm cached sub-agent sessions (`OSControlAgent`, `WebResearcherAgent`, `ScriptingExecutorAgent`, `CoordinatorAgent.shared`), `JarvisBrain`, the transcriber's cached `SpeechAnalyzer`, and (on `.critical`) the polish session to free up unified memory. Anything new that holds a warm model or embedding must be added to this eviction list. `AppController.coordinator` must stay `CoordinatorAgent.shared` — a private instance would hide its warm session from eviction. `MemoryLedger` counts evictions; the HUD ledger line is gated behind `SettingsController.showMemoryLedger` (debug default-off).
 2. **Actor & MainActor Isolation**:
    - `ScreenParser`, `NativeClipboard`, and `ClipboardObserver` are isolated to `@MainActor`.
    - `GitObserver` is implemented as a Swift actor to prevent concurrent state mutation races.
@@ -92,24 +94,45 @@ resurrecting the legacy recognizer.
 
 ## Architecture map
 
+The Jarvis hotkey path is `JarvisPipeline.runJarvisPipeline` — a layered dispatch
+where the cheapest layer that can handle the utterance wins and later layers never
+run. Order matters; new fast paths go in the right layer, not bolted on top:
+
 ```
 Voice → AudioRecorder (16 kHz mono) → SpeechAnalyzer/DictationTranscriber (on-device) → transcript
                                ↓
-        CommandEngine.checkZeroLatencyShortcut  ← instant, no AI (window tiling, volume, etc)
+        skill approval gate ("enable skill X")   ← user-only; the ONLY way a drafted skill becomes runnable
                                ↓
-        isSiriNativeCommand → SiriBridge.send   ← delegates to Siri (weather, reminders, calls)
+        CommandEngine.checkZeroLatencyShortcut   ← instant, no AI (window tiling, volume, etc)
                                ↓
-        CommandEngine.process (prefix rules)     ← "open chrome and search X" style parsing
+        deterministic weather (WeatherService)   ← keyless API call, bypasses the model
+                               ↓
+        Kernel.dispatchCompound                  ← microkernel reflex router: CapabilityRegistry picks the
+                                                    cheapest capable path; pure-Swift reflexes run with 0 tokens,
+                                                    higher-tier intents return nil and fall through
+                               ↓
+        JarvisBrain.recall                       ← associative command memory: NLEmbedding sentence similarity
+                                                    matches learned/seeded phrases by MEANING; learned tool
+                                                    replays are gated by `directExecutionAllowlist` (checked at
+                                                    execution time — destructive tools stay behind the LLM)
                                ↓
         CoordinatorAgent (Apple Foundation Models)
-          ├─ CommandLearner.hint → pre-select known tool  (learned from ≥3 uses, persisted)
+          ├─ CommandLearner.hint → pre-select known tool  (learned from ≥3 uses, persisted;
+          │                        also feeds JarvisBrain when args are stable)
           ├─ JarvisToolbox.routed (keyword scoring, max 5 tools)
           └─ JarvisProfile.classify → per-lane LanguageModelSession: chat / quick / bigJob
                                ↓ (quick/bigJob lane escalation)
           Delegate*Tool → OSControlAgent / WebResearcherAgent / ScriptingExecutorAgent
                                ↓ (bulk work)
           StartLongTaskTool → LongTaskEngine (detached background job, non-blocking)
+                               ↓
+        CommandEngine.orchestratorAction         ← Claude-popover orchestration fallback
 ```
+
+Siri delegation is NOT a layer in this voice pipeline: `isSiriNativeCommand` →
+`SiriBridge.send` lives in `CommandEngine.process` (the text-command entry point,
+`handleIncomingCommandText`), and the model can also reach Siri via the `ask_siri`
+tool in the registry.
 
 ## Source modules
 

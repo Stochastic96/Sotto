@@ -13,6 +13,8 @@ import AppKit
     private var polishToggleHandler: ((Bool) -> Void)?
     private var dictateHandler: (() -> Void)?
     private var settingsHandler: (() -> Void)?
+    private var cancelHandler: (() -> Void)?
+    private let cancelMenuItem: NSMenuItem
 
     private var history: [String] = []
     private let historyMenu = NSMenu()
@@ -48,6 +50,8 @@ import AppKit
     init(polishEnabled: Bool) {
         polishMenuItem = NSMenuItem(title: String(localized: "menu.aiPolish", defaultValue: "AI Polish", bundle: .module), action: nil, keyEquivalent: "")
         dictateMenuItem = NSMenuItem(title: String(localized: "menu.startDictation", defaultValue: "Start Dictation", bundle: .module), action: #selector(startDictate), keyEquivalent: "d")
+        cancelMenuItem = NSMenuItem(title: String(localized: "menu.cancel", defaultValue: "Cancel / Reset", bundle: .module), action: #selector(cancelSession), keyEquivalent: ".")
+        cancelMenuItem.keyEquivalentModifierMask = [.command]
         super.init()
 
         let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -73,6 +77,12 @@ import AppKit
 
         self.dictateMenuItem.target = self
         menu.addItem(self.dictateMenuItem)
+
+        // Always-available abort for a stuck/unwanted session. Enabled only while
+        // something is in flight (see update(for:)).
+        self.cancelMenuItem.target = self
+        self.cancelMenuItem.isEnabled = false
+        menu.addItem(self.cancelMenuItem)
         menu.addItem(.separator())
 
         self.polishMenuItem.target = self
@@ -127,6 +137,14 @@ import AppKit
         settingsHandler = handler
     }
 
+    func onCancel(_ handler: @escaping () -> Void) {
+        cancelHandler = handler
+    }
+
+    @objc private func cancelSession(_ sender: NSMenuItem) {
+        cancelHandler?()
+    }
+
     @objc private func startDictate(_ sender: NSMenuItem) {
         dictateHandler?()
     }
@@ -158,6 +176,11 @@ import AppKit
     func update(for state: AppController.State) {
         lastState = state
         guard self.item != nil else { return }
+        // "Cancel / Reset" is meaningful only while a session is in flight.
+        switch state {
+        case .recording, .transcribing, .polishing: cancelMenuItem.isEnabled = true
+        default: cancelMenuItem.isEnabled = false
+        }
         let accent = SottoDesign.Accent.nsColors(for: .jarvis)
         switch state {
         case .loadingModel:

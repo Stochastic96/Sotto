@@ -20,6 +20,7 @@ final class SettingsController: NSObject {
     nonisolated static let workspacePathKey = "sotto_workspacePath"
     nonisolated static let agentModeKey = "sotto_agentMode"
     nonisolated static let memoryLedgerKey = "sotto_showMemoryLedger"
+    nonisolated static let dictationJarvisBridgeKey = "sotto_dictationJarvisBridge"
     nonisolated static let voiceFeedbackEnabledKey = "sotto_voiceFeedbackEnabled"
     nonisolated static let voiceIdentifierKey = "sotto_voiceIdentifier"
     nonisolated static let speechRateKey = "sotto_speechRate"
@@ -97,6 +98,14 @@ final class SettingsController: NSObject {
         UserDefaults.standard.bool(forKey: memoryLedgerKey)
     }
 
+    /// Explicit dictation → Jarvis bridge: when dictating, an utterance that opens with the
+    /// wake word ("Jarvis, …") is delegated to Jarvis instead of pasted. On by default so it
+    /// can be exercised and audited (see `BridgeAudit`); disable via `defaults write` to make
+    /// dictation behave exactly as before.
+    nonisolated static var dictationJarvisBridge: Bool {
+        UserDefaults.standard.object(forKey: dictationJarvisBridgeKey) as? Bool ?? true
+    }
+
     nonisolated static var customSystemPrompt: String {
         UserDefaults.standard.string(forKey: systemPromptKey) ?? ""
     }
@@ -150,17 +159,8 @@ final class SettingsController: NSObject {
             return
         }
 
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 640),
-            styleMask: [.titled, .closable, .miniaturizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "Sotto Settings"
-        window.isReleasedWhenClosed = false
-        window.titlebarAppearsTransparent = true
+        let window = SottoDesign.makeWindow(size: SottoDesign.Metrics.settingsSize, title: "Sotto Settings")
         window.contentViewController = NSHostingController(rootView: SettingsView())
-        window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 

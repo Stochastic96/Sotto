@@ -175,13 +175,13 @@ private final class SetupWindow {
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let sl = NSTextField(labelWithString: "")
-        sl.font      = .systemFont(ofSize: 15, weight: .semibold)
+        sl.font      = SottoDesign.Typography.nsHeadline
         sl.textColor = .white
         sl.cell?.wraps = true
         stepLabel = sl
 
         let dl = NSTextField(labelWithString: "")
-        dl.font      = .systemFont(ofSize: 12)
+        dl.font      = SottoDesign.Typography.nsCaption
         dl.textColor = NSColor(white: 0.7, alpha: 1)
         dl.cell?.wraps = true
         detailLabel = dl

@@ -36,7 +36,7 @@ private struct EdgeGlowView: View {
     @State private var hueAngle: Double = 0
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: SottoDesign.Metrics.corner, style: .continuous)
         let gradient = AngularGradient(colors: SottoDesign.Accent.jarvis, center: .center)
 
         ZStack {
@@ -90,19 +90,10 @@ final class EdgeGlowOverlay {
         let allowsMotion = !ProcessInfo.processInfo.isLowPowerModeEnabled
         let hosting = NSHostingView(rootView: EdgeGlowView(model: model, allowsMotion: allowsMotion))
 
-        let panel = NSPanel(
-            contentRect: screen.frame,
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        // Exactly one level below the HUD capsule, so the glow can never occlude it.
-        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.maximumWindow)) - 2)
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.ignoresMouseEvents = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+        // Two levels below .maximumWindow — one below the HUD capsule — so the glow
+        // can never occlude it. The ordering invariant lives in the shared factory.
+        let panel = SottoDesign.makeOverlayPanel(size: screen.frame.size, belowMaximumBy: 2)
+        panel.setFrame(screen.frame, display: false)
         panel.contentView = hosting
         self.panel = panel
 
@@ -119,11 +110,11 @@ final class EdgeGlowOverlay {
         panel?.setFrame(screen.frame, display: true)
     }
 
-    /// Voice level (linear RMS ~0…1), forwarded from the HUD's 15 fps push.
-    func updateLevel(_ rms: Float) {
-        guard let model else { return }
-        let shaped = CGFloat(min(1, sqrt(max(0, rms)) * 3.2))
-        model.energy = model.energy * 0.7 + shaped * 0.3
+    /// Smoothed voice energy (0…1), forwarded from the HUD's 15 fps push. The HUD
+    /// already applies the perceptual curve and low-pass (`orbEnergy`), so the glow
+    /// just mirrors it — one source of truth for how loud the user reads as.
+    func updateLevel(_ energy: CGFloat) {
+        model?.energy = energy
     }
 
     /// Listening → thinking hand-off: fade over `glowFadeOut`, then release the
