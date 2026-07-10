@@ -3,47 +3,43 @@ import SwiftUI
 
 // MARK: - Sotto HUD
 //
-// A single, professional, icon-free overlay that reads as system-level Apple
-// Intelligence — not a third-party badge. It lives at the bottom-center of the
-// active screen and never uses emoji or SF Symbols: state is conveyed through
-// typography, a live audio waveform, an indeterminate activity line, and a
-// restrained Siri-style gradient accent.
+// The bottom-center LIVE VOICE INDICATOR — and nothing else. It only ever shows
+// what is happening *right now*:
+//   • listening — a small waveform (dictation) or breathing orb (Jarvis)
+//   • thinking  — a minimal indeterminate activity line
+//   • clarify   — a single question Jarvis is waiting on
 //
-// Three phases only:
-//   • listening — live waveform driven by real microphone level
-//   • thinking  — minimal indeterminate activity line
-//   • result    — one or two lines of text with an optional status accent
+// Every non-live outcome (a reply, a result, "done", a finished long task, a
+// system event) is a native top-right notification via `Notifier` — never a box
+// on top of the user's work. The tone is Japanese-minimal: one small pill, a few
+// words, no emoji or SF Symbols; state reads through motion, color, and sound.
 //
-// Real-time contract
-// -------------------
-// The SwiftUI front end observes `HUDModel`. Structural changes (phase, title,
-// detail, tint) are the ONLY things that drive the resize/transition spring.
-// High-frequency signals — audio `levels` and the streaming `caption` — live in
-// separate observable fields, so pushing them at 15 fps never triggers layout
-// animation churn. Callers drive everything through the typed `present`,
-// `updateLevel`, and `updateCaption` API; a compatibility shim keeps the older
-// string-based call sites working (and strips any decoration they still pass).
+// Real-time contract: the SwiftUI front end observes `HUDModel`. Only `phase`
+// and `title` drive the resize/transition spring; audio `levels`/`orbEnergy` are
+// pushed at ~15 fps outside any animation key.
 
-// Palette, motion, and metric tokens live in SottoDesign.swift, shared with
-// every other visible surface.
+// Palette, motion, and metric tokens live in SottoDesign.swift.
 
 // MARK: - Observable model (the real-time channel)
 
 @Observable final class HUDModel {
-    enum Phase: Equatable { case listening, thinking, result }
-    enum Tint: Equatable { case neutral, success, warning, accent }
+    // `preview` = the post-release dictation sneak-preview (frozen words), shown
+    // for a beat then vanishing — never a polish spinner.
+    enum Phase: Equatable { case listening, thinking, clarify, preview }
 
     // Structural — changes here drive the resize/transition spring.
-    var phase: Phase = .result
+    var phase: Phase = .listening
     var mode: SottoDesign.Mode = .dictation
+    /// The one short word ("Listening" / "Working") or the clarifying question.
     var title: String = ""
+    /// Only used by `.clarify`: the "how to answer" hint.
     var detail: String = ""
-    var tint: Tint = .neutral
+    /// Live dictation sneak-preview text (what you're saying). Grows the pill.
+    var caption: String = ""
     var visible = false
 
     // High-frequency — updated up to ~15 fps, deliberately NOT in any animation key.
     var levels: [CGFloat] = Array(repeating: 0, count: SottoDesign.Metrics.barCount)
-    var caption: String = ""
     /// Smoothed voice level for the Jarvis orb (same contract as `levels`).
     var orbEnergy: CGFloat = 0
 
@@ -82,7 +78,7 @@ struct HUDRootView: View {
 
                 if !model.footnote.isEmpty {
                     Text(model.footnote)
-                        .font(.system(.caption2, design: .monospaced))
+                        .font(SottoDesign.Typography.mono)
                         .foregroundStyle(.tertiary)
                         .transition(.opacity)
                 }
@@ -90,12 +86,14 @@ struct HUDRootView: View {
 
             Spacer(minLength: 0)
         }
-        .frame(width: 660, height: 220)
+        .frame(width: SottoDesign.Metrics.hudSize.width, height: SottoDesign.Metrics.hudSize.height)
         .animation(SottoDesign.Motion.structural(reduceMotion: reduceMotion),
                    value: model.visible)
         .animation(SottoDesign.Motion.phase(reduceMotion: reduceMotion),
                    value: model.phase)
         .animation(.easeInOut(duration: 0.2), value: model.title)
+        // Fluid growth as live words stream in / freeze on release.
+        .animation(.easeOut(duration: 0.16), value: model.caption)
     }
 
     // The one container, sized to its content.
@@ -103,13 +101,13 @@ struct HUDRootView: View {
         HStack(spacing: 14) {
             content
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 14)
+        .padding(.horizontal, SottoDesign.Metrics.hudPaddingH)
+        .padding(.vertical, SottoDesign.Metrics.hudPaddingV)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: SottoDesign.Metrics.corner, style: .continuous))
         .overlay(borderOverlay)
         .compositingGroup()
-        .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
-        .shadow(color: glowColor.opacity(isActive ? 0.28 : 0), radius: 22, y: 0)
+        .shadow(color: .black.opacity(SottoDesign.Opacity.shadow), radius: 18, y: 8)
+        .shadow(color: glowColor.opacity(isActive ? SottoDesign.Opacity.glowShadow : 0), radius: 22, y: 0)
     }
 
     @ViewBuilder
@@ -117,22 +115,35 @@ struct HUDRootView: View {
         switch model.phase {
         case .listening:
             if model.mode == .jarvis {
-                JarvisListeningView(energy: model.orbEnergy, caption: model.caption)
+                IndicatorLabel(word: listeningWord) { OrbView(energy: model.orbEnergy) }
             } else {
-                ListeningView(levels: model.levels, caption: model.caption,
-                              accent: SottoDesign.Accent.dictation)
+                // Dictation: a fluid pill that grows with a live sneak-preview of
+                // what you're saying, or just "Listening" before the first words.
+                DictationListeningView(levels: model.levels, caption: model.caption, accent: accent)
             }
         case .thinking:
-            ThinkingView(title: model.title, detail: model.caption,
-                         reduceMotion: reduceMotion, accent: accent)
-        case .result:
-            ResultView(title: model.title, detail: model.detail, tint: model.tint,
-                       shimmer: model.mode == .jarvis && model.tint != .warning && !reduceMotion,
-                       accent: accent)
+            IndicatorLabel(word: model.title.isEmpty ? workingWord : model.title) {
+                ActivityLine(reduceMotion: reduceMotion, accent: accent)
+                    .frame(width: 56, height: 4)
+            }
+        case .clarify:
+            ClarifyView(question: model.title, hint: model.detail, accent: accent)
+        case .preview:
+            // Frozen sneak-preview after release; fades out before polish finishes.
+            PreviewText(text: model.caption)
         }
     }
 
-    private var isActive: Bool { model.phase != .result }
+    private var listeningWord: String {
+        String(localized: "hud.listening", defaultValue: "Listening", bundle: .module)
+    }
+    private var workingWord: String {
+        String(localized: "hud.working", defaultValue: "Working", bundle: .module)
+    }
+
+    // Active = a gradient rim + glow (live capture/work); clarify and the frozen
+    // sneak-preview read as calmer resting cards.
+    private var isActive: Bool { model.phase == .listening || model.phase == .thinking }
 
     private var accent: [Color] { SottoDesign.Accent.colors(for: model.mode) }
 
@@ -150,7 +161,8 @@ struct HUDRootView: View {
             .opacity(0.9)
         } else {
             shape.strokeBorder(
-                LinearGradient(colors: [.white.opacity(0.26), .white.opacity(0.10)],
+                LinearGradient(colors: [.white.opacity(SottoDesign.Opacity.rimStrong),
+                                        .white.opacity(SottoDesign.Opacity.rimSoft)],
                                startPoint: .topLeading, endPoint: .bottomTrailing),
                 lineWidth: 1
             )
@@ -158,50 +170,63 @@ struct HUDRootView: View {
     }
 }
 
-// MARK: - Listening: quiet waveform (dictation) / breathing orb (Jarvis)
+// MARK: - Live pill building blocks
 
-private struct ListeningView: View {
+/// The one pill layout: a compact indicator on the left, one word on the right.
+private struct IndicatorLabel<Indicator: View>: View {
+    let word: String
+    @ViewBuilder let indicator: () -> Indicator
+
+    var body: some View {
+        HStack(spacing: 10) {
+            indicator()
+            Text(word)
+                .font(SottoDesign.Typography.label)
+                .foregroundStyle(.primary)
+                .fixedSize()
+        }
+    }
+}
+
+/// Dictation listening: a small waveform plus a live, growing sneak-preview of
+/// the words being recognized. Before the first word it's just "Listening"; as
+/// the ASR partials arrive the pill grows to fit them (capped at a few lines).
+private struct DictationListeningView: View {
     let levels: [CGFloat]
     let caption: String
     let accent: [Color]
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Waveform(levels: levels, accent: accent)
-            ListeningLabel(caption: caption)
-        }
-    }
-}
-
-private struct JarvisListeningView: View {
-    let energy: CGFloat
-    let caption: String
-
-    var body: some View {
-        HStack(spacing: 12) {
-            OrbView(energy: energy)
-            ListeningLabel(caption: caption)
-        }
-    }
-}
-
-private struct ListeningLabel: View {
-    let caption: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(String(localized: "hud.listening", defaultValue: "Listening", bundle: .module))
-                .font(.system(.callout, weight: .semibold))
-                .foregroundStyle(.primary)
-            if !caption.isEmpty {
+            if caption.isEmpty {
+                Text(String(localized: "hud.listening", defaultValue: "Listening", bundle: .module))
+                    .font(SottoDesign.Typography.label)
+                    .foregroundStyle(.primary)
+                    .fixedSize()
+            } else {
                 Text(caption)
-                    .font(.system(.footnote))
+                    .font(SottoDesign.Typography.body)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
-                    .frame(maxWidth: 320, alignment: .leading)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 360, alignment: .leading)
             }
         }
+    }
+}
+
+/// The frozen post-release sneak-preview — the words you spoke, held for a beat
+/// then faded out (before polish completes). Text only, no indicator.
+private struct PreviewText: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(SottoDesign.Typography.body)
+            .foregroundStyle(.primary)
+            .lineLimit(3)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: 380, alignment: .leading)
     }
 }
 
@@ -210,7 +235,7 @@ private struct Waveform: View {
     let accent: [Color]
 
     private let minBar: CGFloat = 3
-    private let maxBar: CGFloat = 26
+    private let maxBar: CGFloat = 20
 
     var body: some View {
         HStack(alignment: .center, spacing: 2.5) {
@@ -229,128 +254,58 @@ private struct Waveform: View {
     }
 }
 
-// MARK: - Thinking: indeterminate activity line
-
-private struct ThinkingView: View {
-    let title: String
-    let detail: String
+private struct ActivityLine: View {
     let reduceMotion: Bool
     let accent: [Color]
     @State private var animate = false
 
     var body: some View {
-        HStack(spacing: 12) {
-            ActivityLine(animate: animate && !reduceMotion, accent: accent)
-                .frame(width: 88, height: 4)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title.isEmpty ? String(localized: "hud.working", defaultValue: "Working", bundle: .module) : title)
-                    .font(.system(.callout, weight: .semibold))
-                    .foregroundStyle(.primary)
-                if !detail.isEmpty {
-                    // Live progress detail (e.g. streaming polish preview) —
-                    // fed through the high-frequency caption channel, display only.
-                    Text(detail)
-                        .font(.system(.footnote))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                        .frame(maxWidth: 320, alignment: .leading)
-                }
-            }
-        }
-        .onAppear { animate = true }
-    }
-}
-
-private struct ActivityLine: View {
-    let animate: Bool
-    let accent: [Color]
-
-    var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
             Capsule()
-                .fill(Color.primary.opacity(0.12))
+                .fill(Color.primary.opacity(SottoDesign.Opacity.muted))
                 .overlay(alignment: .leading) {
                     Capsule()
                         .fill(LinearGradient(colors: accent, startPoint: .leading, endPoint: .trailing))
                         .frame(width: w * 0.42)
-                        .offset(x: animate ? w * 0.58 : -w * 0.42)
-                        .animation(animate ? .easeInOut(duration: 0.9).repeatForever(autoreverses: true) : .default,
+                        .offset(x: (animate && !reduceMotion) ? w * 0.58 : -w * 0.42)
+                        .animation((animate && !reduceMotion)
+                                   ? .easeInOut(duration: 0.9).repeatForever(autoreverses: true) : .default,
                                    value: animate)
                 }
                 .clipShape(Capsule())
         }
+        .onAppear { animate = true }
+        .accessibilityHidden(true)
     }
 }
 
-// MARK: - Result: text with optional status accent
+// MARK: - Clarify: the one text state that stays in the pill (a live question)
 
-private struct ResultView: View {
-    let title: String
-    let detail: String
-    let tint: HUDModel.Tint
-    let shimmer: Bool
+private struct ClarifyView: View {
+    let question: String
+    let hint: String
     let accent: [Color]
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            if tint != .neutral {
-                Capsule()
-                    .fill(SottoDesign.tintColor(tint))
-                    .frame(width: 3)
-                    .frame(maxHeight: .infinity)
-            }
+        HStack(alignment: .top, spacing: 10) {
+            Capsule()
+                .fill(accent[1])
+                .frame(width: 3)
+                .frame(maxHeight: .infinity)
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(.callout, weight: .semibold))
+                Text(question)
+                    .font(SottoDesign.Typography.title)
                     .foregroundStyle(.primary)
-                    .lineLimit(shimmer ? 5 : 3)
+                    .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
-                    .modifier(ShimmerSweep(enabled: shimmer, accent: accent))
-                if !detail.isEmpty {
-                    Text(detail)
-                        .font(.system(.footnote))
+                if !hint.isEmpty {
+                    Text(hint)
+                        .font(SottoDesign.Typography.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(shimmer ? 5 : 4)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .frame(maxWidth: shimmer ? 500 : 460, alignment: .leading)
-        }
-        .frame(maxHeight: 140)
-    }
-}
-
-/// One-shot Writing-Tools-style gradient sweep across freshly arrived Jarvis
-/// text. Runs exactly once per appearance (~0.9 s) — never repeatForever, so
-/// there is no sustained GPU cost. Skipped entirely under Reduce Motion (the
-/// caller passes `enabled: false`).
-private struct ShimmerSweep: ViewModifier {
-    let enabled: Bool
-    let accent: [Color]
-    @State private var phase: CGFloat = -0.6
-
-    func body(content: Content) -> some View {
-        if enabled {
-            content
-                .overlay {
-                    GeometryReader { geo in
-                        LinearGradient(
-                            colors: [.clear, accent[1].opacity(0.85), accent[2].opacity(0.85), .clear],
-                            startPoint: .leading, endPoint: .trailing
-                        )
-                        .frame(width: geo.size.width * 0.6)
-                        .offset(x: phase * geo.size.width)
-                    }
-                    .mask(content)
-                    .allowsHitTesting(false)
-                }
-                .onAppear {
-                    withAnimation(.easeOut(duration: 0.9)) { phase = 1.2 }
-                }
-        } else {
-            content
+            .frame(maxWidth: 340, alignment: .leading)
         }
     }
 }
@@ -369,6 +324,9 @@ final class HUDOverlay {
         /// A question Jarvis is waiting on; styled with the accent bar and an
         /// answer hint, announced to VoiceOver as a question.
         case clarify(String)
+        /// Dictation post-release sneak-preview: the spoken words, held briefly
+        /// then faded out (caller passes `dismissAfter`). Never a polish spinner.
+        case preview(String)
         /// A conversational Jarvis reply; gets the one-shot shimmer treatment.
         case reply(String)
         case success(String, detail: String = "")
@@ -391,6 +349,27 @@ final class HUDOverlay {
     /// know the mode stay source-compatible; AppController sets it explicitly
     /// at session start and on dictation→Jarvis delegation.
     func present(_ intent: Intent, mode: SottoDesign.Mode? = nil, dismissAfter seconds: Double? = nil) {
+        // Non-live outcomes → native top-right notification, and the live pill
+        // fades away. The HUD is never a results box. `dismissAfter` is moot here
+        // (the system manages the banner), which also removes the old duplicate
+        // hide-timer hazard.
+        switch intent {
+        case .reply(let text):
+            Notifier.shared.post(title: "Jarvis", body: Self.stripDecoration(text))
+            hide(); return
+        case .success(let t, let d):
+            Notifier.shared.post(title: Self.stripDecoration(t), body: d)
+            hide(); return
+        case .info(let t, let d):
+            Notifier.shared.post(title: Self.stripDecoration(t), body: d)
+            hide(); return
+        case .warning(let t, let d):
+            Notifier.shared.post(title: Self.stripDecoration(t), body: d)
+            hide(); return
+        case .listening, .thinking, .progress, .clarify, .preview:
+            break   // live — render in the pill below
+        }
+
         hideTask?.cancel(); hideTask = nil
 
         if let mode, mode != model.mode {
@@ -402,27 +381,26 @@ final class HUDOverlay {
         case .listening:
             if model.phase != .listening { model.resetLevels(); model.orbEnergy = 0 }
             model.phase = .listening
-            model.caption = ""
+            model.title = ""; model.detail = ""
+            model.caption = ""   // always start a fresh preview (no stale words)
         case .thinking(let label):
             model.phase = .thinking
-            model.title = label
-            model.caption = ""
-        case .progress(let label, let detail):
+            model.title = label; model.detail = ""; model.caption = ""
+        case .progress(let label, _):
+            // Live progress collapses to a single word — no growing preview text.
             model.phase = .thinking
-            model.title = label
-            model.caption = detail
+            model.title = label; model.detail = ""; model.caption = ""
+        case .preview(let text):
+            model.phase = .preview
+            model.caption = text; model.title = ""; model.detail = ""
         case .clarify(let question):
-            model.phase = .result; model.tint = .accent; model.title = question
+            // Model-sourced text: strip any stray emoji/glyphs to hold the icon-free contract.
+            model.phase = .clarify
+            model.title = Self.stripDecoration(question)
             model.detail = String(localized: "hud.clarifyHint",
                                   defaultValue: "Press ⌘⇧J to answer", bundle: .module)
-        case .reply(let text):
-            model.phase = .result; model.tint = .neutral; model.title = text; model.detail = ""
-        case .success(let t, let d):
-            model.phase = .result; model.tint = .success; model.title = t; model.detail = d
-        case .warning(let t, let d):
-            model.phase = .result; model.tint = .warning; model.title = t; model.detail = d
-        case .info(let t, let d):
-            model.phase = .result; model.tint = .neutral; model.title = t; model.detail = d
+        default:
+            break   // routed above
         }
 
         revealPanel()
@@ -436,12 +414,15 @@ final class HUDOverlay {
     /// `.listening` in Jarvis mode, fades out into any thinking phase, and is
     /// dropped instantly by results, dictation, or hide.
     private func syncEdgeGlow(for intent: Intent) {
-        switch intent {
-        case .listening where model.mode == .jarvis:
+        // Derive glow lifecycle from the resolved phase/mode — the same predicate the
+        // renderer uses — so it can never disagree with what's on screen. (Matching on
+        // the raw intent missed `.progress`, which is a thinking phase, and popped the
+        // glow instead of fading it.)
+        if model.phase == .listening && model.mode == .jarvis {
             if let screen = targetScreen() { edgeGlow.show(on: screen) }
-        case .thinking:
+        } else if model.phase == .thinking {
             edgeGlow.fadeOutAndTearDown()
-        default:
+        } else {
             edgeGlow.tearDownImmediately()
         }
     }
@@ -459,22 +440,21 @@ final class HUDOverlay {
         model.pushLevel(shaped)
         // Low-passed copy for the Jarvis orb — same 15 fps push, no extra timer.
         model.orbEnergy = model.orbEnergy * 0.7 + shaped * 0.3
-        if model.mode == .jarvis { edgeGlow.updateLevel(rms) }
+        if model.mode == .jarvis { edgeGlow.updateLevel(model.orbEnergy) }
     }
 
-    /// Update the live streaming caption shown under "Listening". Display only.
+    /// Live dictation sneak-preview: feed the ASR partials while listening so the
+    /// pill grows with the user's words. Dictation only; Jarvis stays a minimal orb.
     func updateCaption(_ text: String) {
-        guard model.phase == .listening else { return }
+        guard model.phase == .listening, model.mode == .dictation else { return }
+        // @Observable notifies on every set; skip unchanged partials (e.g. silence).
+        guard model.caption != text else { return }
         model.caption = text
     }
 
-    /// Update the live detail line under a thinking/progress title (e.g. the
-    /// streaming polish preview). High-frequency and display only — never
-    /// routes anywhere, and never retriggers the structural animation.
-    func updateProgressDetail(_ text: String) {
-        guard model.phase == .thinking else { return }
-        model.caption = text
-    }
+    /// Polish streaming preview intentionally omitted — dictation polish is silent
+    /// (the sneak-preview has already vanished by then). No-op kept for callers.
+    func updateProgressDetail(_ text: String) {}
 
     func setMemoryLedger(_ text: String) {
         model.footnote = text
@@ -490,10 +470,6 @@ final class HUDOverlay {
 
     func show(_ legacy: String) {
         present(intent(fromLegacy: legacy))
-    }
-
-    func showResult(_ legacy: String, autoHideAfter seconds: Double = 6) {
-        present(intent(fromLegacy: legacy), dismissAfter: seconds)
     }
 
     // MARK: Legacy interpretation
@@ -561,6 +537,7 @@ final class HUDOverlay {
         case .thinking(let t): message = t.isEmpty ? "Working" : t
         case .progress(let t, let d): message = d.isEmpty ? t : "\(t). \(d)"
         case .clarify(let q): message = "Question: \(q)"
+        case .preview: message = ""   // the frozen words were already announced live
         case .reply(let r): message = r
         case .success(let t, let d), .warning(let t, let d), .info(let t, let d):
             message = d.isEmpty ? t : "\(t). \(d)"
@@ -608,18 +585,8 @@ final class HUDOverlay {
         guard panel == nil else { return }
 
         let hosting = NSHostingView(rootView: HUDRootView(model: model))
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 660, height: 220),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.maximumWindow)) - 1)
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false                 // shadow is rendered by SwiftUI
-        panel.ignoresMouseEvents = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+        // One level below .maximumWindow; the edge glow sits one further below.
+        let panel = SottoDesign.makeOverlayPanel(size: SottoDesign.Metrics.hudSize, belowMaximumBy: 1)
         panel.contentView = hosting
         self.panel = panel
 
@@ -646,7 +613,7 @@ final class HUDOverlay {
         guard let panel, let screen = targetScreen() else { return }
 
         let sf = screen.visibleFrame
-        let w: CGFloat = 660, h: CGFloat = 220
+        let w = SottoDesign.Metrics.hudSize.width, h = SottoDesign.Metrics.hudSize.height
         let x = sf.minX + (sf.width - w) / 2
         let y = sf.minY + 48
         panel.setFrame(NSRect(x: x, y: y, width: w, height: h), display: false)

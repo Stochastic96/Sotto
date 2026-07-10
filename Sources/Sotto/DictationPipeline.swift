@@ -8,6 +8,9 @@ extension AppController {
     //         No commands, no tasks, no Jarvis. Those live only in the Jarvis pipeline.
     
     func runDictationPipeline(raw: String, samples: [Float], context: AppContext) async {
+        // PURE dictation only. The explicit dictation → Jarvis bridge (wake-word delegation) is
+        // handled upstream in `AppController.endRecording`; by the time we get here the utterance
+        // is guaranteed to be dictation (a `.none`/`.nearMiss` `BridgeDecision`), never a command.
         let pipelineStart = CFAbsoluteTimeGetCurrent()
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         var polishDuration = 0.0
@@ -30,7 +33,9 @@ extension AppController {
         // AI polish (Apple Intelligence, warm) with a 15s safety timeout + sanity checks.
         if polishEnabled && !skipPolish, let intel = self.intelligence {
             state = .polishing
-            hud.present(.thinking("Polishing"))
+            // No polish spinner: the sneak-preview is (or is about to be) gone and
+            // the polished text just appears in the app. We deliberately "use" the
+            // polish time behind the already-visible preview instead of a spinner.
             let polishStart = CFAbsoluteTimeGetCurrent()
             let refinementTask = Task { [self, text] in
                 let chunks = Self.splitIntoChunks(text)
@@ -77,6 +82,10 @@ extension AppController {
             polishDuration = CFAbsoluteTimeGetCurrent() - polishStart
         }
         
+        // Bail before touching the target app if the user aborted during polish —
+        // cancelCurrent() already reset the HUD/state; typing now would be a surprise.
+        if Task.isCancelled { return }
+
         soundTink?.play()
 
         // Reactivate the target app and paste. No search shortcuts, no files, no commands.
@@ -98,10 +107,11 @@ extension AppController {
         
         let total = CFAbsoluteTimeGetCurrent() - pipelineStart
         print("[BENCHMARK] Dictation \(String(format: "%.0f", total * 1000))ms (polish: \(String(format: "%.0f", polishDuration * 1000))ms)")
-        hud.present(.success("Done", detail: "\(String(format: "%.1f", total))s"))
+        // Silent finish: the text appearing in the user's app IS the confirmation
+        // (plus the soundTink above). No box, no notification — the minimal path.
         self.updateMemoryLedger()
         state = .idle
-        Task { try? await Task.sleep(for: .seconds(1.5)); hud.hide() }
+        hud.hide()
     }
     
     /// Sanity-checks an AI-polished dictation against truncation / expansion / loops.

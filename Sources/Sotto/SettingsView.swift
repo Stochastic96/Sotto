@@ -27,6 +27,7 @@ final class SettingsModel {
     private let testSynthesizer = AVSpeechSynthesizer()
 
     var pushToTalk: Bool { didSet { defaults.set(pushToTalk, forKey: SettingsController.pttKey) } }
+    var dictationJarvisBridge: Bool { didSet { defaults.set(dictationJarvisBridge, forKey: SettingsController.dictationJarvisBridgeKey) } }
     var agentMode: Bool { didSet { defaults.set(agentMode, forKey: SettingsController.agentModeKey) } }
     var voiceFeedback: Bool { didSet { defaults.set(voiceFeedback, forKey: SettingsController.voiceFeedbackEnabledKey) } }
     var voiceIdentifier: String { didSet { defaults.set(voiceIdentifier, forKey: SettingsController.voiceIdentifierKey) } }
@@ -57,6 +58,7 @@ final class SettingsModel {
 
     init() {
         pushToTalk = SettingsController.isPushToTalk
+        dictationJarvisBridge = SettingsController.dictationJarvisBridge
         agentMode = SettingsController.isAgentMode
         voiceFeedback = SettingsController.isVoiceFeedbackEnabled
         voiceIdentifier = SettingsController.voiceIdentifier
@@ -142,24 +144,17 @@ struct SettingsView: View {
     // One restrained gradient band — the only decorative element in Settings.
     private var header: some View {
         ZStack {
+            // Same brand mesh as the Jarvis orb, at rest — shared grid + colors.
             MeshGradient(
                 width: 3,
                 height: 3,
-                points: [
-                    [0.0, 0.0], [0.5, 0.0], [1.0, 0.0],
-                    [0.0, 0.5], [0.5, 0.5], [1.0, 0.5],
-                    [0.0, 1.0], [0.5, 1.0], [1.0, 1.0]
-                ],
-                colors: [
-                    SottoDesign.Accent.dictation[0], SottoDesign.Accent.dictation[1], SottoDesign.Accent.dictation[2],
-                    SottoDesign.Accent.dictation[3], SottoDesign.Accent.dictation[0], SottoDesign.Accent.dictation[1],
-                    SottoDesign.Accent.dictation[2], SottoDesign.Accent.dictation[3], SottoDesign.Accent.dictation[0]
-                ]
+                points: SottoDesign.Mesh.grid,
+                colors: SottoDesign.Mesh.colors(for: .dictation)
             )
-            .opacity(0.35)
+            .opacity(SottoDesign.Opacity.decorative)
             VStack(spacing: 2) {
                 Text("Sotto")
-                    .font(.system(.title2, weight: .semibold))
+                    .font(SottoDesign.Typography.sectionTitle)
                 Text("On-device dictation and Jarvis")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -167,7 +162,7 @@ struct SettingsView: View {
             .padding(.vertical, 18)
         }
         .frame(height: 84)
-        .glassEffect(in: .rect(cornerRadius: 16))
+        .glassEffect(in: .rect(cornerRadius: SottoDesign.Metrics.windowCorner))
     }
 
     private var form: some View {
@@ -177,6 +172,9 @@ struct SettingsView: View {
                 KeyboardShortcuts.Recorder("Jarvis shortcut", name: .toggleJarvis)
                 Toggle("Push-to-talk", isOn: $model.pushToTalk)
                 Text("Hold the hotkey while speaking, release to stop. Off = press once to start, again to stop.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Toggle("“Jarvis, …” while dictating runs a command", isOn: $model.dictationJarvisBridge)
+                Text("When on, a dictation that opens with the wake word (“Jarvis, open Xcode”) is handed to Jarvis and executed instead of typed. Off = every dictation is typed verbatim.")
                     .font(.footnote).foregroundStyle(.secondary)
                 Toggle("Launch Sotto at login", isOn: $model.launchAtLogin)
             }

@@ -15,18 +15,12 @@ import SottoCore
         self.onSend = onSend
         window?.close()
 
-        let width: CGFloat = 560
-        let height: CGFloat = 460
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: width, height: height),
-            styleMask: [.titled, .closable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "Review prompt — \(prompt.useCaseLabel)"
-        window.isReleasedWhenClosed = false
-        window.titlebarAppearsTransparent = true
-        window.center()
+        let width = SottoDesign.Metrics.promptReviewSize.width
+        let height = SottoDesign.Metrics.promptReviewSize.height
+        let window = SottoDesign.makeWindow(
+            size: SottoDesign.Metrics.promptReviewSize,
+            title: "Review prompt — \(prompt.useCaseLabel)",
+            styleMask: [.titled, .closable, .resizable])
 
         let backdrop = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         backdrop.material = .underWindowBackground
@@ -39,7 +33,7 @@ import SottoCore
 
         let subtitle = NSTextField(labelWithString:
             "Check the prompt — fix any OCR mistakes — then send to Claude or copy it.")
-        subtitle.font = .systemFont(ofSize: 12)
+        subtitle.font = SottoDesign.Typography.nsCaption
         subtitle.textColor = .secondaryLabelColor
         subtitle.translatesAutoresizingMaskIntoConstraints = false
 
@@ -51,7 +45,7 @@ import SottoCore
         textView.isEditable = true
         textView.isSelectable = true
         textView.drawsBackground = false
-        textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        textView.font = SottoDesign.Typography.nsMono(13)
         textView.textColor = .labelColor
         textView.string = prompt.assembledText
         self.textView = textView

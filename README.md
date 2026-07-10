@@ -1,8 +1,8 @@
 # Sotto — On-Device AI Voice Assistant for macOS
 
-**"Hey Jarvis"** — say it and your Mac acts. Sotto is a privacy-first, fully on-device voice assistant for Apple Silicon Macs. No cloud, no Python, no servers. Everything runs in Swift, on your hardware.
+**"Jarvis, open Xcode"** — speak it and your Mac acts. Sotto is a privacy-first, fully on-device voice assistant for Apple Silicon Macs. No cloud, no Python, no servers. Everything runs in Swift, on your hardware.
 
-Two modes, one hotkey (or your voice):
+Two modes, each on its own hotkey:
 
 - **Dictation** — speak → polished text types itself into whatever app you're using.
 - **Jarvis** — speak a command → Sotto understands it and acts on your Mac.
@@ -11,7 +11,7 @@ Two modes, one hotkey (or your voice):
 
 ## How to use Jarvis
 
-**Activate:** Press the Jarvis hotkey (default: ⌘⇧J) or say "Hey Jarvis" if the wake word is on.
+**Activate:** Press the Jarvis hotkey (default: ⌘⇧J). You can also reach Jarvis from dictation: open your utterance with "Jarvis, …" or "Hey Jarvis, …" (e.g. "Jarvis, open Xcode") and it's delegated to Jarvis instead of typed. The wake word only counts at the *start* of what you say — mentioning "Jarvis" mid-sentence stays ordinary dictation. There is no hands-free / always-listening mode.
 
 **Speak your command** while the HUD shows "Listening…"
 
@@ -53,13 +53,16 @@ These fire the moment you stop speaking, before any model is involved:
 | "empty trash" / "clear trash" | Empty trash |
 | "reload page" / "new tab" / "close tab" / "go back" | Browser controls |
 
-### Via Siri (instant delegation — no model tokens)
+### Weather — answered directly (no AI, no Siri)
 
-Sotto detects these phrases and hands them to Siri immediately:
+"what's the weather" / "is it raining" / "will it snow tomorrow" — Sotto calls a keyless weather service directly and shows the answer in the HUD. The model is never woken for an obvious weather ask.
+
+### Via Siri
+
+For things only Apple's own apps can do, Jarvis hands the request to Siri (via the `ask_siri` tool):
 
 | What to say | Siri handles |
 |---|---|
-| "what's the weather" / "is it raining" / "will it snow tomorrow" | Weather |
 | "remind me to…" / "set a reminder for…" | Reminders |
 | "add to my calendar" / "schedule a meeting" / "what's my schedule" | Calendar |
 | "set alarm for 7am" / "timer for 10 minutes" | Alarms & timers |
@@ -143,17 +146,23 @@ swift build -c release
 ```
 Voice → SpeechAnalyzer (on-device dictation) → transcript
                               ↓
-        CommandEngine.checkZeroLatencyShortcut  ← instant, no AI
+        Zero-latency shortcuts          ← instant, no AI (window tiling, volume…)
                               ↓
-        isSiriNativeCommand → SiriBridge.send   ← Siri delegation
+        Deterministic weather           ← WeatherService, keyless, no model
                               ↓
-        CommandEngine.process (prefix rules)
+        Kernel reflex router            ← cheapest capable path, 0 tokens ("open xcode",
+                                           compounds like "open finder and open xcode")
+                              ↓
+        Jarvis Brain                    ← learned/seeded commands matched by MEANING
+                                           (on-device NLEmbedding), safe tools replay natively
                               ↓
         CoordinatorAgent (Foundation Models)
           ├─ CommandLearner.hint → pre-select known tool  ← learned
           ├─ JarvisToolbox.routed (keyword scoring)       ← fallback
           └─ JarvisProfile.classify → per-lane session: chat / quick / bigJob  ← macOS 27
 ```
+
+Each layer only runs if the one above it didn't match — the cheapest path wins.
 
 Dictation polish: `SottoIntelligence.refine()` → Apple Intelligence (Foundation Models) → polished text → `TextInjector` → ⌘V.
 
@@ -166,12 +175,13 @@ Dictation polish: `SottoIntelligence.refine()` → Apple Intelligence (Foundatio
 ```
 Sources/
   Sotto/         — executable: AppKit menu bar, audio, agent, all platform code
+                   (incl. infrastructure: EventBus, CapabilityRegistry, LaneStats)
   SottoCore/     — pure Swift (no AppKit): testable logic, vocab correction, context detection
-  SottoInfra/    — shared infrastructure: EventBus, CapabilityRegistry, LaneStats
 Tests/
   SottoTests/    — unit tests for SottoCore
 sotto-data/
   learned_shortcuts.json  — CommandLearner: promoted phrase → tool mappings
+  jarvis_brain.json        — Jarvis Brain: semantic command memory (matched by meaning)
   jarvis_memory.json       — persistent key-value facts (profile, wikipedia cache)
   journal.jsonl            — Jarvis turn log
   skills/jarvis/           — user-approved skill scripts

@@ -46,7 +46,7 @@ struct OrbView: View {
         .clipShape(Circle())
         .overlay(
             // A faint rim so the orb keeps a defined edge on any material.
-            Circle().strokeBorder(.white.opacity(0.25), lineWidth: 0.5)
+            Circle().strokeBorder(.white.opacity(SottoDesign.Opacity.rim), lineWidth: 0.5)
         )
         .shadow(color: SottoDesign.Accent.jarvis[1].opacity(0.35 + Double(e) * 0.25),
                 radius: 6 + CGFloat(e) * 4)

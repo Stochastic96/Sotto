@@ -51,6 +51,12 @@ import SottoCore
     var appActivity: NSObjectProtocol?
     var coordinator: CoordinatorAgent?
     private var recordingTimeoutTask: Task<Void, Never>?
+    /// The post-release work (transcription → dictation/Jarvis pipeline). Held so
+    /// `cancelCurrent()` can abort a run that's stuck or no longer wanted; the
+    /// pipelines check `Task.isCancelled` before typing text or acting.
+    private var processingTask: Task<Void, Never>?
+    /// Local + global Escape monitors so the user can always abort an active session.
+    private var escapeMonitors: [Any] = []
     private var memoryPressureSource: (any DispatchSourceMemoryPressure)?
 
     // Live streaming ASR state for the current press. The buffer continuation is created
@@ -227,6 +233,10 @@ import SottoCore
             self?.settings.showSettings()
         }
 
+        statusBar.onCancel { [weak self] in
+            self?.cancelCurrent()
+        }
+
         NotificationCenter.default.addObserver(
             forName: NSNotification.Name("SottoIncomingCommand"),
             object: nil,
@@ -371,6 +381,8 @@ import SottoCore
         self.hotkey = listener
         listener.start()
         setupMemoryPressureObserver()
+        setupEscapeMonitor()
+        Notifier.shared.start()   // native top-right notifications for replies/results/task-done
 
         Task { @MainActor in
             await self.loadModel()
@@ -551,9 +563,10 @@ import SottoCore
                 Task { @MainActor in
                     guard case .recording = self.state else { return }
                     self.hud.updateLevel(self.recorder.currentRMS)
-                    // Live transcript preview from the streaming ASR partials — display
-                    // only; routing always waits for the final key-release transcript.
-                    self.hud.updateCaption(String(self.latestPartial.suffix(60)))
+                    // Live transcript sneak-preview from the streaming ASR partials —
+                    // display only; routing always waits for the final key-release
+                    // transcript. A rolling tail so the pill grows then scrolls.
+                    self.hud.updateCaption(String(self.latestPartial.suffix(120)))
                 }
             }
 
@@ -582,6 +595,10 @@ import SottoCore
         let samples = recorder.stop()
         soundListenStop?.play()
 
+        // Freeze the last live partial for the dictation sneak-preview before the
+        // streaming channel is torn down.
+        let previewText = latestPartial.trimmingCharacters(in: .whitespacesAndNewlines)
+
         // End the audio input and stop the partial preview — on every exit path.
         streamBufferContinuation?.finish()
         streamBufferContinuation = nil
@@ -603,14 +620,26 @@ import SottoCore
         }
 
         state = .transcribing
-        hud.present(.thinking("Transcribing"))
+        // Dictation: keep the spoken words on screen for a beat, then let them
+        // vanish — before polish finishes, and with no spinner. The polished text
+        // simply appears in the app. Jarvis: show that it's working.
+        if currentMode == .dictation {
+            if previewText.isEmpty {
+                hud.hide()
+            } else {
+                hud.present(.preview(previewText), dismissAfter: 1.6)
+            }
+        } else {
+            hud.present(.progress("Transcribing", detail: "Tap the key again or press Esc to cancel"))
+        }
 
         // Capture the focused app now, before transcription finishes.
         // currentCached() is zero-cost between app switches.
         let context = ContextDetector.currentCached()
         let mode = currentMode
 
-        Task { @MainActor in
+        processingTask?.cancel()
+        processingTask = Task { @MainActor in
             do {
                 // Settle the streaming session first: after this await it is either
                 // registered (finishStreaming consumes it) or failed (nil → batch). It
@@ -629,6 +658,10 @@ import SottoCore
                 raw = VocabCorrector.apply(to: raw)
                 print("[APP] Raw transcript (after vocab correction): '\(raw)' (mode: \(mode))")
 
+                // The user cancelled while ASR was finishing — discard the result so we
+                // never type text or run a command they aborted.
+                if Task.isCancelled { return }
+
                 // A pending clarifying question takes this utterance as its answer, as a
                 // follow-up turn — bypassing all normal routing.
                 if self.pendingClarification {
@@ -637,12 +670,19 @@ import SottoCore
                     return
                 }
 
-                // The two hotkeys are fully independent — dictation is NEVER intercepted by
-                // Jarvis, so they can't conflict. The "Hey Jarvis" wake prefix is only stripped
-                // (optionally) when you're already in the Jarvis lane.
+                // The two hotkeys stay independent, with ONE explicit, opt-in exception: the
+                // dictation → Jarvis bridge (SettingsController.dictationJarvisBridge, default on).
+                // In dictation mode, a final transcript that OPENS with the wake word
+                // ("Jarvis, …") is delegated to Jarvis and executed; a wake token appearing
+                // mid-utterance is audited as a near miss but treated as ordinary dictation and
+                // NEVER auto-acts. Partial/streaming transcripts never reach here, so a
+                // half-heard phrase can't trigger an action. Every outcome is logged via
+                // BridgeAudit for offline auditing. In Jarvis mode the wake prefix is just
+                // stripped as before.
                 switch mode {
                 case .dictation:
-                    let decision = BridgeDecision.classify(raw)
+                    // Bridge disabled → force `.none` so dictation behaves exactly as before.
+                    let decision = SettingsController.dictationJarvisBridge ? BridgeDecision.classify(raw) : .none
                     switch decision {
                     case .delegate(let command):
                         print("[APP] Dictation -> Jarvis delegation: command='\(command)'")
@@ -689,12 +729,46 @@ import SottoCore
                     await self.runJarvisPipeline(raw: command, samples: samples, context: context)
                 }
             } catch {
+                // A cancelled run already reset to idle in cancelCurrent(); don't
+                // surface it as a transcription error.
+                if Task.isCancelled { return }
                 soundBasso?.play()
                 self.hud.hide()
                 self.state = .error("Transcription failed: \(error.localizedDescription)")
                 self.scheduleErrorRecovery()
             }
         }
+    }
+
+    /// Abort whatever is in flight — recording, transcription, polish, or a Jarvis
+    /// turn — and return cleanly to idle. Triggered by tapping the hotkey again in a
+    /// transient state, pressing Esc, or the menu-bar "Cancel / Reset" item. This is
+    /// the user's guaranteed "stop" when a state appears wedged.
+    func cancelCurrent() {
+        // Nothing to cancel when already idle and the HUD is gone.
+        if case .idle = state {
+            processingTask?.cancel(); processingTask = nil
+            return
+        }
+        print("[APP] cancelCurrent() from state \(state)")
+
+        recordingTimeoutTask?.cancel(); recordingTimeoutTask = nil
+        visualizerTimer?.invalidate(); visualizerTimer = nil
+
+        if case .recording = state { _ = recorder.stop() }
+
+        // Tear down the streaming ASR channel and any in-flight processing.
+        streamBufferContinuation?.finish(); streamBufferContinuation = nil
+        partialsTask?.cancel(); partialsTask = nil
+        streamingSetupTask?.cancel(); streamingSetupTask = nil
+        latestPartial = ""
+        processingTask?.cancel(); processingTask = nil
+
+        pendingClarification = false
+
+        soundListenStop?.play()
+        state = .idle                        // cancels the watchdog via didSet
+        hud.hide()                           // silent — the stop sound is the feedback
     }
 
     func updateMemoryLedger() {
@@ -720,6 +794,15 @@ import SottoCore
 
     private func handleHotkeyPress() {
         print("[APP] handleHotkeyPress() entered. Mode isPushToTalk: \(SettingsController.isPushToTalk)")
+        // If a run is mid-transcription/polish (post-release), a fresh press means
+        // "stop this" — the only intuitive abort for a wedged state.
+        switch state {
+        case .transcribing, .polishing:
+            cancelCurrent()
+            return
+        default:
+            break
+        }
         if SettingsController.isPushToTalk {
             beginRecording()
         } else {
@@ -750,6 +833,33 @@ import SottoCore
             self.hud.hide()
             self.state = .idle
             self.soundBasso?.play()
+        }
+    }
+
+    /// Esc = universal abort while a session is active. A global monitor catches
+    /// Esc pressed in any other app (observe-only, never consumed) and a local
+    /// monitor covers the case where a Sotto window is key. Both no-op when idle.
+    private func setupEscapeMonitor() {
+        let global = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return }   // 53 = Escape
+            Task { @MainActor in _ = self?.handleEscapeAbort() }
+        }
+        let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event -> NSEvent? in
+            guard event.keyCode == 53 else { return event }
+            let handled = MainActor.assumeIsolated { self?.handleEscapeAbort() ?? false }
+            return handled ? nil : event
+        }
+        escapeMonitors = [global, local].compactMap { $0 }
+    }
+
+    /// Returns true if Esc was consumed (a session was aborted). No-op when idle so
+    /// Esc keeps its normal meaning everywhere else.
+    @MainActor private func handleEscapeAbort() -> Bool {
+        switch state {
+        case .idle, .loadingModel: return false
+        default:
+            cancelCurrent()
+            return true
         }
     }
 
@@ -790,19 +900,13 @@ import SottoCore
             window.close()
         }
         
-        let width: CGFloat = 520
-        let height: CGFloat = 420
-        
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: width, height: height),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
+        let width = SottoDesign.Metrics.explanationSize.width
+        let height = SottoDesign.Metrics.explanationSize.height
+
+        let window = SottoDesign.makeWindow(
+            size: SottoDesign.Metrics.explanationSize, title: title,
+            styleMask: [.titled, .closable, .miniaturizable, .resizable]
         )
-        window.title = title
-        window.isReleasedWhenClosed = false
-        window.titlebarAppearsTransparent = true
-        window.center()
         
         let backdrop = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         backdrop.material = .underWindowBackground
@@ -825,7 +929,7 @@ import SottoCore
         headerStack.alignment = .centerY
         
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 15, weight: .bold)
+        titleLabel.font = SottoDesign.Typography.nsTitle
         titleLabel.textColor = NSColor.labelColor
         headerStack.addArrangedSubview(titleLabel)
         stack.addArrangedSubview(headerStack)
@@ -838,7 +942,7 @@ import SottoCore
         self.textView = textView
         textView.isEditable = false
         textView.isSelectable = true
-        textView.font = .systemFont(ofSize: 13, weight: .regular)
+        textView.font = SottoDesign.Typography.nsBody
         textView.textColor = NSColor.labelColor
         textView.string = text
         textView.drawsBackground = false
@@ -893,7 +997,7 @@ extension AppController {
         --------------------------------------------------
         - Push-To-Talk: Press and hold ⌘⇧J (Jarvis) or ⌘⇧K (Dictation). Speak while holding, then release to execute.
         - Tap-To-Talk: Toggle in Settings. Tap once to start listening, and Sotto will automatically stop when you are silent.
-        - Wake Word: If enabled in Settings, say "Hey Jarvis" hands-free!
+        - Stop / Cancel: If a run seems stuck (Transcribing / Polishing) or you change your mind, press Esc, tap the hotkey again, or choose "Cancel / Reset" from the menu bar. Sotto returns to Ready without typing or acting.
         
         --------------------------------------------------
         POPULAR COMMAND EXAMPLES
