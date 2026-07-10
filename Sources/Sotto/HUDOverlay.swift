@@ -14,9 +14,10 @@ import SwiftUI
 // on top of the user's work. The tone is Japanese-minimal: one small pill, a few
 // words, no emoji or SF Symbols; state reads through motion, color, and sound.
 //
-// Real-time contract: the SwiftUI front end observes `HUDModel`. Only `phase`
-// and `title` drive the resize/transition spring; audio `levels`/`orbEnergy` are
-// pushed at ~15 fps outside any animation key.
+// Real-time contract: the SwiftUI front end observes `HUDModel`. `phase`, `title`,
+// and `caption` drive the resize/transition animation (caption grows the dictation
+// sneak-preview pill); audio `levels`/`orbEnergy` are pushed at ~15 fps OUTSIDE any
+// animation key, so waveform/orb updates never trigger layout springs.
 
 // Palette, motion, and metric tokens live in SottoDesign.swift.
 
@@ -355,7 +356,17 @@ final class HUDOverlay {
         // hide-timer hazard.
         switch intent {
         case .reply(let text):
-            Notifier.shared.post(title: "Jarvis", body: Self.stripDecoration(text))
+            // Some replies arrive as "phrase\nreply" (brain hits). Split on the
+            // first line so the matched phrase becomes the title and the answer the
+            // body; a plain reply falls back to a "Jarvis" title.
+            let clean = Self.stripDecoration(text)
+            if let nl = clean.firstIndex(of: "\n") {
+                let head = String(clean[..<nl]).trimmingCharacters(in: .whitespaces)
+                let rest = String(clean[clean.index(after: nl)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                Notifier.shared.post(title: head.isEmpty ? "Jarvis" : head, body: rest)
+            } else {
+                Notifier.shared.post(title: "Jarvis", body: clean)
+            }
             hide(); return
         case .success(let t, let d):
             Notifier.shared.post(title: Self.stripDecoration(t), body: d)

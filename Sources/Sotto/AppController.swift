@@ -846,6 +846,12 @@ import SottoCore
         }
         let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event -> NSEvent? in
             guard event.keyCode == 53 else { return event }
+            // Local monitors are delivered on the main thread, but guard anyway:
+            // only consume Esc synchronously when we can prove main-thread isolation.
+            guard Thread.isMainThread else {
+                Task { @MainActor in _ = self?.handleEscapeAbort() }
+                return event
+            }
             let handled = MainActor.assumeIsolated { self?.handleEscapeAbort() ?? false }
             return handled ? nil : event
         }
