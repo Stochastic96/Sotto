@@ -51,10 +51,39 @@ enum SottoDesign {
             Color(red: 0.68, green: 0.82, blue: 0.99)
         ]
 
+        /// Light-mode Jarvis stops: the same hue order, deepened toward mid-tone
+        /// so the gradient rim keeps contrast against a light background.
+        static let jarvisLight: [Color] = [
+            Color(red: 0.22, green: 0.47, blue: 0.78),
+            Color(red: 0.42, green: 0.28, blue: 0.77),
+            Color(red: 0.76, green: 0.35, blue: 0.56),
+            Color(red: 0.78, green: 0.48, blue: 0.20),
+            Color(red: 0.22, green: 0.47, blue: 0.78)
+        ]
+
+        /// Light-mode dictation stops — the deepened family at lower intensity.
+        static let dictationLight: [Color] = [
+            Color(red: 0.48, green: 0.62, blue: 0.79),
+            Color(red: 0.59, green: 0.51, blue: 0.78),
+            Color(red: 0.78, green: 0.55, blue: 0.67),
+            Color(red: 0.79, green: 0.62, blue: 0.46),
+            Color(red: 0.48, green: 0.62, blue: 0.79)
+        ]
+
         static func colors(for mode: Mode) -> [Color] {
             switch mode {
             case .dictation: return dictation
             case .jarvis: return jarvis
+            }
+        }
+
+        /// Color-scheme-aware accent: the light variants hold contrast on light
+        /// backgrounds; dark mode keeps the standard pastel palette.
+        static func colors(for mode: Mode, colorScheme: ColorScheme) -> [Color] {
+            guard colorScheme == .light else { return colors(for: mode) }
+            switch mode {
+            case .dictation: return dictationLight
+            case .jarvis: return jarvisLight
             }
         }
 

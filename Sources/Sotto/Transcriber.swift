@@ -1,5 +1,6 @@
 import Foundation
 import os
+import Synchronization
 @preconcurrency import Speech
 import AVFoundation
 
@@ -137,8 +138,7 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
         private let analysisTask: Task<Void, Never>
         private let collectorTask: Task<String, Never>
         private let finalize: @Sendable () async throws -> Void
-        private let lock = NSLock()
-        private var terminated = false
+        private let terminated = Mutex(false)
 
         init(partials: AsyncStream<String>,
              analysisTask: Task<Void, Never>,
@@ -183,10 +183,11 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
         }
 
         private func beginTerminate() -> Bool {
-            lock.lock(); defer { lock.unlock() }
-            if terminated { return false }
-            terminated = true
-            return true
+            terminated.withLock { alreadyTerminated in
+                if alreadyTerminated { return false }
+                alreadyTerminated = true
+                return true
+            }
         }
     }
 

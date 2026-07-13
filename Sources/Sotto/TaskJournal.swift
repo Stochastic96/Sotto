@@ -15,7 +15,7 @@ enum TaskJournal {
         SemanticMemory.remember("\(command) → \(shortReply)", kind: "journal")
         Task.detached {
             let record: [String: Any] = [
-                "ts": ISO8601DateFormatter().string(from: Date()),
+                "ts": Date().ISO8601Format(),
                 "command": command,
                 "reply": reply
             ]

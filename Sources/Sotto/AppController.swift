@@ -44,7 +44,7 @@ import SottoCore
     var hotkey: HotkeyListener?
     var intelligence: SottoIntelligence?
     var polishEnabled: Bool
-    var visualizerTimer: Timer?
+    var visualizerTask: Task<Void, Never>?
     var recordingStart: Date?
     var recentTranscripts: [String] = []
     var lastActiveApp: NSRunningApplication?
@@ -419,6 +419,7 @@ import SottoCore
             print("[APP] loadModel() succeeded: Speech model ready. App state is now IDLE.")
         } catch {
             state = .error("Model load failed: \(error.localizedDescription)")
+            hud.present(.error("Model load failed", detail: error.localizedDescription), dismissAfter: 4.0)
             print("[APP] loadModel() failed: \(error.localizedDescription)")
         }
     }
@@ -490,6 +491,7 @@ import SottoCore
         let status = AVCaptureDevice.authorizationStatus(for: .audio)
         if status == .denied || status == .restricted {
             state = .error("Microphone access denied")
+            hud.present(.error("Microphone access denied", detail: "Please enable it in System Settings"), dismissAfter: 4.0)
             scheduleErrorRecovery()
             return
         }
@@ -557,10 +559,11 @@ import SottoCore
             // Live waveform + streaming caption at 15fps (66ms). Both are cheap,
             // animation-key-free updates on the HUD model, so pushing every frame
             // (including near-silence, which lets the bars decay naturally) is safe.
-            self.visualizerTimer?.invalidate()
-            self.visualizerTimer = Timer.scheduledTimer(withTimeInterval: 0.066, repeats: true) { [weak self] _ in
-                guard let self = self else { return }
-                Task { @MainActor in
+            self.visualizerTask?.cancel()
+            self.visualizerTask = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(66))
+                    guard let self = self else { return }
                     guard case .recording = self.state else { return }
                     self.hud.updateLevel(self.recorder.currentRMS)
                     // Live transcript sneak-preview from the streaming ASR partials —
@@ -580,6 +583,7 @@ import SottoCore
             }
         } catch {
             state = .error("Mic error: \(error.localizedDescription)")
+            hud.present(.error("Microphone error", detail: error.localizedDescription), dismissAfter: 4.0)
             scheduleErrorRecovery()
         }
     }
@@ -589,8 +593,8 @@ import SottoCore
         guard case .recording = state else { return }
         recordingTimeoutTask?.cancel()
         recordingTimeoutTask = nil
-        visualizerTimer?.invalidate()
-        visualizerTimer = nil
+        visualizerTask?.cancel()
+        visualizerTask = nil
 
         let samples = recorder.stop()
         soundListenStop?.play()
@@ -733,8 +737,8 @@ import SottoCore
                 // surface it as a transcription error.
                 if Task.isCancelled { return }
                 soundBasso?.play()
-                self.hud.hide()
                 self.state = .error("Transcription failed: \(error.localizedDescription)")
+                self.hud.present(.error("Transcription failed", detail: error.localizedDescription), dismissAfter: 4.0)
                 self.scheduleErrorRecovery()
             }
         }
@@ -753,7 +757,7 @@ import SottoCore
         print("[APP] cancelCurrent() from state \(state)")
 
         recordingTimeoutTask?.cancel(); recordingTimeoutTask = nil
-        visualizerTimer?.invalidate(); visualizerTimer = nil
+        visualizerTask?.cancel(); visualizerTask = nil
 
         if case .recording = state { _ = recorder.stop() }
 

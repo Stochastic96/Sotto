@@ -42,7 +42,7 @@ enum BridgeAudit {
         // Build the record on the calling thread (cheap, no shared state) so the detached
         // task only performs I/O with already-sanitized values.
         var record: [String: Any] = [
-            "ts": ISO8601DateFormatter().string(from: Date()),
+            "ts": Date().ISO8601Format(),
             "outcome": outcome.rawValue,
             "delegated": outcome == .delegated,
             "transcript": cap(transcript, maxTranscript),

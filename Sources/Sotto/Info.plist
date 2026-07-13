@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    Embedded Info.plist.
+
+    This file is linked directly into the Sotto executable's Mach-O
+    (__TEXT,__info_plist section) via the linker flags in Package.swift. That
+    gives the *bare* binary a bundle identity even when it is run outside an
+    .app wrapper — e.g. Xcode's Run button, which launches the raw SwiftPM
+    product from DerivedData. Without it, Bundle.main.bundleIdentifier is nil
+    and the system logs a cascade of "missing bundle identifier" errors
+    (window-tab indexing, SFUtilities, Intents/Shortcuts registration).
+
+    package.sh writes its own Contents/Info.plist for the shipping .app; for a
+    real bundle the file on disk wins, so the two coexist. Keep CFBundleIdentifier
+    here in sync with BUNDLE_ID in package.sh.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>            <string>Sotto</string>
+    <key>CFBundleDisplayName</key>     <string>Sotto</string>
+    <key>CFBundleIdentifier</key>      <string>com.prashant.Sotto</string>
+    <key>CFBundleExecutable</key>      <string>Sotto</string>
+    <key>CFBundlePackageType</key>     <string>APPL</string>
+    <key>CFBundleShortVersionString</key> <string>1.0.0</string>
+    <key>CFBundleVersion</key>         <string>1</string>
+    <key>LSMinimumSystemVersion</key>  <string>27.0</string>
+    <key>LSUIElement</key>             <true/>
+    <key>NSHighResolutionCapable</key> <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Sotto listens to your microphone to transcribe dictation and voice commands on-device.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Sotto uses on-device speech recognition to turn your voice into text and commands.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Sotto controls other apps and the system to carry out your voice commands.</string>
+</dict>
+</plist>

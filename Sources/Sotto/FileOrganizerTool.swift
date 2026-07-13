@@ -52,7 +52,7 @@ struct FileOrganizerTool: Tool {
             }
         }
 
-        let oneDayAgo = Date().addingTimeInterval(-86400)
+        let oneDayAgo = Calendar.current.date(byAdding: .day, value: -1, to: Date()) ?? Date()
         var counts: [String: Int] = [:]
 
         // Enumerate only the top-level contents of Downloads (non-recursive)

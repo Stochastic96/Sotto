@@ -459,9 +459,7 @@ extension AppController {
         
         if !processedText.isEmpty || output.fileURL != nil || output.searchShortcut != nil {
             if let app = self.lastActiveApp {
-                if #available(macOS 14.0, *) {
-                    NSApplication.shared.yieldActivation(to: app)
-                }
+                NSApplication.shared.yieldActivation(to: app)
                 app.activate(options: [])
                 try? await Task.sleep(for: .milliseconds(150))
             }

@@ -111,19 +111,17 @@ struct MorningBriefTool: Tool {
         }
 
         let now = Date()
-        let endOfDay = Calendar.current.date(
-            bySettingHour: 23, minute: 59, second: 59, of: now
-        ) ?? now.addingTimeInterval(86400)
+        let cal = Calendar.current
+        let endOfDay = cal.date(bySettingHour: 23, minute: 59, second: 59, of: now)
+            ?? cal.date(byAdding: .day, value: 1, to: now)
+            ?? now
         let predicate = store.predicateForEvents(withStart: now, end: endOfDay, calendars: nil)
         let events = store.events(matching: predicate)
 
         if events.isEmpty { return "no events today" }
 
-        let formatter = DateFormatter()
-        formatter.dateFormat = "h:mm a"
-
         let lines = events.prefix(5).map { event -> String in
-            let time  = formatter.string(from: event.startDate)
+            let time  = event.startDate.formatted(.dateTime.hour().minute())
             let title = event.title ?? "Untitled"
             return "\(title) at \(time)"
         }

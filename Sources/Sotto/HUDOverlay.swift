@@ -1,5 +1,7 @@
 import AppKit
 import SwiftUI
+import KeyboardShortcuts
+import UserNotifications
 
 // MARK: - Sotto HUD
 //
@@ -26,7 +28,7 @@ import SwiftUI
 @Observable final class HUDModel {
     // `preview` = the post-release dictation sneak-preview (frozen words), shown
     // for a beat then vanishing — never a polish spinner.
-    enum Phase: Equatable { case listening, thinking, clarify, preview }
+    enum Phase: Equatable { case listening, thinking, clarify, preview, error }
 
     // Structural — changes here drive the resize/transition spring.
     var phase: Phase = .listening
@@ -65,6 +67,8 @@ import SwiftUI
 struct HUDRootView: View {
     var model: HUDModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(spacing: 6) {
@@ -104,7 +108,10 @@ struct HUDRootView: View {
         }
         .padding(.horizontal, SottoDesign.Metrics.hudPaddingH)
         .padding(.vertical, SottoDesign.Metrics.hudPaddingV)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: SottoDesign.Metrics.corner, style: .continuous))
+        .background(
+            reduceTransparency ? AnyShapeStyle(Color(NSColor.windowBackgroundColor)) : AnyShapeStyle(.regularMaterial),
+            in: RoundedRectangle(cornerRadius: SottoDesign.Metrics.corner, style: .continuous)
+        )
         .overlay(borderOverlay)
         .compositingGroup()
         .shadow(color: .black.opacity(SottoDesign.Opacity.shadow), radius: 18, y: 8)
@@ -132,6 +139,8 @@ struct HUDRootView: View {
         case .preview:
             // Frozen sneak-preview after release; fades out before polish finishes.
             PreviewText(text: model.caption)
+        case .error:
+            ErrorView(title: model.title, message: model.detail)
         }
     }
 
@@ -146,7 +155,9 @@ struct HUDRootView: View {
     // sneak-preview read as calmer resting cards.
     private var isActive: Bool { model.phase == .listening || model.phase == .thinking }
 
-    private var accent: [Color] { SottoDesign.Accent.colors(for: model.mode) }
+    private var accent: [Color] {
+        SottoDesign.Accent.colors(for: model.mode, colorScheme: colorScheme)
+    }
 
     private var glowColor: Color { accent[1] }
 
@@ -160,6 +171,11 @@ struct HUDRootView: View {
                 lineWidth: 1.2
             )
             .opacity(0.9)
+        } else if model.phase == .error {
+            // Own subview so its @State resets on every fresh .error appearance
+            // (the pulse re-triggers instead of latching after the first error),
+            // and the pulse is suppressed under Reduce Motion.
+            ErrorBorder(shape: shape, reduceMotion: reduceMotion)
         } else {
             shape.strokeBorder(
                 LinearGradient(colors: [.white.opacity(SottoDesign.Opacity.rimStrong),
@@ -211,6 +227,9 @@ private struct DictationListeningView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
+                    // maxWidth (not a fixed width): the pill grows with the words
+                    // but can still compress to fit inside the 460pt panel next to
+                    // the waveform — a fixed 360 overflows and clips the right edge.
                     .frame(maxWidth: 360, alignment: .leading)
             }
         }
@@ -311,6 +330,56 @@ private struct ClarifyView: View {
     }
 }
 
+/// The pulsing red rim shown while `.error` is on screen. Kept as its own view
+/// so `@State pulse` re-initializes each time the error phase appears (the pulse
+/// restarts on a second error instead of latching), and so the animation is
+/// skipped entirely under Reduce Motion.
+private struct ErrorBorder<S: InsettableShape>: View {
+    let shape: S
+    let reduceMotion: Bool
+    @State private var pulse = false
+
+    var body: some View {
+        shape
+            .strokeBorder(Color.red, lineWidth: 1.5)
+            .opacity(reduceMotion ? 0.9 : (pulse ? 1.0 : 0.4))
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
+                    pulse = true
+                }
+            }
+    }
+}
+
+private struct ErrorView: View {
+    let title: String
+    let message: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Capsule()
+                .fill(Color.red)
+                .frame(width: 3)
+                .frame(maxHeight: .infinity)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(SottoDesign.Typography.label)
+                    .foregroundStyle(.primary)
+                if !message.isEmpty {
+                    Text(message)
+                        .font(SottoDesign.Typography.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: 340, alignment: .leading)
+                }
+            }
+            .frame(maxWidth: 340, alignment: .leading)
+        }
+    }
+}
+
 // MARK: - AppKit controller
 
 @MainActor
@@ -328,11 +397,12 @@ final class HUDOverlay {
         /// Dictation post-release sneak-preview: the spoken words, held briefly
         /// then faded out (caller passes `dismissAfter`). Never a polish spinner.
         case preview(String)
-        /// A conversational Jarvis reply; gets the one-shot shimmer treatment.
+        /// A conversational Jarvis reply; routes to Notifier and hides the pill.
         case reply(String)
         case success(String, detail: String = "")
         case warning(String, detail: String = "")
         case info(String, detail: String = "")
+        case error(String, detail: String = "")
     }
 
     private var panel: NSPanel?
@@ -363,21 +433,33 @@ final class HUDOverlay {
             if let nl = clean.firstIndex(of: "\n") {
                 let head = String(clean[..<nl]).trimmingCharacters(in: .whitespaces)
                 let rest = String(clean[clean.index(after: nl)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-                Notifier.shared.post(title: head.isEmpty ? "Jarvis" : head, body: rest)
+                // Unique id per reply (default UUID): distinct answers must not
+                // coalesce, or a second reply silently replaces the first in
+                // Notification Center and the earlier answer is lost.
+                Notifier.shared.post(
+                    title: head.isEmpty ? "Jarvis" : head,
+                    body: rest,
+                    interruptionLevel: .active
+                )
             } else {
-                Notifier.shared.post(title: "Jarvis", body: clean)
+                Notifier.shared.post(
+                    title: "Jarvis",
+                    body: clean,
+                    interruptionLevel: .active
+                )
             }
             hide(); return
-        case .success(let t, let d):
-            Notifier.shared.post(title: Self.stripDecoration(t), body: d)
+        case .success(let t, let d), .info(let t, let d), .warning(let t, let d):
+            let clean = Self.stripDecoration(t)
+            let identity = Self.notificationIdentity(title: clean)
+            Notifier.shared.post(
+                title: clean,
+                body: d,
+                identifier: identity.id,
+                interruptionLevel: identity.level
+            )
             hide(); return
-        case .info(let t, let d):
-            Notifier.shared.post(title: Self.stripDecoration(t), body: d)
-            hide(); return
-        case .warning(let t, let d):
-            Notifier.shared.post(title: Self.stripDecoration(t), body: d)
-            hide(); return
-        case .listening, .thinking, .progress, .clarify, .preview:
+        case .listening, .thinking, .progress, .clarify, .preview, .error:
             break   // live — render in the pill below
         }
 
@@ -408,8 +490,14 @@ final class HUDOverlay {
             // Model-sourced text: strip any stray emoji/glyphs to hold the icon-free contract.
             model.phase = .clarify
             model.title = Self.stripDecoration(question)
+            let hotkeyStr = KeyboardShortcuts.getShortcut(for: .toggleJarvis)?.description ?? "⌘⇧J"
             model.detail = String(localized: "hud.clarifyHint",
-                                  defaultValue: "Press ⌘⇧J to answer", bundle: .module)
+                                  defaultValue: "Press \(hotkeyStr) to answer", bundle: .module)
+        case .error(let title, let detail):
+            model.phase = .error
+            model.title = Self.stripDecoration(title)
+            model.detail = detail
+            model.caption = ""
         default:
             break   // routed above
         }
@@ -510,6 +598,27 @@ final class HUDOverlay {
         return .info(title, detail: detail)
     }
 
+    /// Notification identity for a non-live outcome. Distinct results default to
+    /// a UNIQUE id so they never coalesce — over-coalescing silently replaces an
+    /// earlier result (lost information), which is worse than a duplicate banner.
+    /// Only a small set of genuinely "latest-wins" updates (a fresh weather read,
+    /// a system-resource notice) reuse a stable id so a new one updates in place.
+    ///
+    /// The category is inferred from English title keywords — a pragmatic signal,
+    /// not a contract, and it errs toward unique ids. If these titles are ever
+    /// localized, pass an explicit coalescing key from the call site instead.
+    private static func notificationIdentity(title: String)
+        -> (id: String, level: UNNotificationInterruptionLevel) {
+        let t = title.lowercased()
+        if t.contains("weather") {
+            return ("sotto.notification.weather", .active)
+        }
+        if t.contains("offline") || t.contains("ram") || t.contains("running") {
+            return ("sotto.notification.system", .passive)
+        }
+        return (UUID().uuidString, .active)
+    }
+
     /// Remove emoji, pictographs, and legacy status glyphs; collapse whitespace.
     static func stripDecoration(_ s: String) -> String {
         var scalars = String.UnicodeScalarView()
@@ -550,7 +659,7 @@ final class HUDOverlay {
         case .clarify(let q): message = "Question: \(q)"
         case .preview: message = ""   // the frozen words were already announced live
         case .reply(let r): message = r
-        case .success(let t, let d), .warning(let t, let d), .info(let t, let d):
+        case .success(let t, let d), .warning(let t, let d), .info(let t, let d), .error(let t, let d):
             message = d.isEmpty ? t : "\(t). \(d)"
         }
         guard message != lastAnnouncement, !message.isEmpty else { return }

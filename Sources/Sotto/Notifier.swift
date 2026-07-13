@@ -38,7 +38,13 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     /// Post an immediate notification. A title-only message promotes its single
     /// line to the title so the banner reads cleanly.
-    func post(title: String, body: String = "", sound: Bool = false) {
+    func post(
+        title: String,
+        body: String = "",
+        sound: Bool = false,
+        identifier: String? = nil,
+        interruptionLevel: UNNotificationInterruptionLevel = .active
+    ) {
         guard available else { return }
         let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let b = body.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -52,9 +58,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             content.body = b
         }
         if sound { content.sound = .default }
+        content.interruptionLevel = interruptionLevel
 
         let request = UNNotificationRequest(
-            identifier: UUID().uuidString,
+            identifier: identifier ?? UUID().uuidString,
             content: content,
             trigger: nil          // nil = deliver immediately
         )

@@ -566,25 +566,20 @@ enum CommandEngine {
         // "send it" / "press enter" triggers
         for phrase in sendPhrases {
             let pattern = "[,.!?\\s]*\(phrase)[.!?]?\\s*$"
-            if let range = text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
-                text.removeSubrange(range)
+            if let regex = try? Regex(pattern).ignoresCase(),
+               let match = text.firstMatch(of: regex) {
+                text.removeSubrange(match.range)
                 pressReturn = true
                 break
             }
         }
 
         // New paragraph and new line spoken formatting
-        text = text.replacingOccurrences(
-            of: "[,.]?\\s*\\bnew paragraph\\b[,.]?\\s*",
-            with: "\n\n", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(
-            of: "[,.]?\\s*\\bnew line\\b[,.]?\\s*",
-            with: "\n", options: [.regularExpression, .caseInsensitive])
+        text = text.replacing(/[,.]?\s*\bnew paragraph\b[,.]?\s*/.ignoresCase(), with: "\n\n")
+        text = text.replacing(/[,.]?\s*\bnew line\b[,.]?\s*/.ignoresCase(), with: "\n")
 
         // Symbol mapping
-        text = text.replacingOccurrences(
-            of: "\\bat sign\\s+", with: "@",
-            options: [.regularExpression, .caseInsensitive])
+        text = text.replacing(/\bat sign\s+/.ignoresCase(), with: "@")
 
         text = context.style.apply(to: text)
         text = text.trimmingCharacters(in: .whitespaces)

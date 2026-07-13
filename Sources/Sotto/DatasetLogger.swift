@@ -37,7 +37,7 @@ final class DatasetLogger: @unchecked Sendable {
 
             let record: [String: Any] = [
                 "id": id,
-                "ts": ISO8601DateFormatter().string(from: Date()),
+                "ts": Date().ISO8601Format(),
                 "mode": mode,
                 "app": app ?? "",
                 "raw_transcript": rawTranscript,

@@ -90,6 +90,13 @@ enum SemanticMemory {
     }
 
     private static func indexInSpotlight(entry: MemoryEntry) {
+        // Off by default (see SettingsController.spotlightIndexingEnabled) and
+        // additionally guarded by the OS availability check. For an ad-hoc /
+        // run-in-place build the indexing daemon rejects the donation and
+        // CoreSpotlight spews repeated "CSInlineDonation … Failed to request
+        // donation" XPC errors for no gain.
+        guard SettingsController.spotlightIndexingEnabled,
+              CSSearchableIndex.isIndexingAvailable() else { return }
         let attributeSet = CSSearchableItemAttributeSet(contentType: .text)
         attributeSet.title = "Jarvis Memory (\(entry.kind))"
         attributeSet.contentDescription = entry.text
@@ -107,6 +114,8 @@ enum SemanticMemory {
     }
 
     private static func deleteFromSpotlight(id: String) {
+        guard SettingsController.spotlightIndexingEnabled,
+              CSSearchableIndex.isIndexingAvailable() else { return }
         CSSearchableIndex.default().deleteSearchableItems(withIdentifiers: ["sotto:memory:\(id)"]) { error in
             if let error = error {
                 print("[MEMORY] CoreSpotlight delete error: \(error.localizedDescription)")

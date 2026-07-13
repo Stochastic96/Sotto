@@ -84,7 +84,7 @@ enum SkillStore {
             trigger: trigger,
             language: lang,
             body: body,
-            createdAt: ISO8601DateFormatter().string(from: Date()),
+            createdAt: Date().ISO8601Format(),
             enabled: false
         )
         lock.withLock {
@@ -257,6 +257,13 @@ enum SkillStore {
     }
 
     private static func indexInSpotlight(skill: DraftedSkill) {
+        // Off by default (see SettingsController.spotlightIndexingEnabled) and
+        // additionally guarded by the OS availability check. For an ad-hoc /
+        // run-in-place build the indexing daemon rejects the donation and
+        // CoreSpotlight spews repeated "CSInlineDonation … Failed to request
+        // donation" XPC errors for no gain.
+        guard SettingsController.spotlightIndexingEnabled,
+              CSSearchableIndex.isIndexingAvailable() else { return }
         let attributeSet = CSSearchableItemAttributeSet(contentType: .text)
         attributeSet.title = "Jarvis Skill: \(skill.name)"
         let status = skill.enabled ? "Enabled" : "Pending Approval"

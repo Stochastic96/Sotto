@@ -20,6 +20,7 @@ final class SettingsController: NSObject {
     nonisolated static let workspacePathKey = "sotto_workspacePath"
     nonisolated static let agentModeKey = "sotto_agentMode"
     nonisolated static let memoryLedgerKey = "sotto_showMemoryLedger"
+    nonisolated static let spotlightIndexingKey = "sotto_spotlightIndexing"
     nonisolated static let dictationJarvisBridgeKey = "sotto_dictationJarvisBridge"
     nonisolated static let voiceFeedbackEnabledKey = "sotto_voiceFeedbackEnabled"
     nonisolated static let voiceIdentifierKey = "sotto_voiceIdentifier"
@@ -96,6 +97,16 @@ final class SettingsController: NSObject {
     /// Off by default; enable with `defaults write` on this key.
     nonisolated static var showMemoryLedger: Bool {
         UserDefaults.standard.bool(forKey: memoryLedgerKey)
+    }
+
+    /// Donate Jarvis skills/memories to CoreSpotlight so they're searchable
+    /// system-wide. Off by default: for an ad-hoc / run-in-place build the
+    /// Spotlight indexing daemon rejects the donation and CoreSpotlight spews
+    /// repeated "CSInlineDonation … Failed to request donation" XPC errors.
+    /// A properly installed, Developer-ID-signed app can enable it with
+    /// `defaults write com.prashant.Sotto sotto_spotlightIndexing -bool YES`.
+    nonisolated static var spotlightIndexingEnabled: Bool {
+        UserDefaults.standard.bool(forKey: spotlightIndexingKey)
     }
 
     /// Explicit dictation → Jarvis bridge: when dictating, an utterance that opens with the
