@@ -205,7 +205,7 @@ actor Kernel {
         }
         // Drop a trailing "app"/"application" and punctuation: "open the notes app" → "the notes"
         var name = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        while let last = name.last, ".,!?".contains(last) { name.removeLast() }
+        name.stripTrailingPunctuation()
         for tail in [" app", " application"] where name.lowercased().hasSuffix(tail) {
             name = String(name.dropLast(tail.count)).trimmingCharacters(in: .whitespaces)
         }
@@ -222,7 +222,7 @@ actor Kernel {
                      "look up ", "look for ", "find information on ", "find info on "] {
             if lower.hasPrefix(verb) { s = String(s.dropFirst(verb.count)); break }
         }
-        while let last = s.last, ".,!?".contains(last) { s.removeLast() }
+        s.stripTrailingPunctuation()
         s = s.trimmingCharacters(in: .whitespacesAndNewlines)
         // Must be meaningfully different from the trigger verb alone
         return s.isEmpty || s.count < 2 ? nil : s
@@ -236,7 +236,7 @@ actor Kernel {
                      "locate ", "find "] {
             if lower.hasPrefix(verb) { s = String(s.dropFirst(verb.count)); break }
         }
-        while let last = s.last, ".,!?".contains(last) { s.removeLast() }
+        s.stripTrailingPunctuation()
         s = s.trimmingCharacters(in: .whitespacesAndNewlines)
         return s.isEmpty ? nil : s
     }

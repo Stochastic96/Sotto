@@ -95,7 +95,7 @@ enum CommandEngine {
                 if !query.isEmpty {
                     return ZeroLatencyShortcut(
                         command: "native:ask_siri:\(query)",
-                        voiceFeedback: "Delegating query to Siri.",
+                        voiceFeedback: Quips.siri(),
                         hudMessage: "Siri: \(query)"
                     )
                 }
@@ -132,7 +132,7 @@ enum CommandEngine {
 
             return ZeroLatencyShortcut(
                 command: "native:ask_siri:\(raw)",
-                voiceFeedback: "Delegating query to Siri.",
+                voiceFeedback: Quips.siri(),
                 hudMessage: "Siri: \(raw)"
             )
         }

@@ -147,6 +147,9 @@ public actor CoordinatorAgent {
 
         Lanes: chat/greetings → one warm line, no tool. Writing (poems, emails, paragraphs) → write the text yourself, never delegate_to_scripting_executor. General questions → answer briefly, or web_search/open_website for current info. Big repetitive jobs → start_long_task. If truly ambiguous, reply exactly "\(kClarificationPrefix) <one short question>" and nothing else.
         """
+        // Give the model today's date so "what day is it" / relative dates need no tool.
+        let today = DateFormatter.localizedString(from: Date(), dateStyle: .full, timeStyle: .short)
+        instr += "\n\nToday is \(today)."
         if let profile = UserProfile.summary() {
             instr += "\n\nWhat you know about the user:\n\(profile)"
         }
@@ -218,9 +221,10 @@ public actor CoordinatorAgent {
         let session: LanguageModelSession
         let temperature: Double
         if mode == .chat {
-            // Chat lane: warm, brief, no tools.
-            session = LanguageModelSession(instructions: instructions + "\n\nThis is small talk — reply warmly in ONE short line and use no tools.")
-            temperature = 0.7
+            // Chat lane: warm, playful, no tools. Higher temperature than the quick lane so
+            // comedic phrasing varies turn-to-turn (quick lane stays cold for precise args).
+            session = LanguageModelSession(instructions: instructions + "\n\nThis is small talk. One playful, characterful line — be the funny friend, not the FAQ. No tools.")
+            temperature = 0.85
         } else {
             // Quick lane: native routed tools + escalation tools.
             let escalationTools: [any Tool] = [DelegateScriptingExecutorTool(), DelegateWebResearcherTool(), DelegateOSControlTool(), StartLongTaskTool()]

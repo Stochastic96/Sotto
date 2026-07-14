@@ -1,4 +1,5 @@
 import Foundation
+import SottoCore
 
 /// Defines Sotto's three conversation lanes: chat, quick, and bigJob.
 /// Removed conformance to LanguageModelSession.DynamicProfile to prevent dyld symbol-not-found
@@ -9,13 +10,15 @@ struct JarvisProfile {
     /// High-precision lane pick. Defaults to `.quick`; only diverts on clear small talk or
     /// clear bulk phrasing, so a genuine command is never starved of tools.
     static func classify(_ input: String) -> Mode {
-        let t = input.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        // Normalize via SmallTalk (the single source of truth for greeting/small-talk
+        // phrasings) so lane routing and the zero-token small-talk responder can never
+        // drift apart. This also drops trailing sentence punctuation, so "how are you?"
+        // matches — without it the "?" defeated every comparison and small talk mis-routed
+        // to the tool-loaded quick lane (a ~10 s round-trip instead of the cheap chat lane).
+        let t = SmallTalk.normalize(input)
 
-        let greetings = ["hi", "hii", "hey", "hello", "yo", "how are you", "how's it going",
-                         "hows it going", "good morning", "good afternoon", "good evening",
-                         "good night", "thanks", "thank you", "what's up", "whats up", "sup",
-                         "you there", "are you there", "good to see you"]
-        if t.count < 40, greetings.contains(where: { t == $0 || t.hasPrefix($0 + " ") || t.hasPrefix($0 + ",") }) {
+        if t.count < 40,
+           SmallTalk.smallTalkPhrases.contains(where: { t == $0 || t.hasPrefix($0 + " ") || t.hasPrefix($0 + ",") }) {
             return .chat
         }
 

@@ -36,7 +36,7 @@ extension AppController {
         for prefix in ["enable skill ", "approve skill ", "activate skill "] {
             if lowerApproval.hasPrefix(prefix) {
                 var skillName = String(raw.trimmingCharacters(in: .whitespacesAndNewlines).dropFirst(prefix.count))
-                while let last = skillName.last, ".,!?".contains(last) { skillName.removeLast() }
+                skillName.stripTrailingPunctuation()
                 let result = SkillStore.enable(skillName.trimmingCharacters(in: .whitespacesAndNewlines))
                 print("[SKILL] \(result)")
                 speak(result)
@@ -48,6 +48,23 @@ extension AppController {
             }
         }
         
+        // 1b. Small talk & self-knowledge — greetings, "how are you", "who are you",
+        // "what can you do", and "how do you make a reminder"-style capability questions,
+        // answered instantly with ZERO tokens instead of a ~10 s model round-trip.
+        // META-questions ONLY: an imperative like "make a reminder for 5pm" returns nil
+        // here and falls through to the real pipeline (which routes it to Siri and acts).
+        if let small = SmallTalk.match(raw) {
+            print("[JARVIS] Small talk (0 tokens): \(small.spoken)")
+            hud.present(.reply(small.text))
+            speak(small.spoken)
+            TaskJournal.record(command: raw, reply: small.text)
+            await ConversationMemory.shared.record(user: raw, assistant: small.text)
+            finishLane(.reflex, start: laneStart, raw: raw)
+            state = .idle
+            Task { try? await Task.sleep(for: .seconds(2)); hud.hide() }
+            return small.text
+        }
+
         // 2. Grab the active selection when referenced.
         var processedInput = raw
         if raw.lowercased().contains("selection") || raw.lowercased().contains("selected text") {
@@ -119,7 +136,17 @@ extension AppController {
         if SettingsController.apiProvider.lowercased() == "apple",
            JarvisAgent.isAvailable() {
             state = .polishing
-            hud.present(.thinking("Jarvis"), mode: .jarvis)
+            // Pre-remark: the instant routing knows which tool is about to run, say something
+            // (0 tokens) so Jarvis is already talking while the model grinds. Skip for the chat
+            // lane — small talk earns its own witty line, not a tool opener.
+            if JarvisProfile.classify(processedInput) == .chat {
+                hud.present(.thinking("Jarvis"), mode: .jarvis)
+            } else {
+                let topTool = (await JarvisToolbox.routed(for: processedInput)).first?.name
+                let opener = topTool.map { Quips.starting(forTool: $0) } ?? "On it."
+                hud.present(.thinking(opener), mode: .jarvis)
+                speak(opener)
+            }
             do {
                 let reply: String
                 if let coord = self.coordinator {

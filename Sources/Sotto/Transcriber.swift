@@ -176,10 +176,18 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
         }
 
         /// Tear down without using the result (batch path takes over, or an aborted press).
-        func cancel() {
-            guard beginTerminate() else { return }
-            collectorTask.cancel()
-            analysisTask.cancel()
+        /// Async because it AWAITS the collector to completion: cancelling the task is not
+        /// enough — until the collector's `for await` actually returns, it still holds
+        /// `transcriber.results`, and a second consumer starting then trips the stream's
+        /// single-iterator trap (EXC_BREAKPOINT). The `await collectorTask.value` runs even
+        /// when `finish()` already began termination, so a concurrent start still waits for
+        /// the same collector to drain (driven by finish's finalize) before it iterates.
+        func cancel() async {
+            if beginTerminate() {
+                collectorTask.cancel()
+                analysisTask.cancel()
+            }
+            _ = await collectorTask.value
         }
 
         private func beginTerminate() -> Bool {
@@ -199,9 +207,13 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
     var isStreaming: Bool { activeStreamingSession != nil }
 
     func startStreaming(feeding audio: AsyncStream<SendableAudioBuffer>) async throws -> AsyncStream<String>? {
-        // Never two sessions: a stale one (e.g. from an aborted short-tap) dies first.
-        activeStreamingSession?.cancel()
-        activeStreamingSession = nil
+        // Never two consumers of transcriber.results: a stale session (e.g. from an aborted
+        // short-tap or a rapid re-press) must FULLY drain before this pass starts iterating,
+        // or the two collectors overlap and trip the stream's single-iterator trap.
+        if let stale = activeStreamingSession {
+            await stale.cancel()
+            activeStreamingSession = nil
+        }
 
         if transcriber == nil {
             try await prepare()
@@ -257,8 +269,13 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
 
     func finishStreaming() async -> String? {
         guard let session = activeStreamingSession else { return nil }
-        activeStreamingSession = nil
-        guard let text = await session.finish() else {
+        // Keep the session referenced DURING finalize so a concurrent startStreaming cancels
+        // (and awaits) it instead of racing a second consumer onto transcriber.results. Clear
+        // it only afterwards, and only if a new pass hasn't already replaced it — the identity
+        // check prevents clobbering a freshly-started session back to nil.
+        let result = await session.finish()
+        if activeStreamingSession === session { activeStreamingSession = nil }
+        guard let result else {
             // After a failed/hung finalize the cached analyzer's state is unknown —
             // rebuild on the next press instead of risking a wedged instance. (Also hit
             // on an empty transcript; the rare rebuild there is a fair price for safety.)
@@ -266,12 +283,14 @@ private final class NativeDictationBackend: TranscriptionBackend, @unchecked Sen
             self.analyzer = nil
             return nil
         }
-        return text
+        return result
     }
 
     func cancelStreaming() async {
-        activeStreamingSession?.cancel()
-        activeStreamingSession = nil
+        if let session = activeStreamingSession {
+            await session.cancel()
+            activeStreamingSession = nil
+        }
     }
 
     func transcribe(_ samples: [Float]) async throws -> String {

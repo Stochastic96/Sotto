@@ -19,7 +19,6 @@ actor EventBus {
         // ── Trigger layer ──────────────────────────────────────────────────────
         case hotkeyPressed(mode: TriggerMode)
         case hotkeyReleased(mode: TriggerMode)
-        case wakeWordDetected
         case externalCommand(String)          // URL scheme / AppIntent
 
         // ── Engine processing state ────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+@preconcurrency import KeyboardShortcuts
 import Speech
 import SottoCore
 
@@ -57,6 +58,7 @@ import SottoCore
     private var processingTask: Task<Void, Never>?
     /// Local + global Escape monitors so the user can always abort an active session.
     private var escapeMonitors: [Any] = []
+    private var modifierMonitors: [Any] = []
     private var memoryPressureSource: (any DispatchSourceMemoryPressure)?
 
     // Live streaming ASR state for the current press. The buffer continuation is created
@@ -382,6 +384,7 @@ import SottoCore
         listener.start()
         setupMemoryPressureObserver()
         setupEscapeMonitor()
+        setupModifierReleaseMonitor()
         Notifier.shared.start()   // native top-right notifications for replies/results/task-done
 
         Task { @MainActor in
@@ -428,7 +431,7 @@ import SottoCore
         print("[APP] beginRecording() called. Current state: \(state)")
 
         if case .loadingModel = state {
-            print("[APP] beginRecording() aborted: Speech model is loading")
+            SottoLog.event("beginRecording aborted: speech model still loading (Basso).")
             hud.present(.thinking("Loading speech model"))
             soundBasso?.play()
             Task {
@@ -797,7 +800,7 @@ import SottoCore
     }
 
     private func handleHotkeyPress() {
-        print("[APP] handleHotkeyPress() entered. Mode isPushToTalk: \(SettingsController.isPushToTalk)")
+        SottoLog.event("handleHotkeyPress — mode=\(currentMode) state=\(state) pushToTalk=\(SettingsController.isPushToTalk)")
         // If a run is mid-transcription/polish (post-release), a fresh press means
         // "stop this" — the only intuitive abort for a wedged state.
         switch state {
@@ -808,7 +811,18 @@ import SottoCore
             break
         }
         if SettingsController.isPushToTalk {
-            beginRecording()
+            // A press while ALREADY recording means the matching key-up was never
+            // delivered — a common failure with modifier chords (⌘⇧K/⌘⇧J), where
+            // releasing a modifier first can swallow the letter's key-up. Without
+            // this, `beginRecording()` hits `guard case .idle` and returns silently,
+            // leaving the pill stuck on "listening" ("it shows it working but it
+            // didn't"). Treat the press as the lost release: stop & process.
+            if case .recording = state {
+                SottoLog.event("Press while already recording — treating as lost key-up; ending recording.")
+                endRecording()
+            } else {
+                beginRecording()
+            }
         } else {
             // Toggle mode
             if case .recording = state {
@@ -820,7 +834,7 @@ import SottoCore
     }
 
     private func handleHotkeyRelease() {
-        print("[APP] handleHotkeyRelease() entered. Mode isPushToTalk: \(SettingsController.isPushToTalk)")
+        SottoLog.event("handleHotkeyRelease — state=\(state) pushToTalk=\(SettingsController.isPushToTalk)")
         if SettingsController.isPushToTalk {
             endRecording()
         }
@@ -833,7 +847,7 @@ import SottoCore
             try? await Task.sleep(for: .seconds(limit))
             guard let self, !Task.isCancelled else { return }
             let stuckFor = Date().timeIntervalSince(enteredAt)
-            print("[WATCHDOG] State \(self.state) stuck for \(Int(stuckFor))s (limit \(Int(limit))s); force-resetting to idle.")
+            SottoLog.event("WATCHDOG: state \(self.state) stuck for \(Int(stuckFor))s (limit \(Int(limit))s); force-resetting to idle + Basso.")
             self.hud.hide()
             self.state = .idle
             self.soundBasso?.play()
@@ -860,6 +874,39 @@ import SottoCore
             return handled ? nil : event
         }
         escapeMonitors = [global, local].compactMap { $0 }
+    }
+
+    /// Safety net for the missed key-up that wedges push-to-talk recording. With a
+    /// modifier chord (⌘⇧K / ⌘⇧J), releasing a modifier before the letter can
+    /// swallow the letter's key-up, so `handleHotkeyRelease` never fires and
+    /// recording hangs until the 5-minute timeout. Watching `.flagsChanged` lets us
+    /// end the recording the moment the chord is broken. Observe-only; never consumes
+    /// the event, and no-ops unless we're actively push-to-talk recording.
+    private func setupModifierReleaseMonitor() {
+        let global = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            let flags = event.modifierFlags
+            Task { @MainActor in self?.checkModifierRelease(flags) }
+        }
+        let local = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event -> NSEvent? in
+            let flags = event.modifierFlags
+            Task { @MainActor in self?.checkModifierRelease(flags) }
+            return event
+        }
+        modifierMonitors = [global, local].compactMap { $0 }
+    }
+
+    @MainActor private func checkModifierRelease(_ flags: NSEvent.ModifierFlags) {
+        guard SettingsController.isPushToTalk, case .recording = state else { return }
+        let name: KeyboardShortcuts.Name = currentMode == .jarvis ? .toggleJarvis : .toggleDictation
+        guard let required = KeyboardShortcuts.getShortcut(for: name)?.modifiers,
+              !required.isEmpty else { return }
+        let held = flags.intersection(.deviceIndependentFlagsMask)
+        // Any required modifier no longer held → the chord is broken. The letter's
+        // key-up may never arrive, so end the push-to-talk recording now.
+        if !held.isSuperset(of: required) {
+            SottoLog.event("Modifier chord released mid-recording — ending push-to-talk recording (safety net).")
+            endRecording()
+        }
     }
 
     /// Returns true if Esc was consumed (a session was aborted). No-op when idle so
